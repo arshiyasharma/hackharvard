@@ -185,7 +185,9 @@ export function parseDateRange(text: string, now: Date): { start: string | null;
     const start = sideDate(left, now, "start");
     const end = sideDate(right, now, "end");
     if (start && end && end >= start) return { start, end };
-    if (start || end) return { start: start ?? parseDate(t, now), end: start && end ? null : end };
+    // "until aug 31" with nothing before the connector is an end date, not a start.
+    if (!start && end) return { start: null, end };
+    if (start) return { start, end: null };
   }
   return { start: parseDate(t, now), end: null };
 }

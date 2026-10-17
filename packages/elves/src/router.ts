@@ -121,6 +121,14 @@ export async function route(
     const hasPicks = !isHuntFollowUp(text) || (await deps.store.listListings(opts.moveId)).length > 0;
     if (lastElf === "home" && hasPicks) return { elf: "home", via: "followup", confidence: 0.95 };
   }
+  // Room photos while Home is writing the owner's sublet post are for the post, not for sale.
+  if (opts.moveId && hasPhotos(batch) && deps.elves.some((e) => e.name === "home")) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const post = await deps.store.getSubletPost(opts.moveId);
+      if (post && post.status !== "approved") return { elf: "home", via: "followup", confidence: 0.95 };
+    }
+  }
   // Photos and bare prices are the Stuff Elf's job; no model call needed.
   if (hasPhotos(batch) && deps.elves.some((e) => e.name === "stuff"))
     return { elf: "stuff", via: "photo", confidence: 0.95 };

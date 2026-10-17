@@ -6,6 +6,7 @@ export * from "./home.ts";
 export * from "./home-facts.ts";
 export * from "./home-followups.ts";
 export * from "./home-rank.ts";
+export * from "./home-sublet.ts";
 export * from "./intake.ts";
 export * from "./router.ts";
 export { stuffElf } from "./sell.ts";

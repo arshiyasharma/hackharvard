@@ -17,6 +17,7 @@ import {
   type SendRecord,
   type Slot,
   type Store,
+  type SubletPost,
 } from "@elves/shared";
 import type { SQL } from "bun";
 
@@ -97,6 +98,26 @@ function itemRow(r: Row): Item {
     listingApproved: Boolean(r.listing_approved),
     outcome: r.outcome as Item["outcome"],
     createdAt: iso(r.created_at),
+  };
+}
+
+function subletPostRow(r: Row): SubletPost {
+  return {
+    moveId: r.move_id as string,
+    dealId: str(r.deal_id),
+    rentCents: num(r.rent_cents),
+    availableFrom: str(r.available_from),
+    availableUntil: str(r.available_until),
+    area: str(r.area),
+    furnished: r.furnished == null ? null : Boolean(r.furnished),
+    roomType: str(r.room_type),
+    details: ((json(r.details) as string[]) ?? []).map(String),
+    photoAttachmentIds: ((json(r.photo_attachment_ids) as string[]) ?? []).map(String),
+    photoNotes: str(r.photo_notes),
+    title: str(r.title),
+    body: str(r.body),
+    status: (r.status as SubletPost["status"]) ?? "collecting",
+    updatedAt: iso(r.updated_at),
   };
 }
 
@@ -360,6 +381,28 @@ export class PostgresStore implements Store {
         outcome = excluded.outcome
       returning *`;
     return itemRow(rows[0] as Row);
+  }
+
+  async getSubletPost(moveId: string) {
+    const rows = await this.sql`select * from sublet_posts where move_id = ${moveId}`;
+    return rows[0] ? subletPostRow(rows[0]) : undefined;
+  }
+  async saveSubletPost(input: Omit<SubletPost, "updatedAt">) {
+    const rows = await this.sql`
+      insert into sublet_posts (move_id, deal_id, rent_cents, available_from, available_until, area, furnished,
+        room_type, details, photo_attachment_ids, photo_notes, title, body, status)
+      values (${input.moveId}, ${input.dealId}, ${input.rentCents}, ${input.availableFrom}, ${input.availableUntil},
+        ${input.area}, ${input.furnished}, ${input.roomType}, ${JSON.stringify(input.details)}::jsonb,
+        ${JSON.stringify(input.photoAttachmentIds)}::jsonb, ${input.photoNotes}, ${input.title}, ${input.body},
+        ${input.status})
+      on conflict (move_id) do update set
+        deal_id = excluded.deal_id, rent_cents = excluded.rent_cents, available_from = excluded.available_from,
+        available_until = excluded.available_until, area = excluded.area, furnished = excluded.furnished,
+        room_type = excluded.room_type, details = excluded.details,
+        photo_attachment_ids = excluded.photo_attachment_ids, photo_notes = excluded.photo_notes,
+        title = excluded.title, body = excluded.body, status = excluded.status, updated_at = now()
+      returning *`;
+    return subletPostRow(rows[0] as Row);
   }
 
   async getSearch(moveId: string) {

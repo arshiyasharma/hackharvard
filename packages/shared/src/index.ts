@@ -353,6 +353,10 @@ export interface Store {
     input: Partial<Listing> & Pick<Listing, "moveId" | "site" | "kind" | "url" | "title">,
   ): Promise<Listing>;
 
+  getSubletPost(moveId: string): Promise<SubletPost | undefined>;
+  /** Full replace of the owner's sublet-out listing (one per move). */
+  saveSubletPost(input: Omit<SubletPost, "updatedAt">): Promise<SubletPost>;
+
   listDeals(moveId: string): Promise<Deal[]>;
   getDeal(id: string): Promise<Deal | undefined>;
   getDealByCode(code: string): Promise<Deal | undefined>;
@@ -384,6 +388,50 @@ export function newId(prefix: string): string {
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+export type SubletPostStatus = "collecting" | "drafted" | "approved";
+
+/** The owner's own room, being written up as a sublet post (one per move). The deal holds the rent line. */
+export interface SubletPost {
+  moveId: string;
+  dealId: string | null;
+  rentCents: number | null;
+  availableFrom: string | null;
+  availableUntil: string | null;
+  /** Neighborhood or street, as the owner said it. */
+  area: string | null;
+  furnished: boolean | null;
+  /** "private room in a 3BR", "studio" */
+  roomType: string | null;
+  /** Selling points from the owner and from the photos. */
+  details: string[];
+  photoAttachmentIds: string[];
+  /** What vision saw in the photos, one sentence. */
+  photoNotes: string | null;
+  title: string | null;
+  body: string | null;
+  status: SubletPostStatus;
+  updatedAt: string;
+}
+
+export function subletPostDefaults(moveId: string): Omit<SubletPost, "updatedAt"> {
+  return {
+    moveId,
+    dealId: null,
+    rentCents: null,
+    availableFrom: null,
+    availableUntil: null,
+    area: null,
+    furnished: null,
+    roomType: null,
+    details: [],
+    photoAttachmentIds: [],
+    photoNotes: null,
+    title: null,
+    body: null,
+    status: "collecting",
+  };
 }
 
 /** Column defaults for a listing row, shared by every Store implementation. */
@@ -419,6 +467,7 @@ export class MemoryStore implements Store {
   listings = new Map<string, Listing>();
   deals = new Map<string, Deal>();
   dealParties = new Map<string, DealParty>();
+  subletPosts = new Map<string, SubletPost>();
   threads = new Map<string, ElfName>();
   sends = new Map<string, SendRecord>();
   cursors = new Map<string, string>();
@@ -548,6 +597,15 @@ export class MemoryStore implements Store {
     };
     this.items.set(id, item);
     return item;
+  }
+
+  async getSubletPost(moveId: string) {
+    return this.subletPosts.get(moveId);
+  }
+  async saveSubletPost(input: Omit<SubletPost, "updatedAt">) {
+    const post: SubletPost = { ...input, updatedAt: nowIso() };
+    this.subletPosts.set(input.moveId, post);
+    return post;
   }
 
   async getSearch(moveId: string) {

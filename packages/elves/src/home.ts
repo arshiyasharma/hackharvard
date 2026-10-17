@@ -1,6 +1,6 @@
+import { openDeal } from "@elves/engine";
 import { dedupeResults, isHardFlagged, type ListingSource, type ScamFlag, scamFlags } from "@elves/listings";
 import type { HousingSearch, Listing, ListingKind, ListingQuery, SiteResult } from "@elves/shared";
-import { openDeal } from "@elves/engine";
 import {
   batchText,
   type Elf,
@@ -19,7 +19,6 @@ import {
   type MissingRequirement,
   mergeSearch,
   missingRequirement,
-  parseBudgetCents,
   queriesFor,
   searchKey,
 } from "./home-facts.ts";
@@ -32,6 +31,7 @@ import {
   formatPicks,
   rankListings,
 } from "./home-rank.ts";
+import { handleSubletOut } from "./home-sublet.ts";
 import { pickSkill, type Skill, skillReply } from "./stubs.ts";
 
 export const LEASE_SKILL: Skill = {
@@ -126,7 +126,7 @@ export const homeElf: Elf = {
     if (decided) return decided;
     const text = batchText(ctx.batch);
     const parent = lastMessageId(ctx.batch);
-    const subletOut = await listOwnRoom(ctx, text, parent);
+    const subletOut = await handleSubletOut(ctx, text, parent);
     if (subletOut) return subletOut;
     const now = ctx.now();
     const saved = await ctx.store.getSearch(ctx.move.id);
@@ -385,44 +385,6 @@ function forwardedResults(search: HousingSearch, urls: string[]): SiteResult[] {
     photoCount: null,
     contact: { phone: null, email: null, messageUrl: url },
   }));
-}
-
-async function listOwnRoom(ctx: ElfContext, text: string, parent: string): Promise<ElfResult | null> {
-  if (!/\b(sublet|sublease)\b/i.test(text) || !/\b(my room|my place|my apartment|my lease)\b/i.test(text))
-    return null;
-  const cents = parseBudgetCents(text);
-  if (cents == null)
-    return {
-      replies: [
-        {
-          text: "What monthly rent should I list your room at? I won't post it until I have a number.",
-          parentMessageId: parent,
-        },
-      ],
-      boardPatch: { status: "waiting", currentTask: "Subletting your room", lastUpdate: "Need a rent" },
-    };
-  const deal = await openDeal(ctx.store, {
-    moveId: ctx.move.id,
-    mode: "sublet_out",
-    subjectId: null,
-    title: "room",
-    askCents: cents,
-    limitCents: cents,
-  });
-  return {
-    replies: [
-      {
-        text: `Listed your room at ${fmtPrice(cents, "month")} (ref ${deal.code}). Applicants text this number and I'll handle them. I won't go under that rent.`,
-        parentMessageId: parent,
-      },
-    ],
-    events: [{ type: "deal.opened", payload: { dealId: deal.id, mode: "sublet_out", code: deal.code, cents } }],
-    boardPatch: {
-      status: "working",
-      currentTask: `Subletting your room (ref ${deal.code})`,
-      lastUpdate: `Listed at ${fmtPrice(cents, "month")}`,
-    },
-  };
 }
 
 /** The message the owner sends. Home drafts it and does not contact the lister. */

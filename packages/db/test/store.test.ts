@@ -304,6 +304,52 @@ describe.each(backends)("Store contract (%s)", (_name, open) => {
     expect((await store.listListings(move.id)).map((l) => l.site)).toEqual(["craigslist", "airbnb"]);
   });
 
+  test("the sublet post is one row per move and round-trips every field", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner9"),
+      ownerSpaceId: handle("spc9"),
+      platform: "imessage",
+    });
+    expect(await store.getSubletPost(move.id)).toBeUndefined();
+    const post = await store.saveSubletPost({
+      moveId: move.id,
+      dealId: null,
+      rentCents: 150000,
+      availableFrom: "2026-06-01",
+      availableUntil: null,
+      area: "Allston",
+      furnished: true,
+      roomType: "private room in a 3BR",
+      details: ["laundry in building"],
+      photoAttachmentIds: [],
+      photoNotes: null,
+      title: null,
+      body: null,
+      status: "collecting",
+    });
+    expect(post.updatedAt).toBeTruthy();
+    const drafted = await store.saveSubletPost({
+      ...post,
+      dealId: "dl_1",
+      availableUntil: "2026-08-31",
+      photoAttachmentIds: ["att1"],
+      photoNotes: "Bright room with a big window.",
+      title: "Furnished room in Allston",
+      body: "Text us.",
+      status: "drafted",
+    });
+    expect(drafted).toMatchObject({
+      dealId: "dl_1",
+      rentCents: 150000,
+      availableUntil: "2026-08-31",
+      furnished: true,
+      details: ["laundry in building"],
+      photoAttachmentIds: ["att1"],
+      status: "drafted",
+    });
+    expect((await store.getSubletPost(move.id))?.title).toBe("Furnished room in Allston");
+  });
+
   test("listMoves returns every move in creation order", async () => {
     const before = (await store.listMoves()).length;
     const a = await store.createMove({

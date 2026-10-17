@@ -3,7 +3,7 @@ import { allElves, keywordRoute, route, spaceOwnerKey } from "@elves/elves";
 import { FakeLLM } from "@elves/llm";
 import type { InboundMessage } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
-import { type ElfName, MemoryStore } from "@elves/shared";
+import { type ElfName, MemoryStore, subletPostDefaults } from "@elves/shared";
 
 let seq = 0;
 const batchOf = (
@@ -124,6 +124,19 @@ describe("route()", () => {
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
     expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
+  });
+  test("a room photo goes to Home while it is writing the owner's sublet post", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    const opts = { firstContact: false, moveId: move.id };
+    const photo = () => batchOf(null, null, [{ id: "att1" }]);
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "home");
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "stuff", via: "photo" });
+    await fresh.saveSubletPost({ ...subletPostDefaults(move.id), rentCents: 150000, status: "collecting" });
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.saveSubletPost({ ...subletPostDefaults(move.id), status: "approved" });
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "stuff", via: "photo" });
   });
   test("a photo goes to the Stuff Elf unless it is first contact", async () => {
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({
