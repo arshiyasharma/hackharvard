@@ -48,11 +48,18 @@ The design doc had ten Elves, one per Photon line. We **folded them into five** 
 | --- | --- | --- | --- | --- |
 | **Crew Lead** | `crew_lead` | The chat, the plan, dates, addresses, roommates, hand-offs, approvals, Crew Board link | Intake, plan, approvals | **Built.** Claude-written replies; facts and items extracted from text and photos |
 | **Stuff Elf** | `stuff` | Everything the owner owns or wants | Sell, Buy, Donate / Last Call | **Sell built:** photo → vision → item, price range, floor, list price, "yes, list it" approval. Buy and Donate are keyword stubs |
-| **Money Elf** | `money` | Every dollar: escrow, Ledger, splits, scam check | Escrow, Ledger, splits, Scam Shield | Stub (fixed reply and board update) |
-| **Move-day Elf** | `moveday` | Getting the stuff from A to B | **Room Scan** (new), Haul quotes, Move Map | Stub. Room Scan is specced but not built |
+| **Money Elf** | `money` | Every dollar that moves | Escrow, Ledger, splits, scam check. **Nessie is the ledger** | Stub (fixed reply and board update) |
+| **Move-day Elf** | `moveday` | Getting the stuff from A to B | Room Scan (new), Haul quotes, Move Map. **Takes over after the Home Elf has planned everything**, then runs move day | Stub. Room Scan is specced but not built |
 | **Home Elf** | `home` | The place you leave, the place you go, the gap between | Lease, Hunt, Move-in week | **Hunt built:** a real-browser housing search (Craigslist, Airbnb, Booking.com, SpareFoot; Apartments.com, Zillow and FB Marketplace behind flags), scam flags, ranking, top three by text. Lease and Move-in are stubs |
 
-**Room Scan (Move-day Elf, new).** The owner texts 1–6 photos of a room. The Elf lists every item and the loose stuff to box, counts boxes by type, and adds up cubic feet and pounds. It then picks the smallest truck that fits (cargo van, 10', 15', 20' or 26'), estimates crew hours, and uses that Move Estimate for the truck, mover and storage quotes. Items the Stuff Elf is selling before move day are left out of the load. The tables are in the spec sheet.
+**Money Elf: Nessie is the ledger.** Every dollar in the move is recorded in Nessie (Capital One's API): sale proceeds, escrow holds and releases, the U-Haul and storage purchases, and roommate splits. The Ledger the owner sees is built from those Nessie transactions. See [Money](#4-money-scam-shield-sustainability).
+
+**Move-day Elf: works after the Home Elf.** The Home Elf settles where the owner is going and when: lease end, move-in date, the gap between, and whether storage is needed. Only then does the Move-day Elf plan and run move day:
+
+1. **Room Scan** (new). The owner texts 1–6 photos of a room. The Elf lists every item and the loose stuff to box, counts boxes by type, and adds up cubic feet and pounds. Items the Stuff Elf is selling before move day are left out of the load. The tables are in the spec sheet.
+2. **Finding the right U-Haul.** From the Room Scan estimate, it picks the vehicle using U-Haul's published specs: cargo van or 10', 15', 20' or 26' truck, with usable cubic feet, load limit and deck height. It also lists the number and sizes of boxes to buy, plus extras like a furniture dolly, appliance dolly, furniture pads and a mattress bag. It **asks for the cost and confirms with the owner** before booking anything. The cost then goes to the Money Elf.
+3. **Move Map and route planning.** It plans the route and order of stops: buyer pickups first, then loading, then storage, then the new place. It warns about low-clearance roads like Storrow and Memorial Drive, and shares a live map and ETAs with everyone who opts in.
+4. **Return time.** The whole plan is built around **when the U-Haul has to be returned** (and to which location). It schedules the stops so the truck makes it back on time, and warns the owner if the plan would run late, which means late fees or an extra day.
 
 **How a message finds its Elf** (`packages/elves/src/router.ts`). The first rule that matches wins:
 

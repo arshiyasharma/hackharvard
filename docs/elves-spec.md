@@ -10,8 +10,8 @@ Elves is a moving crew the owner texts. Five Elves share one phone number: the C
 | --- | --- | --- | --- | --- |
 | Crew Lead | `crew_lead` | The chat, the plan, dates, addresses, roommates, hand-offs | Intake, plan, approvals, board link | Yes |
 | Stuff Elf | `stuff` | Everything the owner owns or wants | Sell, Buy, Donate / Last Call | Sell only |
-| Money Elf | `money` | Every dollar that moves | Escrow, Ledger, splits, scam check | No (fixed reply) |
-| Move-day Elf | `moveday` | Getting the stuff from A to B | Room Scan, Haul quotes, Move Map | No (fixed reply); Room Scan is new |
+| Money Elf | `money` | Every dollar that moves | Escrow, Ledger, splits, scam check. Nessie is the ledger | No (fixed reply) |
+| Move-day Elf | `moveday` | Getting the stuff from A to B, after the Home Elf has planned everything | Room Scan, U-Haul pick and quote, Move Map route, return-time planning | No (fixed reply); Room Scan is new |
 | Home Elf | `home` | The place you leave, the place you go, the gap between | Lease, Hunt, Move-in week | No (fixed reply) |
 
 Every Elf has the same shape in code: `handle(ctx)` returns replies, a board update, events and changes to the move record (`packages/elves/src/contract.ts`). Elves never send messages themselves; the service does.
@@ -95,7 +95,7 @@ The Money Elf tracks every dollar in the move on one Ledger. No money moves with
 - **Escrow for sales:** a buyer pays into escrow, and the money is released to the owner when pickup is confirmed. If a pickup falls through, the buyer is refunded.
 - **Deposits:** tracks holding deposits on a sublet, the truck, storage or movers, with who paid and when each is due back.
 - **Moving Fund and splits:** roommates agree how to split shared costs (truck, storage, cleaning), evenly or by share. The Elf sends each person a payment request and tracks who has paid.
-- **Ledger:** one running list per move: date, what, who paid, who owes, amount, status (pending, paid, refunded). Its totals show on the Crew Board.
+- **Ledger (on Nessie):** Nessie is the ledger. Every sale, escrow hold and release, purchase (U-Haul, storage, movers) and split is a Nessie transaction, and the Ledger is one running list per move built from them: date, what, who paid, who owes, amount, status (pending, paid, refunded). Its totals show on the Crew Board.
 - **Scam check:** flags overpayment checks, "I'll send a mover", off-platform payment requests, deposits asked before a viewing, and prices far below market. It warns in plain words and never pays a flagged request.
 
 **Hand-offs:** sale proceeds come from the Stuff Elf; quotes to split come from the Move-day Elf; rent and deposit terms come from the Home Elf.
@@ -106,11 +106,13 @@ The Money Elf tracks every dollar in the move on one Ledger. No money moves with
 
 **Writes:** ledger entries, the Money board row, and the events `payment.requested`, `payment.received`, `escrow.released`, `scam.flagged` (proposed).
 
-**Status:** fixed reply today. The payments provider (Nessie in the README) is not yet chosen for production.
+**Status:** fixed reply today. Nessie is the ledger; a production payments provider (Stripe Connect behind `MoneyRails`) is later.
 
 ## 4. Move-day Elf (`moveday`)
 
-The Move-day Elf turns "what's in my room" into a box count, a truck size and real quotes, then runs the day itself. Room Scan is its new front door: every quote starts from it.
+The Move-day Elf turns "what's in my room" into a box count, the right U-Haul and a route, then runs the day itself.
+
+**When it works:** after the Home Elf has planned everything: lease end, move-in date, the gap between, and whether storage is needed. Then, on move day, it handles four things. Room Scan, which sizes the load. Finding the right U-Haul: truck size, number of boxes, furniture dolly and the rest of U-Haul's specs, then asking the cost and confirming with the owner. The Move Map and route planning. And all of it planned around **when the U-Haul has to be returned**. Room Scan is its front door: every quote starts from it.
 
 **Gets the message when:** it mentions trucks, U-Haul, movers, storage, permits, vans, boxes, packing, ETAs, meeting up or being late; when the owner sends room photos after a Room Scan ask; or when it's a reply in a Move-day thread.
 
@@ -152,9 +154,12 @@ Vehicle capacities are approximate and must be checked against the rental compan
 
 **Output (the Move Estimate):** item list by room, box counts by type, total cu ft and lb, recommended vehicle and fallback, crew hours, and a supplies list (boxes, tape, paper, mattress bag) with an estimated cost.
 
-### 4b. Haul quotes
+### 4b. The right U-Haul, and other haul quotes
 
 - **Input:** the Move Estimate, move-out date, both addresses, stairs and elevators, and whether storage is needed (from the Home Elf's gap check).
+- **Picks the U-Haul:** the smallest vehicle that fits, using U-Haul's published specs: cargo van or 10', 15', 20', 26' truck, with usable cu ft, max load, deck height and loading ramp. It also gives the number and sizes of boxes to buy, plus add-ons: furniture dolly, appliance dolly, furniture pads, mattress bag.
+- **Asks the cost and confirms:** it gets the price for the vehicle, mileage and add-ons for the owner's pickup and return times, shows the total, and books only after the owner confirms. The cost goes to the Money Elf.
+- **Return time:** it records when and where the truck must be returned. Everything else on move day is scheduled backward from that.
 - **Does:** gets quotes for the recommended truck rental, for 2-person movers by the hour, and for storage sized to the estimate (5×5, 5×10, 10×10). It shows 2–3 options side by side with total cost.
 - **Permits:** flags when the city needs a moving or parking permit for a truck on the street and drafts the application.
 - **Booking:** books only on the owner's OK. The cost goes to the Money Elf to split.
@@ -163,7 +168,8 @@ Vehicle capacities are approximate and must be checked against the rental compan
 
 - **On move day:** sends everyone (owner, roommates, movers, buyers picking up) a Move Map link with each person's live location and ETA, by consent.
 - **Running late:** "running late" or "on my way" updates the ETA for everyone and nudges the next pickup.
-- **Order of stops:** buyer pickups first, then load, then storage, then the new place.
+- **Route planning:** plans the route and order of stops: buyer pickups first, then load, then storage, then the new place. It flags low-clearance roads (Storrow and Memorial Drive) for trucks.
+- **Return deadline:** the route is built around when the U-Haul is due back. If the plan, or someone running late, would miss the return time, it warns the owner early and suggests what to drop or move.
 
 **Guardrails:** it never books, reserves or pays without the owner's OK. Estimates are labeled as estimates, and location is shared only by people who opt in.
 
