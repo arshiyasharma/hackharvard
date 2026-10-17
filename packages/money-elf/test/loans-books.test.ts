@@ -30,7 +30,7 @@ describe("Moving Fund loans (roommate IOUs)", () => {
     const ok = await s.say("yes");
     expect(reply(ok)).toContain("Sam's $80 is a Moving Fund loan at $20 a month.");
     expect(eventTypes(ok)).toContain("loan.created");
-    expect(ok.outbound?.[0]).toEqual({ toHandle: SAM, text: expect.stringContaining("payment plan") });
+    expect(ok.outbound?.[0]).toMatchObject({ toHandle: SAM, text: expect.stringContaining("payment plan") });
     const [loan] = [...s.rails.loans.values()];
     expect(loan).toMatchObject({ amountCents: 8000, monthlyCents: 2000, status: "open" });
     // The loan replaces Sam's payment request.
@@ -47,7 +47,9 @@ describe("Moving Fund loans (roommate IOUs)", () => {
 
     const p1 = await s.say("paid", { from: SAM, role: "roommate" });
     expect(reply(p1)).toContain("Sam paid $40 toward the truck; $40 left on the loan.");
-    expect(p1.outbound).toEqual([{ toHandle: OWNER, text: "Sam paid $40 into the Moving Fund; $40 left." }]);
+    expect(p1.outbound).toMatchObject([
+      { toHandle: OWNER, text: "Sam paid $40 into the Moving Fund; $40 left." },
+    ]);
     expect([...s.rails.loans.values()][0]?.amountCents).toBe(4000);
 
     const mine = await s.say("how much do I owe", { from: SAM, role: "roommate" });

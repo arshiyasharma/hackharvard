@@ -34,7 +34,7 @@ describe("splits / Moving Fund", () => {
     await say("yes");
     const r = await say("paid", { from: SAM, role: "roommate" });
     expect(reply(r)).toContain("Sam paid $45 for the cleaning.");
-    expect(r.outbound).toEqual([{ toHandle: OWNER, text: "Sam paid $45 into the Moving Fund." }]);
+    expect(r.outbound).toMatchObject([{ toHandle: OWNER, text: "Sam paid $45 into the Moving Fund." }]);
     expect(r.boardPatch?.lastUpdate).toBe("Ledger: $90 spent, $45 in the Moving Fund");
     const move = rails.calls.find(
       (c) =>
@@ -52,7 +52,7 @@ describe("splits / Moving Fund", () => {
     expect(reply(r)).toContain("What's Sam's number");
     expect(r.outbound ?? []).toEqual([]);
     const r2 = await say(`Sam is ${SAM}`);
-    expect(r2.outbound).toEqual([
+    expect(r2.outbound).toMatchObject([
       { toHandle: SAM, text: expect.stringContaining("Your share of the storage is $33.33") },
     ]);
     expect(reply(r2)).toContain("I just texted Sam the request for $33.33");
@@ -172,7 +172,7 @@ describe("escrow for sales (SPEC §4: two signals, release into the Moving Fund)
     const r2 = await s.say("yes");
     expect(reply(r2)).toContain("as soon as Alex confirms pickup");
     expect(eventTypes(r2)).not.toContain("escrow.released");
-    expect(r2.outbound).toEqual([
+    expect(r2.outbound).toMatchObject([
       { toHandle: ALEX, text: expect.stringContaining("Did you pick up the couch?") },
     ]);
     expect(s.rails.calls.filter((c) => c.op === "moveMoney").length).toBe(movesBefore);
@@ -180,7 +180,7 @@ describe("escrow for sales (SPEC §4: two signals, release into the Moving Fund)
     const r3 = await s.say("got it, thanks!", { from: ALEX, role: "buyer" });
     expect(reply(r3)).toContain("pickup of the couch is confirmed");
     expect(eventTypes(r3)).toContain("escrow.released");
-    expect(r3.outbound).toEqual([
+    expect(r3.outbound).toMatchObject([
       { toHandle: OWNER, text: expect.stringContaining("$90 moved from escrow into the Moving Fund") },
     ]);
     const release = s.rails.calls.filter((c) => c.op === "moveMoney").at(-1)?.input as {
@@ -254,7 +254,7 @@ describe("escrow for sales (SPEC §4: two signals, release into the Moving Fund)
     await say("the desk pickup fell through");
     const r = await say("yes");
     expect(reply(r)).toContain("Refunded Jo $60.");
-    expect(r.outbound).toEqual([
+    expect(r.outbound).toMatchObject([
       { toHandle: "+16175550198", text: "Your $60 for the desk has been refunded." },
     ]);
     expect(eventTypes(r)).toContain("escrow.refunded");
@@ -319,7 +319,7 @@ describe("no-show sweep (SPEC §4: 24h past pickup refunds the buyer)", () => {
 
     const r = await s.say("yes");
     expect(reply(r)).toContain("Refunded Alex $90.");
-    expect(r.outbound).toEqual([{ toHandle: ALEX, text: "Your $90 for the couch has been refunded." }]);
+    expect(r.outbound).toMatchObject([{ toHandle: ALEX, text: "Your $90 for the couch has been refunded." }]);
   });
 
   test("a reschedule clears the no-show question; a pickup before the deadline is not a no-show", async () => {
@@ -403,5 +403,34 @@ describe("scam check and guardrails", () => {
     const r = await say("how much do I owe", { from: SAM, role: "roommate" });
     expect(reply(r)).toContain("You owe $80: truck share $80.");
     expect(reply(r)).not.toContain("Priya");
+  });
+});
+
+describe("outbound texts are addressed to spaces (the crew's ElfOutbound)", () => {
+  test("owner texts go to the owner space, others to their own space, and unknown handles are dropped", async () => {
+    const s = setup();
+    await s.say(`Sam is ${SAM}`);
+    await s.say(`Priya is ${PRIYA}`);
+    await s.say("split the $90 gas with Sam and Priya");
+    const store = { listParticipants: async () => [{ handle: SAM, spaceId: "sp_sam" }] };
+    const move = { ...s.move, ownerSpaceId: "sp_owner" };
+    const ctx = (text: string, from: string, role: "owner" | "roommate") => ({
+      llm: { name: "fake", extract: async () => Promise.reject(new Error("no llm")) },
+      move,
+      participant: { handle: from, role },
+      batch: { spaceId: "sp_x", traceId: "tr", messages: [{ id: `m_${text}`, text }] },
+      traceId: "tr",
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      now: () => NOW,
+      store,
+    });
+
+    const sent = await s.elf.handle(ctx("yes", OWNER, "owner"));
+    // Sam has a space; Priya has never texted, so the shared pool can't reach her yet.
+    expect(sent.outbound).toEqual([expect.objectContaining({ spaceId: "sp_sam", toHandle: SAM })]);
+    expect(sent.events).toContainEqual({ type: "outbound.unreachable", payload: { toHandle: PRIYA } });
+
+    const paid = await s.elf.handle(ctx("paid", SAM, "roommate"));
+    expect(paid.outbound).toEqual([expect.objectContaining({ spaceId: "sp_owner", toHandle: OWNER })]);
   });
 });

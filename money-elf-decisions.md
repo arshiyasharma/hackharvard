@@ -64,7 +64,7 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     - The text reply still says "Reply yes", because polls on the shared iMessage pool aren't verified yet.
     - A roommate's payment-plan request reaches the owner with a poll attached to the outbound message.
     (team chose polls; mechanics Claude)
-37. **The reply contract grows, and the foundation service must handle the new fields** when the Money Elf is wired in. This needs the foundation side, so it's listed rather than built here:
+37. **The reply contract grows, and the foundation service must handle the new fields** when the Money Elf is wired in. **The `outbound` part is superseded by #48.** This needs the foundation side, so it's listed rather than built here:
     - Upload `images[]` with `POST /v1/projects/{id}/attachments` and send each as an attachment after the text.
     - Send `poll` and `outbound[].poll` as `{type:"poll"}` content.
     - Normalize inbound `poll.vote` content to `pollVote`.
@@ -102,3 +102,9 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     `books.ts` now reads purchases too, so "spent" counts them. Older expense withdrawals still count. (team, from SPEC; shapes Claude, verified)
 46. **Roommate shares stay a tagged withdrawal + deposit pair, not Nessie transfers.** SPEC §4 says transfers. A fresh probe on Oct 17 2026 still rejects `payee_id` (and `medium`) on `POST /accounts/{id}/transfers`, so a transfer can't say who received the money and the Ledger couldn't be rebuilt from it (#9). (Claude, verified)
 47. **The payments interface is `MoneyRails` (SPEC §4), in `packages/money-elf/src/rails.ts`.** The interface, the Nessie and fake implementations, the error class and the env helper are renamed together: `PaymentsProvider` → `MoneyRails`, `NessiePayments` → `NessieRails`, `FakePayments` → `FakeRails`, `PaymentsError` → `RailsError`, `paymentsFromEnv` → `railsFromEnv`. `createMoneyElf` and `MoneyService` take `rails` instead of `payments`. The fake stays for tests and the offline chat, so Stripe Connect can be swapped in later. (team, from SPEC)
+48. **Outbound texts use the crew's `ElfOutbound` shape: each one carries the `spaceId` it goes into, plus the `toHandle` it was meant for.** `team-stable` added `outbound` to `ElfResult` with a required `spaceId`, and the crew service sends into spaces, not to phone numbers. The shared pool can only text someone who has texted first, so a handle with no space can't be reached anyway. `finish()` in `packages/money-elf/src/money-elf.ts` does the addressing:
+    - The owner's texts go to `move.ownerSpaceId`. Anyone else's go to the space they text from, looked up with `ctx.store.listParticipants`. `MoneyContext` takes an optional `store`, and `MoneyMove` an optional `ownerSpaceId`, both of which the crew's `ElfContext` already has.
+    - A handle with no space is left out and logged as an `outbound.unreachable` event.
+    - Without a store (tests, local chat, smoke test), the handle stands in for the space.
+    - `MoneyService` methods still return handle-addressed texts, so the Deal Engine can call them directly.
+    (Claude; found merging `team-stable`)

@@ -3,7 +3,7 @@
  *
  * These are structural subsets of the crew's contract (packages/elves/src/contract.ts and
  * packages/shared/src/index.ts), so the crew's ElfContext can be passed straight in and the returned
- * MoneyResult is a valid ElfResult plus new fields (outbound, images, poll). test/foundation-compat.ts
+ * MoneyResult is a valid ElfResult plus new fields (images, poll; outbound carries the handle too). test/foundation-compat.ts
  * makes the typecheck prove it.
  */
 import type { z } from "zod";
@@ -29,6 +29,13 @@ export interface MoneyMove {
   id: string;
   ownerHandle: string;
   name: string | null;
+  /** The owner's chat (the crew's Move has it), for outbound texts to the owner. */
+  ownerSpaceId?: string;
+}
+
+/** The slice of the crew Store the Money Elf reads: who is in the move and which space each one texts from. */
+export interface MoneySpaces {
+  listParticipants(moveId: string): Promise<{ handle: string; spaceId: string }[]>;
 }
 
 export interface MoneyParticipant {
@@ -57,6 +64,11 @@ export interface MoneyContext {
   traceId: string;
   log: MoneyLogger;
   now: () => Date;
+  /**
+   * The crew Store, used to address outbound texts to a space. Without it (tests, local chat, smoke test) each
+   * outbound text's spaceId is just the person's handle.
+   */
+  store?: MoneySpaces;
 }
 
 export interface MoneyReply {
@@ -90,6 +102,11 @@ export interface OutboundMessage {
   poll?: MoneyPoll;
 }
 
+/** An outbound message addressed for the crew service, which sends texts into a space (ElfOutbound). */
+export interface MoneyOutbound extends OutboundMessage {
+  spaceId: string;
+}
+
 export interface MoneyEvent {
   type: string;
   payload: Record<string, unknown>;
@@ -99,8 +116,12 @@ export interface MoneyResult {
   replies: MoneyReply[];
   boardPatch?: { status?: ElfStatus; currentTask?: string; lastUpdate?: string };
   events?: MoneyEvent[];
-  /** New: messages the service sends to other participants by handle. */
-  outbound?: OutboundMessage[];
+  /**
+   * Texts for other people's chats (the crew's ElfOutbound), plus the handle each was meant for. A handle with
+   * no space yet (they've never texted, so the shared pool can't reach them) is left out and logged as an
+   * `outbound.unreachable` event.
+   */
+  outbound?: MoneyOutbound[];
   /** New: images sent in the sender's chat after the reply text (the Ledger card). */
   images?: MoneyImage[];
   /** New: a poll sent in the sender's chat after the reply (approvals). */

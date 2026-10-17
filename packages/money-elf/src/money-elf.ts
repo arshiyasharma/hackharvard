@@ -13,7 +13,15 @@ import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
 import { approvalPollFor, MoneyService, type OpResult } from "./service.ts";
-import type { MoneyContext, MoneyImage, MoneyPoll, MoneyResult } from "./types.ts";
+import type {
+  MoneyContext,
+  MoneyEvent,
+  MoneyImage,
+  MoneyOutbound,
+  MoneyPoll,
+  MoneyResult,
+  OutboundMessage,
+} from "./types.ts";
 
 export const MONEY_DESCRIPTION =
   "Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the ledger, scams";
@@ -355,6 +363,28 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
   return finish(service, ctx, r, extras);
 }
 
+/**
+ * Address each outbound text to the chat it goes into. The owner's is the move's owner space; anyone else's is
+ * the space they text from. Without a crew store, the handle stands in for the space.
+ */
+async function addressed(
+  ctx: MoneyContext,
+  out: OutboundMessage[],
+): Promise<{ outbound: MoneyOutbound[]; unreachable: MoneyEvent[] }> {
+  if (!ctx.store) return { outbound: out.map((o) => ({ ...o, spaceId: o.toHandle })), unreachable: [] };
+  const people = out.length ? await ctx.store.listParticipants(ctx.move.id) : [];
+  const outbound: MoneyOutbound[] = [];
+  const unreachable: MoneyEvent[] = [];
+  for (const o of out) {
+    const spaceId =
+      (o.toHandle === ctx.move.ownerHandle ? ctx.move.ownerSpaceId : undefined) ??
+      people.find((p) => p.handle === o.toHandle)?.spaceId;
+    if (spaceId) outbound.push({ ...o, spaceId });
+    else unreachable.push({ type: "outbound.unreachable", payload: { toHandle: o.toHandle } });
+  }
+  return { outbound, unreachable };
+}
+
 function merge(a: OpResult, b: OpResult): OpResult {
   return {
     lines: [...a.lines, ...b.lines],
@@ -379,12 +409,17 @@ async function finish(
   // Anything the owner was just asked to approve also gets a tap-to-answer poll.
   const [pid] = ctx.participant.role === "owner" ? pendingIdsIn(r.events) : [];
   const poll = extras.poll ?? (pid ? await approvalPoll(service, ctx.move.id, pid) : undefined);
+  const { outbound, unreachable } = await addressed(ctx, r.outbound);
   return {
     ...(extras.images?.length ? { images: extras.images } : {}),
     ...(poll ? { poll } : {}),
     replies: lines.length ? [{ text: lines.join("\n"), parentMessageId: lastId(ctx) }] : [],
-    outbound: r.outbound,
-    events: [...r.events, { type: "ledger.totals", payload: { ...books, owes: books.owes.length } }],
+    outbound,
+    events: [
+      ...r.events,
+      ...unreachable,
+      { type: "ledger.totals", payload: { ...books, owes: books.owes.length } },
+    ],
     boardPatch: {
       status: pending ? "waiting" : entries.length ? "working" : "idle",
       currentTask: pending

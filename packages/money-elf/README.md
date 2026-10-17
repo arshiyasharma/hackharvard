@@ -34,7 +34,7 @@ const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
 
 `handle()` takes the foundation `ElfContext` as is, and returns an `ElfResult` plus new fields the service has to send. None of this is wired yet (decision #37):
 
-- `outbound: {toHandle, text, poll?}[]`: messages to other people (roommates, buyers, the owner).
+- `outbound: {spaceId, toHandle, text, poll?}[]`: messages to other people (roommates, buyers, the owner), in the crew's `ElfOutbound` shape. The owner's go to `move.ownerSpaceId`, and everyone else's to the space they text from (via `ctx.store`). A handle with no space yet is dropped and reported as an `outbound.unreachable` event.
 - `images: {contentType, filename, bytes, alt}[]`: upload each with `POST /v1/projects/{id}/attachments` (multipart/related: a JSON part `{contentType, sizeBytes, filename}`, then the bytes), then send `{type:"attachment", attachmentId}` after the reply text.
 - `poll: {question, options, selectionMode}`: send as `{type:"poll", ...}` after the reply text.
 - Inbound: map a `poll.vote` content's `selectedOptions` onto the message's `pollVote`, and route any vote whose option id starts with `money:` to this Elf. Today the foundation router sends empty-text messages to the Crew Lead.

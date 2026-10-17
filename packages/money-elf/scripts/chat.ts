@@ -27,7 +27,7 @@ import {
   parseAmounts,
   readTag,
 } from "../src/index.ts";
-import type { MoneyContext, MoneyPoll, MoneyResult, Role } from "../src/types.ts";
+import type { MoneyContext, MoneyPoll, MoneyResult, OutboundMessage, Role } from "../src/types.ts";
 
 const useNessie = process.argv.includes("--nessie");
 const OWNER = "+16175550100";
@@ -75,7 +75,7 @@ const log = {
   error: (m: string, d?: unknown) => console.error(yellow(`error: ${m} ${d ? JSON.stringify(d) : ""}`)),
 };
 
-function print(r: MoneyResult) {
+function print(r: Omit<MoneyResult, "outbound"> & { outbound?: OutboundMessage[] }) {
   for (const x of r.replies)
     console.log(
       green(x.text.replace(/^/gm, "  Money Elf: ").replace(/\n {2}Money Elf: /g, "\n             ")),
