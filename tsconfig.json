@@ -11,7 +11,7 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["bun-types"],
+    "types": ["bun"],
     "paths": {
       "@elves/shared": ["./packages/shared/src/index.ts"],
       "@elves/photon": ["./packages/photon/src/index.ts"],

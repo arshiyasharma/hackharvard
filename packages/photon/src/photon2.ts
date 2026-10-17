@@ -1,5 +1,5 @@
 import { createLogger, type Logger } from "@elves/shared";
-import type { PhotonClient } from "./client.ts";
+import { PhotonApiError, type PhotonClient } from "./client.ts";
 import {
   type InboundMessage,
   normalizePhotonMessage,
@@ -62,6 +62,8 @@ export class Photon2Transport implements Transport {
   private readonly cursor: Photon2TransportOptions["cursor"];
   private readonly platform?: string;
   private readonly log: Logger;
+  /** Spaces where Photon refused a threaded reply (409 SPACE_NOT_SENDABLE); later sends go flat. */
+  readonly noThreads = new Set<string>();
   /** Bounded set of handled message ids so overlapping polls or replays are idempotent. */
   private seen = new Set<string>();
   private seenOrder: string[] = [];
@@ -197,17 +199,25 @@ export class Photon2Transport implements Transport {
   }
 
   async send(reply: OutboundReply, idempotencyKey: string) {
-    const res = await this.client.sendText(
-      {
-        spaceId: reply.spaceId,
-        senderId: reply.senderId,
-        text: reply.text,
-        parentMessageId: reply.parentMessageId ?? undefined,
-        format: reply.format ?? "plain",
-      },
-      idempotencyKey,
-    );
-    return { id: res.id };
+    const threaded = !!reply.parentMessageId && !this.noThreads.has(reply.spaceId);
+    const attempt = (parentMessageId: string | undefined, key: string) =>
+      this.client.sendText(
+        { spaceId: reply.spaceId, senderId: reply.senderId, text: reply.text, parentMessageId, format: reply.format ?? "plain" },
+        key,
+      );
+    try {
+      const res = await attempt(threaded ? (reply.parentMessageId as string) : undefined, idempotencyKey);
+      return { id: res.id };
+    } catch (err) {
+      // Shared iMessage lines (and some spaces) refuse threaded replies: fall back to a flat send once.
+      if (threaded && err instanceof PhotonApiError && err.status === 409 && err.code === "SPACE_NOT_SENDABLE") {
+        this.noThreads.add(reply.spaceId);
+        this.log.warn("threaded reply refused; resending flat", { spaceId: reply.spaceId, detail: err.message });
+        const res = await attempt(undefined, `${idempotencyKey}:flat`);
+        return { id: res.id };
+      }
+      throw err;
+    }
   }
   async react(target: { spaceId: string; senderId: string; messageId: string }, emoji: string, key: string) {
     await this.client.react({ ...target, reaction: emoji }, key);

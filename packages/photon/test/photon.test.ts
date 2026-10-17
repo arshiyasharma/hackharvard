@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { normalizePhotonMessage, PhotonApiError, PhotonClient, type PhotonMessage } from "@elves/photon";
+import { type FetchLike, normalizePhotonMessage, Photon2Transport, PhotonApiError, PhotonClient, type PhotonMessage } from "@elves/photon";
+import { createLogger } from "@elves/shared";
 
 const base = (over: Partial<PhotonMessage> = {}): PhotonMessage => ({
   id: "pho_msg_1",
@@ -77,7 +78,7 @@ describe("normalizePhotonMessage", () => {
 
 describe("PhotonClient", () => {
   const calls: { url: string; init: RequestInit }[] = [];
-  const fakeFetch: typeof fetch = async (input, init) => {
+  const fakeFetch: FetchLike = async (input, init) => {
     const url = String(input);
     calls.push({ url, init: init ?? {} });
     if (url.includes("/messages?") || url.endsWith("/messages")) {
@@ -148,5 +149,29 @@ describe("PhotonClient", () => {
       expect(err.code).toBe("FORBIDDEN");
       expect(err.requestId).toBe("req_1");
     }
+  });
+});
+
+describe("Photon2Transport.send", () => {
+  test("falls back to a flat send when the space refuses threaded replies, and remembers it", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fakeFetch: FetchLike = async (_input, init) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      bodies.push(body);
+      if (body.parentMessageId) {
+        return new Response(JSON.stringify({ code: "SPACE_NOT_SENDABLE", status: 409, detail: "Replies are not supported for this Space" }), { status: 409 });
+      }
+      return new Response(JSON.stringify({ id: `sent_${bodies.length}`, status: "accepted" }), { status: 202 });
+    };
+    const client = new PhotonClient({ projectId: "p", apiKey: "k", fetch: fakeFetch });
+    const t = new Photon2Transport({ client, logger: createLogger("t", "error") });
+    const r1 = await t.send({ spaceId: "s1", senderId: "a", text: "hi", parentMessageId: "m1" }, "reply:m1:0");
+    expect(r1.id).toBe("sent_2");
+    expect(bodies.map((b) => b.parentMessageId)).toEqual(["m1", undefined]);
+    expect(t.noThreads.has("s1")).toBe(true);
+    // next send to the same space goes flat straight away
+    await t.send({ spaceId: "s1", senderId: "a", text: "again", parentMessageId: "m2" }, "reply:m2:0");
+    expect(bodies.length).toBe(3);
+    expect(bodies[2]!.parentMessageId).toBeUndefined();
   });
 });

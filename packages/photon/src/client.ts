@@ -6,11 +6,13 @@ import type {
   SharedLineAssignment,
 } from "./types.ts";
 
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export interface PhotonClientOptions {
   projectId: string;
   apiKey: string;
   baseUrl?: string;
-  fetch?: typeof fetch;
+  fetch?: FetchLike;
   timeoutMs?: number;
 }
 
@@ -34,14 +36,14 @@ export class PhotonClient {
   readonly projectId: string;
   private readonly apiKey: string;
   private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: FetchLike;
   private readonly timeoutMs: number;
 
   constructor(opts: PhotonClientOptions) {
     this.projectId = opts.projectId;
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? "https://api.photon.codes").replace(/\/$/, "");
-    this.fetchImpl = opts.fetch ?? fetch;
+    this.fetchImpl = opts.fetch ?? ((input, init) => fetch(input, init));
     this.timeoutMs = opts.timeoutMs ?? 20_000;
   }
 
