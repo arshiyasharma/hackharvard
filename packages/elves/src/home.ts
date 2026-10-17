@@ -23,6 +23,7 @@ import {
   searchKey,
 } from "./home-facts.ts";
 import { extractListingUrls, type FollowUp, parseFollowUp, wantsFreshSearch } from "./home-followups.ts";
+import { handleLease, isLeasePermissionQuestion } from "./home-lease.ts";
 import {
   type Candidate,
   describeAsk,
@@ -128,6 +129,11 @@ export const homeElf: Elf = {
     const parent = lastMessageId(ctx.batch);
     const subletOut = await handleSubletOut(ctx, text, parent);
     if (subletOut) return subletOut;
+    const lease = await handleLease(ctx, text, parent);
+    if (lease) return lease;
+    // "can I sublet?" with no lease on file: only the PDF can answer that.
+    if (isLeasePermissionQuestion(text) && !(await ctx.store.getLeaseReading(ctx.move.id)))
+      return skillReply(ctx, "home", LEASE_SKILL);
     const now = ctx.now();
     const saved = await ctx.store.getSearch(ctx.move.id);
     const listings = await ctx.store.listListings(ctx.move.id);

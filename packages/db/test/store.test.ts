@@ -350,6 +350,30 @@ describe.each(backends)("Store contract (%s)", (_name, open) => {
     expect((await store.getSubletPost(move.id))?.title).toBe("Furnished room in Allston");
   });
 
+  test("a lease reading is one row per move and a new PDF replaces it", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner10"),
+      ownerSpaceId: handle("spc10"),
+      platform: "imessage",
+    });
+    expect(await store.getLeaseReading(move.id)).toBeUndefined();
+    const first = await store.saveLeaseReading({
+      moveId: move.id,
+      attachmentId: "att_lease1",
+      filename: "lease.pdf",
+      reading: { sublet: "with_consent", noticeDays: 30, nested: { ok: true } },
+    });
+    expect(first.readAt).toBeTruthy();
+    const second = await store.saveLeaseReading({
+      moveId: move.id,
+      attachmentId: "att_lease2",
+      filename: null,
+      reading: { sublet: "prohibited" },
+    });
+    expect(second.attachmentId).toBe("att_lease2");
+    expect((await store.getLeaseReading(move.id))?.reading).toEqual({ sublet: "prohibited" });
+  });
+
   test("listMoves returns every move in creation order", async () => {
     const before = (await store.listMoves()).length;
     const a = await store.createMove({

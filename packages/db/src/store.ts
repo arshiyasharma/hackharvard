@@ -9,6 +9,7 @@ import {
   type EventRow,
   type HousingSearch,
   type Item,
+  type LeaseReading,
   type Listing,
   listingDefaults,
   type Move,
@@ -98,6 +99,16 @@ function itemRow(r: Row): Item {
     listingApproved: Boolean(r.listing_approved),
     outcome: r.outcome as Item["outcome"],
     createdAt: iso(r.created_at),
+  };
+}
+
+function leaseRow(r: Row): LeaseReading {
+  return {
+    moveId: r.move_id as string,
+    attachmentId: r.attachment_id as string,
+    filename: str(r.filename),
+    reading: (json(r.reading) ?? {}) as Record<string, unknown>,
+    readAt: iso(r.read_at),
   };
 }
 
@@ -381,6 +392,21 @@ export class PostgresStore implements Store {
         outcome = excluded.outcome
       returning *`;
     return itemRow(rows[0] as Row);
+  }
+
+  async getLeaseReading(moveId: string) {
+    const rows = await this.sql`select * from lease_readings where move_id = ${moveId}`;
+    return rows[0] ? leaseRow(rows[0]) : undefined;
+  }
+  async saveLeaseReading(input: Omit<LeaseReading, "readAt">) {
+    const rows = await this.sql`
+      insert into lease_readings (move_id, attachment_id, filename, reading)
+      values (${input.moveId}, ${input.attachmentId}, ${input.filename}, ${JSON.stringify(input.reading)}::jsonb)
+      on conflict (move_id) do update set
+        attachment_id = excluded.attachment_id, filename = excluded.filename, reading = excluded.reading,
+        read_at = now()
+      returning *`;
+    return leaseRow(rows[0] as Row);
   }
 
   async getSubletPost(moveId: string) {

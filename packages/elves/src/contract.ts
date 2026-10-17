@@ -33,8 +33,23 @@ export function memoryPreamble(c: ConversationContext): string {
   return renderPreamble(c);
 }
 
+/** An attachment with no mime type is taken for a photo (older Photon payloads did not carry one). */
+export function isImageAttachment(a: { mimeType?: string }): boolean {
+  return !a.mimeType || a.mimeType.startsWith("image/");
+}
+
+export function isDocumentAttachment(a: { mimeType?: string; name?: string }): boolean {
+  return a.mimeType === "application/pdf" || /\.pdf$/i.test(a.name ?? "");
+}
+
+/** Photos in the batch (PDFs are documents, not photos). */
 export function hasPhotos(batch: Batch): boolean {
-  return batch.messages.some((m) => m.attachments.length > 0);
+  return batch.messages.some((m) => m.attachments.some(isImageAttachment));
+}
+
+/** PDFs in the batch: a lease for the Home Elf. */
+export function hasDocuments(batch: Batch): boolean {
+  return batch.messages.some((m) => m.attachments.some(isDocumentAttachment));
 }
 
 export interface ElfReply {

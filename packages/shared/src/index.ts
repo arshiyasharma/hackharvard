@@ -353,6 +353,10 @@ export interface Store {
     input: Partial<Listing> & Pick<Listing, "moveId" | "site" | "kind" | "url" | "title">,
   ): Promise<Listing>;
 
+  getLeaseReading(moveId: string): Promise<LeaseReading | undefined>;
+  /** Full replace of the move's lease reading (one per move; a new PDF replaces it). */
+  saveLeaseReading(input: Omit<LeaseReading, "readAt">): Promise<LeaseReading>;
+
   getSubletPost(moveId: string): Promise<SubletPost | undefined>;
   /** Full replace of the owner's sublet-out listing (one per move). */
   saveSubletPost(input: Omit<SubletPost, "updatedAt">): Promise<SubletPost>;
@@ -388,6 +392,15 @@ export function newId(prefix: string): string {
 
 export function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** What the Home Elf read out of the owner's lease PDF; the shape of `reading` is the Elf's zod schema. */
+export interface LeaseReading {
+  moveId: string;
+  attachmentId: string;
+  filename: string | null;
+  reading: Record<string, unknown>;
+  readAt: string;
 }
 
 export type SubletPostStatus = "collecting" | "drafted" | "approved";
@@ -468,6 +481,7 @@ export class MemoryStore implements Store {
   deals = new Map<string, Deal>();
   dealParties = new Map<string, DealParty>();
   subletPosts = new Map<string, SubletPost>();
+  leases = new Map<string, LeaseReading>();
   threads = new Map<string, ElfName>();
   sends = new Map<string, SendRecord>();
   cursors = new Map<string, string>();
@@ -597,6 +611,15 @@ export class MemoryStore implements Store {
     };
     this.items.set(id, item);
     return item;
+  }
+
+  async getLeaseReading(moveId: string) {
+    return this.leases.get(moveId);
+  }
+  async saveLeaseReading(input: Omit<LeaseReading, "readAt">) {
+    const rec: LeaseReading = { ...input, readAt: nowIso() };
+    this.leases.set(input.moveId, rec);
+    return rec;
   }
 
   async getSubletPost(moveId: string) {

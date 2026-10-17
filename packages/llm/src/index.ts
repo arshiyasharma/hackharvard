@@ -19,6 +19,11 @@ export interface ImageInput {
   base64: string;
 }
 
+export interface DocumentInput {
+  mediaType: "application/pdf";
+  base64: string;
+}
+
 export interface LLM {
   readonly name: string;
   classify(input: ClassifyInput): Promise<ClassifyResult>;
@@ -28,6 +33,11 @@ export interface LLM {
   extractFromImages<T>(
     schema: z.ZodType<T>,
     input: { system: string; user: string; images: ImageInput[] },
+  ): Promise<T>;
+  /** Structured extraction over a PDF (a lease) plus text. */
+  extractFromDocument<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; document: DocumentInput },
   ): Promise<T>;
 }
 
@@ -73,6 +83,12 @@ export class FakeLLM implements LLM {
   async extractFromImages<T>(schema: z.ZodType<T>): Promise<T> {
     if (this.visionResult == null) throw new Error("FakeLLM.visionResult not set");
     return schema.parse(this.visionResult);
+  }
+  /** Tests set this to control what a document read returns. */
+  documentResult: unknown = null;
+  async extractFromDocument<T>(schema: z.ZodType<T>): Promise<T> {
+    if (this.documentResult == null) throw new Error("FakeLLM.documentResult not set");
+    return schema.parse(this.documentResult);
   }
 }
 
@@ -174,6 +190,28 @@ export class ClaudeLLM implements LLM {
       messages: [{ role: "user", content }],
     });
     if (res.parsed_output == null) throw new Error("image extraction returned no parsable output");
+    return res.parsed_output;
+  }
+
+  async extractFromDocument<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; document: DocumentInput },
+  ): Promise<T> {
+    const content: Anthropic.ContentBlockParam[] = [
+      {
+        type: "document",
+        source: { type: "base64", media_type: input.document.mediaType, data: input.document.base64 },
+      },
+      { type: "text", text: input.user },
+    ];
+    const res = await this.client.messages.parse({
+      model: this.smart,
+      max_tokens: 4096,
+      output_config: { effort: "low", format: zodOutputFormat(schema) },
+      system: input.system,
+      messages: [{ role: "user", content }],
+    });
+    if (res.parsed_output == null) throw new Error("document extraction returned no parsable output");
     return res.parsed_output;
   }
 }

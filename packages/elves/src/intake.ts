@@ -2,7 +2,7 @@ import { openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
 import type { Item } from "@elves/shared";
 import { z } from "zod";
-import type { ElfContext } from "./contract.ts";
+import { type ElfContext, isImageAttachment } from "./contract.ts";
 import { CATEGORIES, CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB } from "./facts.ts";
 
 export const ItemIdentification = z.object({
@@ -41,7 +41,9 @@ export async function loadBatchImages(
   ctx: ElfContext,
   max = 4,
 ): Promise<{ images: BatchImage[]; failed: number }> {
-  const photoIds = ctx.batch.messages.flatMap((m) => m.attachments.map((a) => a.id));
+  const photoIds = ctx.batch.messages.flatMap((m) =>
+    m.attachments.filter(isImageAttachment).map((a) => a.id),
+  );
   const images: BatchImage[] = [];
   let failed = 0;
   for (const id of photoIds.slice(0, max)) {

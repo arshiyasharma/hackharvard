@@ -9,7 +9,7 @@ let seq = 0;
 const batchOf = (
   text: string | null,
   parentMessageId: string | null = null,
-  attachments: { id: string }[] = [],
+  attachments: { id: string; mimeType?: string; name?: string }[] = [],
 ): Batch => {
   const m: InboundMessage = {
     id: `m${++seq}`,
@@ -124,6 +124,11 @@ describe("route()", () => {
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
     expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
+  });
+  test("a PDF is a lease for the Home Elf, even on first contact", async () => {
+    const pdf = batchOf("here's my lease", null, [{ id: "att1", mimeType: "application/pdf" }]);
+    expect(await route(pdf, deps, { firstContact: true })).toMatchObject({ elf: "home", via: "document" });
+    expect(await route(pdf, deps, { firstContact: false })).toMatchObject({ elf: "home", via: "document" });
   });
   test("a room photo goes to Home while it is writing the owner's sublet post", async () => {
     const fresh = new MemoryStore();

@@ -2,7 +2,7 @@ import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } 
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, Role, Store } from "@elves/shared";
-import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { batchText, type Elf, hasDocuments, hasPhotos } from "./contract.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { parsePriceCents } from "./intake.ts";
@@ -11,6 +11,7 @@ export type RouteVia =
   | "first_contact"
   | "counterparty"
   | "thread"
+  | "document"
   | "deal"
   | "followup"
   | "photo"
@@ -77,6 +78,9 @@ export async function route(
     const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
+  // A PDF is a lease: the Home Elf reads it, even as the first text (it greets as the crew).
+  if (hasDocuments(batch) && deps.elves.some((e) => e.name === "home"))
+    return { elf: "home", via: "document", confidence: 0.95 };
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
 
   for (const m of [...batch.messages].reverse()) {

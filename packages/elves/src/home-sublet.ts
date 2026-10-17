@@ -37,8 +37,12 @@ const OWN_PLACE =
 
 /** "sublet my room", "rent out my place": the owner wants their own room listed. */
 export function isSubletOutIntent(text: string): boolean {
-  return SUBLET_VERB.test(text) && OWN_PLACE.test(text);
+  return SUBLET_VERB.test(text) && OWN_PLACE.test(text) && !ASKING_ABOUT.test(text);
 }
+
+/** "can I sublet my room?" or "check the lease" is a question for the lease reader, not a listing. */
+const ASKING_ABOUT =
+  /^\s*(?:can|could|may|should|am i|is it|does|do i|what|how|when|is|are)\b|\b(?:allowed to|able to|can i|could i|am i allowed|is it ok|check (?:the|my) lease|lease says?|landlord says?)\b/i;
 
 const DETAIL_WORDS: [RegExp, string][] = [
   [/\bnear (?:the )?(?:t|train|red line|green line|orange line|blue line|b line|subway)\b/i, "near the T"],
