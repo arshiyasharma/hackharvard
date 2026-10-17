@@ -4,7 +4,7 @@ A running log of decisions made while building the Money Elf (spec section 3). N
 
 ## 2026-10-17
 
-1. **Branch base: clean `money-elf` (from `main`), not `phase-1-foundation`.** The Money Elf code takes priority over the other branch when both merge into main. (team)
+1. **Branch base: clean `money-elf` (from `main`), not `phase-1-foundation`.** The Money Elf code takes priority over the other branch when both merge into main. (team) **Superseded by #39.**
 2. **Scope: only the Money Elf.** The foundation code's 10-Elf layout vs. the spec's 5 Elves is out of scope here; the Elf name stays `money`. (team)
 3. **Self-contained package `packages/money-elf/` (originally `packages/money/`, see #23).** Nothing outside it (except root config) is added, so "ours wins" on merge cannot overwrite teammates' files. The package defines its own minimal context types that are structurally compatible with foundation's `ElfContext`/`ElfResult` (`packages/elves/src/contract.ts`), so wiring it in is a one-line swap of the `money` stub. (Claude)
 4. **Payments model: simulated Nessie accounts.** Each participant (owner, roommate, buyer) gets a Nessie customer and checking account, created lazily; each move gets one escrow account. Split requests are Nessie bills. The local Ledger mirrors everything. (team)
@@ -32,7 +32,7 @@ A running log of decisions made while building the Money Elf (spec section 3). N
 22. **Card and bank numbers in a text are refused** (Luhn-checked card numbers, routing/account numbers): the Elf replies with a warning, and the number is never parsed, stored, echoed or put in an event. (Claude)
 23. **Everything is named for the Money Elf: package `packages/money-elf/` (`@elves/money-elf`), Elf in `src/money-elf.ts`, tests in `test/money-elf.test.ts`.** The branch builds only the Money Elf, so the names say so and won't collide with a generic `elf.ts` or `money` package elsewhere. (team)
 24. **Local testing is a terminal chat, `packages/money-elf/scripts/chat.ts`**, with fake payments by default and `--nessie` for the real sandbox. You can switch speakers (owner / roommate / buyer) and simulate an escrow sale, and texts to other people are printed instead of sent. It uses the rule parser only, because the LLM client lives in the foundation branch. (Claude)
-25. **The root files on `money-elf` (`package.json`, `biome.json`, `tsconfig.json`, `bun.lock`, `.gitignore`) are the foundation branch's versions plus only the Money Elf additions** (one `@elves/money-elf` path in `tsconfig.json`, its workspace entry in `bun.lock`). So when the branches meet in main, our versions are a superset of the foundation's and don't drop teammates' packages or dependencies. Don't re-run `bun install` on this branch alone: it would prune the lockfile down to only this package. `.gitignore` keeps `.env` out of git. (Claude)
+25. **Superseded by #39.** The root files on `money-elf` (`package.json`, `biome.json`, `tsconfig.json`, `bun.lock`, `.gitignore`) are the foundation branch's versions plus only the Money Elf additions** (one `@elves/money-elf` path in `tsconfig.json`, its workspace entry in `bun.lock`). So when the branches meet in main, our versions are a superset of the foundation's and don't drop teammates' packages or dependencies. Don't re-run `bun install` on this branch alone: it would prune the lockfile down to only this package. `.gitignore` keeps `.env` out of git. (Claude)
 26. **Nessie is the live ledger.** The "ledger" reply and the Crew Board's Money line are rebuilt every turn by reading the move's Nessie accounts back (`src/books.ts`): withdrawals, deposits, bills and loans. The local store keeps only what Nessie has no field for: who owes whom, phone numbers, pending approvals, escrow state and deposit due-back dates. We're optimizing for creative use of Nessie at the hackathon, not for production, so Nessie outages aren't a concern. (team)
 27. **Every Nessie movement is tagged in its description** as `[elves:<kind>:<ledgerEntryId>]`, with kinds expense, deposit_out, deposit_back, share_paid, share_paid_outside, loan_payment, escrow_in, escrow_release, escrow_refund and payment. Only tagged records count toward the totals. Nessie loans carry `[elves:loan:<entryId>]`. (Claude)
 28. **The Moving Fund is a Nessie Savings account on the owner's own customer.**
@@ -71,4 +71,16 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     - Route any vote whose option id starts with `money:` to the Money Elf. The foundation router sends empty-text messages to the Crew Lead today.
     - Mount `createLedgerHandler` under `/ledger/`.
     (Claude)
-38. **Teammates install with `bun install --no-save`** on a fresh `money-elf` checkout. It installs from the lockfile and leaves it byte-identical; a plain `bun install` would prune the foundation's packages from it. (Claude, verified)
+38. **Superseded by #39.** Teammates install with `bun install --no-save` on a fresh `money-elf` checkout. It installs from the lockfile and leaves it byte-identical; a plain `bun install` would prune the foundation's packages from it. (Claude, verified)
+39. **`money-elf` is rebased onto `team-stable`, and merges there by PR, not into `main`.** The team's stable branch now carries the five Elves, the Postgres store and the SPEC, so the Money Elf sits on top of the real crew code. With every workspace present:
+    - Root files are `team-stable`'s, plus one `@elves/money-elf` path in `tsconfig.json`.
+    - A normal `bun install` / `bun add` is safe again, and `bun.lock` was regenerated with additions only. #1, #25 and #38 no longer apply.
+    - `test/foundation-compat.ts` makes the typecheck prove the Money Elf still fits the crew's `Elf` contract.
+    (team)
+40. **The Money Elf knows the `seller` role** (someone the owner buys from), which `team-stable` added. A seller gets the same treatment as a buyer: no owner actions, just the "payments only go through escrow" reply, and the scam check still applies. (Claude)
+41. **Known differences from `team-stable`'s SPEC.md §4, flagged for review rather than changed during the rebase.** Its `docs/elves-spec.md` §3 matches what's built. (open)
+    - **Account types:** SPEC wants the Moving Fund as checking and Escrow as savings; built is Fund = savings, Escrow = checking.
+    - **Escrow release:** SPEC wants two signals (the buyer confirms, plus the owner's 👍 or Move Map convergence), with the money going to the Moving Fund. Built releases on the owner's yes alone, to the owner's checking account.
+    - **Refunds:** SPEC auto-refunds a buyer after a 24h no-show. Built refunds on the owner's yes.
+    - **Nessie record types:** SPEC posts truck, storage and movers as Nessie purchases, and roommate shares as transfers. Built uses tagged withdrawals and deposits, because Nessie transfers can't name a payee (#9).
+    - **Interface name:** SPEC calls it `MoneyRails`; built is `PaymentsProvider`.

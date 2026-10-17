@@ -23,7 +23,7 @@ Anything that needs your yes also comes with a tap-to-answer poll (Yes / Not now
 
 Roommates can reply `PAID` or `PAID $50` (money moves into the owner's Moving Fund savings account, and the owner is told), ask for a payment plan ("can I do $20 a month?", which needs the owner's yes), or ask what they owe. Buyers only get the escrow notice.
 
-## Wiring it into the service (foundation branch)
+## Wiring it into the service
 
 ```ts
 import { moneyElfFromEnv } from "@elves/money-elf";
@@ -44,7 +44,7 @@ Events: `loan.created`, `payment.requested`, `payment.received`, `payment.sent`,
 
 ## Install
 
-On a fresh checkout of this branch, run `bun install --no-save`. A plain `bun install` would prune the foundation's packages from the shared `bun.lock`. To add a dependency, follow `.claude/skills/money-elf-add-dependency`.
+`bun install` at the repo root. To add a dependency, follow `.claude/skills/money-elf-add-dependency`.
 
 ## Run it locally
 

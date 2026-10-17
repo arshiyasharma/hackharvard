@@ -1,13 +1,14 @@
 /**
  * Minimal context and result types for the Money Elf.
  *
- * These are structural subsets of the foundation contract (packages/elves/src/contract.ts and
- * packages/shared/src/index.ts on phase-1-foundation), so a foundation ElfContext can be passed straight in
- * and the returned MoneyResult is a valid ElfResult plus the new `outbound` field.
+ * These are structural subsets of the crew's contract (packages/elves/src/contract.ts and
+ * packages/shared/src/index.ts), so the crew's ElfContext can be passed straight in and the returned
+ * MoneyResult is a valid ElfResult plus new fields (outbound, images, poll). test/foundation-compat.ts
+ * makes the typecheck prove it.
  */
 import type { z } from "zod";
 
-export type Role = "owner" | "roommate" | "buyer" | "applicant" | "lister";
+export type Role = "owner" | "roommate" | "buyer" | "seller" | "applicant" | "lister";
 export type ElfStatus = "idle" | "working" | "waiting" | "done" | "blocked";
 
 export interface MoneyMessage {

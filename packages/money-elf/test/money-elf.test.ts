@@ -237,6 +237,14 @@ describe("scam check and guardrails", () => {
     expect(await store.listPending("mv_test")).toHaveLength(1);
   });
 
+  test("a seller (the owner buying something) can't trigger owner actions either", async () => {
+    const { say, store } = setup();
+    await say("pay Sam $40 for gas");
+    const r = await say("yes", { from: "+16175550198", role: "seller" });
+    expect(reply(r)).toContain("escrow on this number");
+    expect(await store.listPending("mv_test")).toHaveLength(1);
+  });
+
   test("a roommate asking sees only their own balance", async () => {
     const { say } = setup();
     await say(`Sam is ${SAM}`);
