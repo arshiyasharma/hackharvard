@@ -14,6 +14,8 @@ export interface MoneyMessage {
   id: string;
   text: string | null;
   parentMessageId?: string | null;
+  /** A Photon 2.0 `poll.vote`: the options the sender picked (ids are ours, see MoneyPoll). */
+  pollVote?: { selectedOptions: { id: string; text: string }[] } | null;
 }
 
 export interface MoneyBatch {
@@ -61,10 +63,30 @@ export interface MoneyReply {
   parentMessageId?: string | null;
 }
 
+/** An image to upload as a Photon attachment and send after the reply text. */
+export interface MoneyImage {
+  contentType: "image/png";
+  filename: string;
+  bytes: Uint8Array;
+  /** What the image shows, for logs and platforms that can't show images. */
+  alt: string;
+}
+
+/**
+ * A Photon 2.0 poll (`{type:"poll", question, options, selectionMode}`), sent after the reply text.
+ * Option ids are `money:approve:<pendingId>` / `money:decline:<pendingId>`, so a vote names the exact action.
+ */
+export interface MoneyPoll {
+  question: string;
+  options: { id: string; text: string }[];
+  selectionMode: "single";
+}
+
 /** A message for someone other than the sender (a roommate's payment request, a note to the owner). */
 export interface OutboundMessage {
   toHandle: string;
   text: string;
+  poll?: MoneyPoll;
 }
 
 export interface MoneyEvent {
@@ -78,4 +100,8 @@ export interface MoneyResult {
   events?: MoneyEvent[];
   /** New: messages the service sends to other participants by handle. */
   outbound?: OutboundMessage[];
+  /** New: images sent in the sender's chat after the reply text (the Ledger card). */
+  images?: MoneyImage[];
+  /** New: a poll sent in the sender's chat after the reply (approvals). */
+  poll?: MoneyPoll;
 }

@@ -219,7 +219,7 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     return { kind: "mark_paid", person: null, what: costLabel(t), amountCents: amounts[0] ?? null };
 
   if (
-    /\b(ledger|who owes|owe|owes|balance|how much|totals?|money (status|update)|where('?s| is) the money)\b/i.test(
+    /\b(ledger|the books|show me the money|who owes|owe|owes|balance|how much|totals?|money (status|update)|where('?s| is) the money)\b/i.test(
       lower,
     )
   )

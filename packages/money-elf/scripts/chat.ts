@@ -3,12 +3,21 @@
  *
  *   bun run packages/money-elf/scripts/chat.ts            fake payments, nothing leaves your machine
  *   bun run packages/money-elf/scripts/chat.ts --nessie   real Nessie sandbox calls (needs NESSIE_API_KEY in .env)
+ *   ... --port 8788                                       serve the live Ledger page on another port (default 8787)
+ *
+ * "show me the ledger" saves the Ledger card under .data/ (gitignored) and prints a link to the live page.
+ * Approval polls print as numbered options; /vote 1 taps one.
  *
  * Type a message and press enter. Lines starting with / are commands; /help lists them.
  */
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
   booksLine,
+  createLedgerHandler,
   createMoneyElf,
   FakePayments,
   fmtUsd,
@@ -18,7 +27,7 @@ import {
   parseAmounts,
   readTag,
 } from "../src/index.ts";
-import type { MoneyContext, MoneyResult, Role } from "../src/types.ts";
+import type { MoneyContext, MoneyPoll, MoneyResult, Role } from "../src/types.ts";
 
 const useNessie = process.argv.includes("--nessie");
 const OWNER = "+16175550100";
@@ -30,9 +39,24 @@ function makePayments(): PaymentsProvider {
   return new NessiePayments({ apiKey, baseUrl: process.env.NESSIE_BASE_URL });
 }
 
+const portArg = process.argv.indexOf("--port");
+const PORT = portArg > 0 ? Number(process.argv[portArg + 1]) : 8787;
+// Links are signed like in production; the secret only lives for this run.
+const links = { publicUrl: `http://localhost:${PORT}`, secret: randomBytes(16).toString("hex") };
+const CARD_DIR = resolve(import.meta.dir, "../../../.data");
+
 let store = new MemoryMoneyStore();
 let payments = makePayments();
-let elf = createMoneyElf({ store, payments });
+let elf = createMoneyElf({ store, payments, links });
+let lastPoll: MoneyPoll | null = null;
+let lastCard: string | null = null;
+
+Bun.serve({
+  port: PORT,
+  fetch: async (req) =>
+    (await createLedgerHandler({ service: elf.service, links })(req)) ??
+    new Response("not found", { status: 404 }),
+});
 let move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
 let speaker: { role: Role; handle: string; label: string } = { role: "owner", handle: OWNER, label: "owner" };
 let showEvents = false;
@@ -55,7 +79,27 @@ function print(r: MoneyResult) {
     console.log(
       green(x.text.replace(/^/gm, "  Money Elf: ").replace(/\n {2}Money Elf: /g, "\n             ")),
     );
-  for (const o of r.outbound ?? []) console.log(cyan(`  -> text to ${o.toHandle}: ${o.text}`));
+  for (const img of r.images ?? []) {
+    mkdirSync(CARD_DIR, { recursive: true });
+    lastCard = resolve(CARD_DIR, `ledger-${Date.now()}.png`);
+    writeFileSync(lastCard, img.bytes);
+    console.log(cyan(`  [image] ${img.alt}`));
+    console.log(dim(`          saved to ${lastCard}  (/open to view)`));
+  }
+  const showPoll = (poll: MoneyPoll, to?: string) => {
+    lastPoll = poll;
+    console.log(cyan(`  [poll${to ? ` to ${to}` : ""}] ${poll.question}`));
+    console.log(
+      cyan(
+        `         ${poll.options.map((o, i) => `(${i + 1}) ${o.text}`).join("   ")}   /vote <n> as the owner`,
+      ),
+    );
+  };
+  if (r.poll) showPoll(r.poll);
+  for (const o of r.outbound ?? []) {
+    console.log(cyan(`  -> text to ${o.toHandle}: ${o.text}`));
+    if (o.poll) showPoll(o.poll, o.toHandle);
+  }
   if (r.boardPatch)
     console.log(
       dim(`  board: [${r.boardPatch.status}] ${r.boardPatch.currentTask} | ${r.boardPatch.lastUpdate}`),
@@ -64,13 +108,17 @@ function print(r: MoneyResult) {
     for (const e of r.events ?? []) console.log(dim(`  event ${e.type} ${JSON.stringify(e.payload)}`));
 }
 
-async function send(text: string) {
+async function send(text: string | null, vote?: { id: string; text: string }) {
   n++;
   const ctx: MoneyContext = {
     llm: { name: "fake", extract: async () => Promise.reject(new Error("rules parser only")) },
     move,
     participant: { handle: speaker.handle, role: speaker.role },
-    batch: { spaceId: `local_${speaker.handle}`, traceId: `tr_${n}`, messages: [{ id: `m${n}`, text }] },
+    batch: {
+      spaceId: `local_${speaker.handle}`,
+      traceId: `tr_${n}`,
+      messages: [{ id: `m${n}`, text, pollVote: vote ? { selectedOptions: [vote] } : null }],
+    },
     traceId: `tr_${n}`,
     log,
     now: () => new Date(),
@@ -93,6 +141,8 @@ const HELP = `Commands:
   /ledger                       every Ledger row
   /books                        the live Ledger straight from Nessie, account by account
   /pending                      actions waiting for the owner's yes
+  /vote <n>                     tap option n on the last poll (as whoever is talking)
+  /open                         open the last Ledger card image
   /events                       toggle showing events
   /reset                        start a fresh move
   /quit
@@ -192,6 +242,19 @@ async function command(line: string) {
       for (const a of all) console.log(`  ${a.kind}: ${a.summary}`);
       return;
     }
+    case "vote": {
+      const opt = lastPoll?.options[Number(rest[0]) - 1];
+      if (!opt) {
+        console.log(yellow("  no poll to vote on, or no such option"));
+        return;
+      }
+      await send(null, opt);
+      return;
+    }
+    case "open":
+      if (!lastCard) console.log(yellow('  no card yet; text "show me the ledger" first'));
+      else execFile(process.platform === "darwin" ? "open" : "xdg-open", [lastCard]);
+      return;
     case "events":
       showEvents = !showEvents;
       console.log(dim(`  events ${showEvents ? "on" : "off"}`));
@@ -199,7 +262,8 @@ async function command(line: string) {
     case "reset":
       store = new MemoryMoneyStore();
       payments = makePayments();
-      elf = createMoneyElf({ store, payments });
+      elf = createMoneyElf({ store, payments, links });
+      lastPoll = null;
       move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
       speaker = { role: "owner", handle: OWNER, label: "owner" };
       console.log(dim("  fresh move"));
@@ -214,7 +278,7 @@ async function command(line: string) {
 }
 
 console.log(
-  `Money Elf local chat (${useNessie ? "LIVE Nessie sandbox" : "fake payments"}). /help for commands.\n`,
+  `Money Elf local chat (${useNessie ? "LIVE Nessie sandbox" : "fake payments"}). Live Ledger pages on ${links.publicUrl}. /help for commands.\n`,
 );
 const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
 const piped = !process.stdin.isTTY;
@@ -241,3 +305,5 @@ for await (const raw of rl) {
     rl.prompt();
   }
 }
+// Input ended (piped script or Ctrl-D): stop the local Ledger server too.
+process.exit(0);

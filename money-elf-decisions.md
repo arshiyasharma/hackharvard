@@ -49,3 +49,26 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     (team chose loans; terms are Claude defaults)
 30. **Payments can be partial.** "PAID $50" pays $50; a bare PAID pays one monthly installment on a loan, or the whole balance otherwise; paying more than is owed is capped, and the reply says so. Without a loan, the Nessie bill's amount drops to what's left, and the bill is completed at $0. (Claude)
 31. **No rewards points.** We considered using Nessie's `rewards` field for "Green Points" (items kept out of the landfill) and skipped it, because the angle didn't feel appealing. (team)
+32. **"Show me the ledger" sends an image card plus a link, not a Photon mini app.** App cards (`app(url, {live:true})`) exist only in Photon 1.0 (Spectrum). Photon 2.0's send API has no app or rich-link type (checked against its live OpenAPI spec). So the owner gets:
+    - the Ledger card as a PNG attachment, shown inline in iMessage with no tap;
+    - a one-line summary;
+    - a link to a live, phone-sized Ledger page that refreshes every 30s and has Open Graph tags, so it previews as the card.
+    If Photon adds app cards to 2.0, the same page can become the mini app. (team)
+33. **The card is SVG rendered to PNG with `@resvg/resvg-js` 2.6.2 and a bundled Inter font (`@expo-google-fonts/inter` 0.4.2).** It loads no system fonts, so it renders the same on macOS and in the Linux container, which has no fonts. resvg ships prebuilt binaries for macOS and Linux (glibc and musl). If rendering fails, the reply falls back to the text Ledger. Dependencies were added with the `money-elf-add-dependency` process, which keeps `bun.lock` a superset of the foundation's. (Claude)
+34. **Ledger links are signed.** Each link is `/ledger/<moveId>?t=<token>`, where the token is HMAC-SHA256 over the move id with `LEDGER_LINK_SECRET`, truncated to 22 characters. A wrong or missing token returns 404. The page, `.png` and `.json` all need the token, and responses are `no-store` and `noindex`. Links are sent only when both `PUBLIC_URL` and `LEDGER_LINK_SECRET` are set; otherwise the card goes without a link. (Claude)
+35. **Only the owner gets the Ledger card and link**, because they name who owes what. A roommate asking gets their own balance as text. (Claude)
+36. **Every approval also sends a Photon 2.0 poll** ("Yes" / "Not now"). The option ids are `money:approve:<pendingId>` and `money:decline:<pendingId>`, so a tap approves exactly that action, unlike a typed "yes", which approves the most recent one (#11). Details:
+    - Only the owner's taps count.
+    - A second tap on an action that's already handled does nothing.
+    - If the platform drops our option ids, a "Yes" or "Not now" tap falls back to the most recent action.
+    - The text reply still says "Reply yes", because polls on the shared iMessage pool aren't verified yet.
+    - A roommate's payment-plan request reaches the owner with a poll attached to the outbound message.
+    (team chose polls; mechanics Claude)
+37. **The reply contract grows, and the foundation service must handle the new fields** when the Money Elf is wired in. This needs the foundation side, so it's listed rather than built here:
+    - Upload `images[]` with `POST /v1/projects/{id}/attachments` and send each as an attachment after the text.
+    - Send `poll` and `outbound[].poll` as `{type:"poll"}` content.
+    - Normalize inbound `poll.vote` content to `pollVote`.
+    - Route any vote whose option id starts with `money:` to the Money Elf. The foundation router sends empty-text messages to the Crew Lead today.
+    - Mount `createLedgerHandler` under `/ledger/`.
+    (Claude)
+38. **Teammates install with `bun install --no-save`** on a fresh `money-elf` checkout. It installs from the lockfile and leaves it byte-identical; a plain `bun install` would prune the foundation's packages from it. (Claude, verified)

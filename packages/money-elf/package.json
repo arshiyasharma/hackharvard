@@ -13,6 +13,8 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@expo-google-fonts/inter": "0.4.2",
+    "@resvg/resvg-js": "2.6.2",
     "zod": "^4.1.0"
   }
 }

@@ -49,6 +49,13 @@ export class MoneyService {
     });
   }
 
+  /** Rebuild a move from its owner on the Ledger (for the web Ledger, which has no message context). */
+  async moveFromStore(moveId: string): Promise<MoneyMove | undefined> {
+    const owner = (await this.store.listPeople(moveId)).find((p) => p.role === "owner");
+    if (!owner?.handle) return undefined;
+    return { id: moveId, ownerHandle: owner.handle, name: owner.name === "Owner" ? null : owner.name };
+  }
+
   async findPerson(moveId: string, nameOrHandle: string): Promise<Person | undefined> {
     const people = await this.store.listPeople(moveId);
     return (
@@ -711,9 +718,20 @@ export class MoneyService {
     return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }
 
-  async approve(move: MoneyMove): Promise<OpResult> {
-    const action = await this.latestPending(move.id);
-    if (!action) return { ...empty(), lines: ["There's nothing waiting for your OK right now."] };
+  /** Approve one action: the one a poll vote names, or else the most recently proposed. */
+  async approve(move: MoneyMove, actionId?: string): Promise<OpResult> {
+    const action = actionId
+      ? (await this.store.listPending(move.id)).find((a) => a.id === actionId)
+      : await this.latestPending(move.id);
+    if (!action)
+      return {
+        ...empty(),
+        lines: [
+          actionId
+            ? "That one's already been handled, so nothing moved."
+            : "There's nothing waiting for your OK right now.",
+        ],
+      };
     // Remove first so a retry after a partial failure can never double-run the same approval.
     await this.store.removePending(action.id);
     let r: OpResult;
@@ -750,9 +768,15 @@ export class MoneyService {
     return r;
   }
 
-  async decline(move: MoneyMove): Promise<OpResult> {
-    const action = await this.latestPending(move.id);
-    if (!action) return { ...empty(), lines: ["OK, nothing is waiting on you."] };
+  async decline(move: MoneyMove, actionId?: string): Promise<OpResult> {
+    const action = actionId
+      ? (await this.store.listPending(move.id)).find((a) => a.id === actionId)
+      : await this.latestPending(move.id);
+    if (!action)
+      return {
+        ...empty(),
+        lines: [actionId ? "That one's already been handled." : "OK, nothing is waiting on you."],
+      };
     await this.store.removePending(action.id);
     if (action.kind === "pay_person") {
       for (const id of action.entryIds) await this.store.updateEntry(id, { status: "cancelled" });

@@ -6,11 +6,14 @@
 import { fmtUsd } from "./amounts.ts";
 import { booksLine } from "./books.ts";
 import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
+import { renderLedgerPng } from "./ledger-card.ts";
+import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
+import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
 import { parseIntent } from "./parse.ts";
 import type { PaymentsProvider } from "./payments.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
 import { MoneyService, type OpResult } from "./service.ts";
-import type { MoneyContext, MoneyResult } from "./types.ts";
+import type { MoneyContext, MoneyImage, MoneyPoll, MoneyResult } from "./types.ts";
 
 export const MONEY_DESCRIPTION =
   "Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the ledger, scams";
@@ -48,6 +51,8 @@ export function createMoneyElf(deps: {
   store: MoneyStore | MemoryMoneyStore;
   payments: PaymentsProvider;
   now?: () => Date;
+  /** Public URL + signing secret for live Ledger links; without it the Ledger card is sent with no link. */
+  links?: LedgerLinks;
 }): MoneyElf {
   const service = new MoneyService(deps.store, deps.payments, deps.now);
   return {
@@ -57,7 +62,7 @@ export function createMoneyElf(deps: {
     service,
     async handle(ctx) {
       try {
-        return await handle(service, ctx);
+        return await handle(service, ctx, deps.links);
       } catch (err) {
         ctx.log.error("money elf failed", { err: String(err), traceId: ctx.traceId });
         return {
@@ -90,18 +95,69 @@ function textOf(ctx: MoneyContext): string {
     .join("\n");
 }
 
-async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyResult> {
+const POLL_ID = /^money:(approve|decline):([A-Za-z0-9_]+)$/;
+
+/** The approval poll for one pending action. Option ids carry the action id, so a vote can't hit the wrong one. */
+export async function approvalPoll(
+  service: MoneyService,
+  moveId: string,
+  pendingId: string,
+): Promise<MoneyPoll | undefined> {
+  const a = (await service.store.listPending(moveId)).find((x) => x.id === pendingId);
+  if (!a) return undefined;
+  return {
+    question: `${a.summary.charAt(0).toUpperCase()}${a.summary.slice(1)}?`,
+    options: [
+      { id: `money:approve:${a.id}`, text: "Yes" },
+      { id: `money:decline:${a.id}`, text: "Not now" },
+    ],
+    selectionMode: "single",
+  };
+}
+
+function pendingIdsIn(events: { type: string; payload: Record<string, unknown> }[]): string[] {
+  return events.filter((e) => e.type === "approval.requested").map((e) => String(e.payload.pendingId));
+}
+
+interface Extras {
+  images?: MoneyImage[];
+  poll?: MoneyPoll;
+}
+
+async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLinks): Promise<MoneyResult> {
   const text = textOf(ctx);
   const move = ctx.move;
   const role = ctx.participant.role;
   let r: OpResult = { lines: [], events: [], outbound: [] };
+  const extras: Extras = {};
+
+  // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
+  const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
+  if (vote) {
+    const m = vote.id.match(POLL_ID);
+    if (role !== "owner") {
+      r.lines.push("Only the move's owner can approve money moves.");
+    } else if (m?.[2]) {
+      r = merge(
+        r,
+        m[1] === "approve" ? await service.approve(move, m[2]) : await service.decline(move, m[2]),
+      );
+      r.events.push({ type: "poll.voted", payload: { pendingId: m[2], choice: m[1] } });
+    } else if (/^yes$/i.test(vote.text) || /^not now$/i.test(vote.text)) {
+      // The platform dropped our option ids; fall back to the most recent action.
+      r = merge(r, /^yes$/i.test(vote.text) ? await service.approve(move) : await service.decline(move));
+    } else {
+      r.lines.push("I couldn't tell which approval that was for. Reply yes or no instead.");
+    }
+    return finish(service, ctx, r, extras);
+  }
 
   // Card and bank numbers are never stored, parsed or echoed.
   if (containsFinancialNumber(text)) {
     r.lines.push("Please don't text card or bank numbers here; I never need them.");
     r.lines.push("Payments run through the Ledger, so nobody has to share account details.");
     r.events.push({ type: "money.sensitive_blocked", payload: { role } });
-    return finish(service, ctx, r);
+    return finish(service, ctx, r, extras);
   }
 
   const flags = scamCheck(text);
@@ -148,9 +204,11 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
       });
       r.events.push(...ask.events);
       if (ask.events.some((e) => e.type === "approval.requested")) {
+        const [pid] = pendingIdsIn(ask.events);
         r.outbound.push({
           toHandle: move.ownerHandle,
           text: `${me.name} asked for a payment plan. ${ask.lines.join(" ")}`,
+          poll: pid ? await approvalPoll(service, move.id, pid) : undefined,
         });
         r.lines.push("I asked about a payment plan for you; I'll text you as soon as it's set up.");
       } else {
@@ -163,7 +221,7 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
         "Money Elf here. Payments for this move run through escrow on this number, never any other way.",
       );
     }
-    return finish(service, ctx, r);
+    return finish(service, ctx, r, extras);
   }
 
   // A flagged message is never paid: warn, and if it asked to pay, record it as blocked.
@@ -181,7 +239,7 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
         ? "If you already paid it, tell me and I'll help you dispute it."
         : "I won't pay it. Want me to tell the Crew Lead to block them?",
     );
-    return finish(service, ctx, r);
+    return finish(service, ctx, r, extras);
   }
 
   switch (intent.kind) {
@@ -257,9 +315,33 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
       r.lines.push("Nothing in that looks like a known scam pattern.");
       r.lines.push("Still, only pay through the Ledger, and never before you've seen the item or the place.");
       break;
-    case "ledger":
-      r.lines.push(...(await service.ledgerSummary(move)));
+    case "ledger": {
+      // The Ledger card (an image, inline in iMessage) plus a signed link to the live page.
+      const view = await buildLedgerView(service, move);
+      let png: Uint8Array | null = null;
+      try {
+        png = await renderLedgerPng(view);
+      } catch (err) {
+        ctx.log.warn("ledger card render failed; sending text", { err: String(err) });
+      }
+      if (png) {
+        r.lines.push("Here's your Ledger, live from Nessie.");
+        r.lines.push(ledgerSummaryLine(view));
+        extras.images = [
+          {
+            contentType: "image/png",
+            filename: "ledger.png",
+            bytes: png,
+            alt: `Moving Ledger: ${ledgerSummaryLine(view)}`,
+          },
+        ];
+      } else {
+        r.lines.push(...(await service.ledgerSummary(move)).slice(0, 2));
+      }
+      if (links) r.lines.push(ledgerUrl(links, move.id));
+      r.events.push({ type: "ledger.shown", payload: { records: view.records, card: !!png, link: !!links } });
       break;
+    }
     default:
       r.lines.push(
         "Money Elf here. I keep every dollar on the Ledger in Nessie: shared costs, the Moving Fund, deposits and escrow.",
@@ -268,7 +350,7 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
         `Tell me something like "split the $240 truck with Sam and Priya" or "I paid a $500 sublet deposit, due back Dec 1".`,
       );
   }
-  return finish(service, ctx, r);
+  return finish(service, ctx, r, extras);
 }
 
 function merge(a: OpResult, b: OpResult): OpResult {
@@ -279,7 +361,12 @@ function merge(a: OpResult, b: OpResult): OpResult {
   };
 }
 
-async function finish(service: MoneyService, ctx: MoneyContext, r: OpResult): Promise<MoneyResult> {
+async function finish(
+  service: MoneyService,
+  ctx: MoneyContext,
+  r: OpResult,
+  extras: Extras,
+): Promise<MoneyResult> {
   await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
   const pending = await service.latestPending(ctx.move.id);
@@ -287,7 +374,12 @@ async function finish(service: MoneyService, ctx: MoneyContext, r: OpResult): Pr
   const books = await service.books(ctx.move);
   // Spec: 2-3 short plain lines per reply.
   const lines = r.lines.filter(Boolean).slice(0, 3);
+  // Anything the owner was just asked to approve also gets a tap-to-answer poll.
+  const [pid] = ctx.participant.role === "owner" ? pendingIdsIn(r.events) : [];
+  const poll = extras.poll ?? (pid ? await approvalPoll(service, ctx.move.id, pid) : undefined);
   return {
+    ...(extras.images?.length ? { images: extras.images } : {}),
+    ...(poll ? { poll } : {}),
     replies: lines.length ? [{ text: lines.join("\n"), parentMessageId: lastId(ctx) }] : [],
     outbound: r.outbound,
     events: [...r.events, { type: "ledger.totals", payload: { ...books, owes: books.owes.length } }],

@@ -55,8 +55,46 @@ export interface Books {
   salesCents: number;
   depositsOutCents: number;
   owes: PersonOwes[];
+  /** Tagged movements on the owner's, Moving Fund and escrow accounts, newest first. */
+  recent: Activity[];
   /** Number of tagged Nessie records the totals were built from. */
   records: number;
+}
+
+export interface Activity {
+  date: string;
+  /** The record's description without its tag. */
+  label: string;
+  amountCents: number;
+  account: "you" | "fund" | "escrow";
+  direction: "in" | "out";
+  tag: RecordTag;
+}
+
+export function untagged(description: string): string {
+  return description.replace(/\s*\[elves:[^\]]*\]\s*$/, "");
+}
+
+function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
+  const out: Activity[] = [];
+  for (const [list, direction] of [
+    [r.deposits, "in"],
+    [r.withdrawals, "out"],
+  ] as const) {
+    for (const x of list) {
+      const t = readTag(x.description);
+      if (t)
+        out.push({
+          date: x.date,
+          label: untagged(x.description),
+          amountCents: x.amountCents,
+          account,
+          direction,
+          tag: t.tag,
+        });
+    }
+  }
+  return out;
 }
 
 function sumTagged(recs: { amountCents: number; description: string }[], tags: RecordTag[]): number {
@@ -98,6 +136,7 @@ export async function readBooks(
     salesCents: 0,
     depositsOutCents: 0,
     owes: [],
+    recent: [],
     records: 0,
   };
   if (ownerRecs) {
@@ -122,6 +161,15 @@ export async function readBooks(
       escrowRecs.withdrawals.reduce((a, r) => a + r.amountCents, 0);
     books.records += countTagged(escrowRecs);
   }
+  // Escrow and the Fund mirror the owner's own movements, so the owner's view lists each event once.
+  books.recent = [
+    ...(ownerRecs ? activity(ownerRecs, "you") : []),
+    ...(fundRecs ? activity(fundRecs, "fund") : []),
+    ...(escrowRecs ? activity(escrowRecs, "escrow").filter((a) => a.direction === "in") : []),
+  ]
+    .map((a, i) => ({ a, i }))
+    .sort((x, y) => y.a.date.localeCompare(x.a.date) || y.i - x.i)
+    .map((x) => x.a);
   others.forEach((p: Person, i) => {
     const r = otherRecs[i];
     if (!r) return;

@@ -119,7 +119,8 @@ describe("deposits", () => {
     expect(reply(r)).toContain("2026-12-01");
     expect(eventTypes(r)).toContain("deposit.recorded");
     const l = await say("ledger?");
-    expect(reply(l)).toContain("Deposits out: sublet $500 (due back 2026-12-01).");
+    expect(reply(l)).toContain("$500 in deposits out.");
+    expect(l.images?.[0]?.contentType).toBe("image/png");
     const back = await say("got the sublet deposit back");
     expect(reply(back)).toContain("$500 sublet deposit is back");
     expect(eventTypes(back)).toContain("deposit.returned");

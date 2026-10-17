@@ -19,12 +19,12 @@ describe("Moving Fund loans (roommate IOUs)", () => {
 
     const ask = await s.say("can I do a payment plan, $20 a month?", { from: SAM, role: "roommate" });
     expect(reply(ask)).toContain("I asked about a payment plan");
-    expect(ask.outbound).toEqual([
-      {
-        toHandle: OWNER,
-        text: expect.stringContaining("Sam can pay the $80 truck share at $20 a month, 4 payments."),
-      },
-    ]);
+    expect(ask.outbound).toHaveLength(1);
+    expect(ask.outbound?.[0]).toMatchObject({
+      toHandle: OWNER,
+      text: expect.stringContaining("Sam can pay the $80 truck share at $20 a month, 4 payments."),
+      poll: { selectionMode: "single" },
+    });
     expect(s.payments.loans.size).toBe(0);
 
     const ok = await s.say("yes");
@@ -114,9 +114,9 @@ describe("the live Ledger is read back from Nessie", () => {
     await samOwesTruck(s);
     await s.say("paid", { from: SAM, role: "roommate" });
     const r = await s.say("ledger");
-    expect(reply(r)).toContain("Owed to you: Priya $80.");
-    expect(reply(r)).toContain("Moving Fund $80.");
-    expect(reply(r)).toContain("Live from Nessie");
+    expect(reply(r)).toContain("Here's your Ledger, live from Nessie.");
+    expect(reply(r)).toContain("$80 in the Moving Fund, $80 owed to you.");
+    expect(r.images).toHaveLength(1);
   });
 
   test("paying someone comes out of the Moving Fund when it covers it", async () => {
