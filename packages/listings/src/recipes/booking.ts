@@ -22,9 +22,7 @@ export const booking: SiteRecipe = {
     if (max != null) url.searchParams.set("nflt", `price=USD-min-${max}-1`);
     return url.toString();
   },
-  prepare() {
-    return ["If a sign-in or Genius popup is showing, close it."];
-  },
+  // No prepare() step: Escape (in the runner) closes the sign-in popup; an LLM click tended to open it instead.
   instruction() {
     return (
       "This is Booking.com hotel results. Each property card is one hotel. For each return: the hotel name as the " +

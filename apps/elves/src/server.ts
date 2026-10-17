@@ -37,6 +37,18 @@ export function createServer(deps: {
       items: await deps.store.listItems(move.id),
       search: (await deps.store.getSearch(move.id)) ?? null,
       listings: await deps.store.listListings(move.id),
+      // Never the owner's line or who is talking: the board link gets shared with roommates.
+      deals: (await deps.store.listDeals(move.id)).map((d) => ({
+        id: d.id,
+        mode: d.mode,
+        title: d.title,
+        code: d.code,
+        state: d.state,
+        askCents: d.askCents,
+        agreedCents: d.agreedCents,
+        slot: d.slot?.label ?? null,
+        outcome: d.outcome,
+      })),
     });
   });
   app.get("/events/:moveId", async (c) => c.json(await deps.store.listEvents(c.req.param("moveId"))));
@@ -74,12 +86,14 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:var(--muted);margin-bottom:14px;font
 .items{margin-top:16px;color:var(--muted);font-size:13px}
 </style></head><body>
 <h1>Crew Board</h1><div class="sub" id="sub">Loading…</div>
-<div id="rows"></div><div class="items" id="items"></div>
+<div id="rows"></div><div class="items" id="deals"></div><div class="items" id="items"></div>
 <script>
 const L=${labels};const id=${JSON.stringify(moveId)};
 async function tick(){try{const r=await fetch('/board/'+id);if(!r.ok)return;const d=await r.json();
 document.getElementById('sub').textContent=(d.move.moveOutAt?'Move-out '+d.move.moveOutAt:'Move-out date not set')+' · '+d.board.filter(b=>b.status==='working').length+' Elves working';
 document.getElementById('rows').innerHTML=d.board.map(b=>'<div class="row"><div class="dot '+b.status+'"></div><div><div class="name">'+L[b.elf]+' <span class="last">· '+b.status+'</span></div><div class="task">'+(b.currentTask||'')+'</div>'+(b.lastUpdate?'<div class="last">'+b.lastUpdate+'</div>':'')+'</div></div>').join('');
+const $=x=>x==null?'':(x===0?'free':'$'+(x/100).toFixed(x%100?2:0));
+document.getElementById('deals').textContent=(d.deals||[]).length?('Deals: '+d.deals.map(x=>x.title+' · '+x.state.replace('_',' ')+(x.slot?' '+x.slot:'')+(x.agreedCents!=null?' · '+$(x.agreedCents):(x.askCents!=null?' · asking '+$(x.askCents):''))).join(' | ')):'';
 document.getElementById('items').textContent=d.items.length?('Items: '+d.items.map(i=>i.name+' ('+i.outcome+', ~'+i.weightLb+' lb)').join(', ')):'';
 }catch(e){}}
 tick();setInterval(tick,3000);

@@ -6,6 +6,7 @@
   "dependencies": {
     "@elves/db": "workspace:*",
     "@elves/elves": "workspace:*",
+    "@elves/engine": "workspace:*",
     "@elves/listings": "workspace:*",
     "@elves/llm": "workspace:*",
     "@elves/memory": "workspace:*",

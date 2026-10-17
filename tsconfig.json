@@ -20,6 +20,7 @@
       "@elves/elves": ["./packages/elves/src/index.ts"],
       "@elves/memory": ["./packages/memory/src/index.ts"],
       "@elves/db": ["./packages/db/src/index.ts"],
+      "@elves/engine": ["./packages/engine/src/index.ts"],
       "@elves/listings": ["./packages/listings/src/index.ts"],
       "@elves/money-elf": ["./packages/money-elf/src/index.ts"]
     }

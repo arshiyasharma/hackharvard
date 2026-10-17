@@ -1,3 +1,4 @@
+import { holdLastCall, markOutcome, openDeal, readOwnerDecision } from "@elves/engine";
 import type { Item } from "@elves/shared";
 import {
   batchText,
@@ -8,8 +9,11 @@ import {
   lastMessageId,
   memoryPreamble,
 } from "./contract.ts";
+import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { CATEGORY_WORDS, type Category } from "./facts.ts";
 import {
+  type ApprovedItem,
+  anchorDeals,
   approvePendingListings,
   describeItem,
   fmtUsd,
@@ -17,9 +21,11 @@ import {
   isApproval,
   itemStatus,
   parsePriceCents,
+  postLine,
   suggestListCents,
 } from "./intake.ts";
 import { BUY_SKILL, GREEN_SKILL, pickSkill, type Skill, skillReply } from "./stubs.ts";
+import { extractListingUrls } from "./home-followups.ts";
 
 const SYSTEM = `You are the Stuff Elf of Elves, a moving crew the owner texts. You handle everything the owner owns or wants: right now you turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
 
@@ -27,10 +33,10 @@ Write the reply as a text message:
 - Plain text only, 2 to 3 short lines, no markdown, no bullet symbols, at most one emoji (usually none).
 - If items were just identified from a photo, say what you see (material, color, condition) and the fair range in one line.
 - If the owner gave a floor price, confirm it and the list price you'll use. If their floor is far below the range, say you'll list higher and never go under their floor unless they say so.
-- If the owner just approved (justApproved non-empty), confirm it is listed at the list price and that buyers will text this number; then ask nothing.
+- If the owner just approved (justApproved non-empty), confirm it is listed at the list price, then give the line for their marketplace post exactly as written in justApproved.postLine (it carries the ref code buyers quote); say buyers text this number and you'll handle them; then ask nothing.
 - Otherwise ask for exactly ONE thing: the lowest price they'd take (if no floor yet), otherwise whether to go ahead and list it. If a photo could not be read, ask for a clearer photo.
 - Never ask for a photo or a floor price for an item that already has one (see items).
-- Buyers reach you by texting this same number; never claim you posted anywhere.
+- Buyers reach you by texting this same number; never claim you posted anywhere. You negotiate with them inside the owner's floor and only ask the owner when an offer is under it.
 - Do not repeat details already confirmed earlier (see the conversation and working memory).`;
 
 const SELL_SKILL: Skill = {
@@ -68,10 +74,43 @@ export const stuffElf: Elf = {
   keywords: [...SELL_SKILL.keywords, ...BUY_SKILL.keywords, ...GREEN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
+    // Buyers (and sellers, when we buy) talk to the Deal Engine in their own space.
+    if (ctx.participant.role !== "owner") return handleCounterparty(ctx);
     const text = batchText(ctx.batch);
-    // Buying and giving away are still canned; selling (and any photo) runs the real flow below.
+    // "keep the couch" holds the price through Last Call, ahead of a pending offer's yes/no.
+    const held = await holdLastCall(ctx.store, ctx.move.id, text);
+    if (held?.length) {
+      const names = held.map((d) => `the ${d.title}`).join(", ");
+      return {
+        replies: [
+          {
+            text: `Holding the price on ${names}. Last Call won't drop ${held.length === 1 ? "it" : "them"}.`,
+            parentMessageId: lastMessageId(ctx.batch),
+          },
+        ],
+        events: held.map((d) => ({ type: "lastcall.opt_out", payload: { dealId: d.id, title: d.title } })),
+        boardPatch: {
+          status: "working",
+          currentTask: `Holding ${held.map((d) => d.title).join(", ")}`,
+          lastUpdate: "Owner opted out of Last Call",
+        },
+      };
+    }
+    // "yes" / "no" / "$70" answering a buyer's offer under the floor.
+    const decided = await handleOwnerDecision(ctx);
+    if (decided) return decided;
+    const confirmed = await confirmPending(ctx, text);
+    if (confirmed) return confirmed;
     if (!hasPhotos(ctx.batch)) {
       const { skill } = pickSkill(text, [SELL_SKILL, BUY_SKILL, GREEN_SKILL]);
+      if (skill === BUY_SKILL) {
+        const buy = await startBuy(ctx, text);
+        if (buy) return buy;
+      }
+      if (skill === GREEN_SKILL && /\b(donat(?:e|ion|ing)?|trash|dump|311|give away|goodwill|curb)\b/i.test(text)) {
+        const donated = await askDonate(ctx, text);
+        if (donated) return donated;
+      }
       if (skill !== SELL_SKILL) return skillReply(ctx, "stuff", skill);
     }
     const events: ElfResult["events"] = [];
@@ -116,21 +155,30 @@ export const stuffElf: Elf = {
       }
     }
 
-    let justApproved: Item[] = [];
+    let justApproved: ApprovedItem[] = [];
     if (price == null && intake.items.length === 0 && isApproval(text)) {
       justApproved = await approvePendingListings(ctx);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
-          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents },
+          payload: {
+            itemId: it.id,
+            name: it.name,
+            listPriceCents: it.listPriceCents,
+            dealId: it.dealId,
+            code: it.dealCode,
+          },
         });
     }
+    const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
     const current = await ctx.store.listItems(ctx.move.id);
     const needsFloor = current.filter((i) => i.floorPriceCents == null && i.id !== priced?.id);
     const facts = {
       justApproved: justApproved.map((i) => ({
         name: i.name,
         listPrice: i.listPriceCents != null ? fmtUsd(i.listPriceCents) : null,
+        ref: i.dealCode,
+        postLine: postLine(i, poolNumber),
       })),
       items: itemStatus(current),
       identifiedNow: intake.items.map((i) => ({
@@ -164,22 +212,27 @@ export const stuffElf: Elf = {
         });
       } catch (err) {
         ctx.log.warn("sell draft failed; using template", { error: String(err) });
-        reply = template(facts, intake.items, priced, justApproved);
+        reply = template(facts, intake.items, priced, justApproved, poolNumber);
       }
     } else {
-      reply = template(facts, intake.items, priced, justApproved);
+      reply = template(facts, intake.items, priced, justApproved, poolNumber);
     }
     if (ctx.signal.aborted) return { replies: [] };
+    // An LLM draft may paraphrase; the post line with the ref code must survive verbatim.
+    for (const a of justApproved)
+      if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;
 
     const working = current.filter((i) => i.outcome === "listed").map((i) => i.name);
     return {
-      replies: [{ text: reply, parentMessageId: lastMessageId(ctx.batch) }],
+      replies: [
+        { text: reply, parentMessageId: lastMessageId(ctx.batch), onSent: anchorDeals(ctx, justApproved) },
+      ],
       events,
       boardPatch: {
         status: "working",
         currentTask: working.length ? `Listing ${working.join(", ")}` : "Waiting on a photo",
         lastUpdate: justApproved.length
-          ? `Listed ${justApproved.map((i) => i.name).join(", ")}; buyers text this number`
+          ? `Listed ${justApproved.map((i) => `${i.name} (ref ${i.dealCode})`).join(", ")}; buyers text this number`
           : priced
             ? `Floor ${fmtUsd(priced.floorPriceCents ?? 0)} on the ${priced.name}`
             : intake.items.length
@@ -189,6 +242,150 @@ export const stuffElf: Elf = {
     };
   },
 };
+
+type Pending = { kind: "donate"; itemId: string; name: string } | { kind: "buy"; url: string; maxCents: number | null };
+
+async function readPending(ctx: ElfContext): Promise<Pending | null> {
+  const events = await ctx.store.listEvents(ctx.move.id);
+  let pending: Pending | null = null;
+  for (const e of events) {
+    if (e.type === "donate.pending") {
+      const itemId = String(e.payload.itemId ?? "");
+      const name = String(e.payload.name ?? "item");
+      if (itemId) pending = { kind: "donate", itemId, name };
+    } else if (e.type === "buy.pending") {
+      pending = {
+        kind: "buy",
+        url: String(e.payload.url ?? ""),
+        maxCents: typeof e.payload.maxCents === "number" ? e.payload.maxCents : null,
+      };
+    } else if (e.type === "donate.booked" || e.type === "buy.opened") pending = null;
+  }
+  return pending;
+}
+
+function replyTo(ctx: ElfContext, text: string, extra: Partial<ElfResult> = {}): ElfResult {
+  return {
+    replies: [{ text, parentMessageId: lastMessageId(ctx.batch) }],
+    boardPatch: { status: "working", currentTask: "Stuff" },
+    ...extra,
+  };
+}
+
+/** "yes" after a buy ceiling or a donate ask. An offer under the floor is handled earlier. */
+async function confirmPending(ctx: ElfContext, text: string): Promise<ElfResult | null> {
+  if (readOwnerDecision(text)?.kind !== "yes") return null;
+  const pending = await readPending(ctx);
+  if (!pending) return null;
+  if (pending.kind === "donate") {
+    const deals = await ctx.store.listDeals(ctx.move.id);
+    const deal = deals.find((d) => d.subjectId === pending.itemId && d.mode === "sell_item");
+    if (deal) await markOutcome(ctx.store, deal.id, "donated");
+    else {
+      const item = (await ctx.store.listItems(ctx.move.id)).find((i) => i.id === pending.itemId);
+      if (item)
+        await ctx.store.upsertItem({
+          id: item.id,
+          moveId: item.moveId,
+          name: item.name,
+          category: item.category,
+          outcome: "donated",
+        });
+    }
+    return replyTo(
+      ctx,
+      `Booking a donation pickup for the ${pending.name}. It won't go on the truck.`,
+      {
+        events: [
+          { type: "donate.booked", payload: { itemId: pending.itemId, name: pending.name } },
+          { type: "pickup.requested", payload: { itemId: pending.itemId, kinds: ["donation"] } },
+        ],
+        boardPatch: { status: "working", currentTask: `Donating ${pending.name}`, lastUpdate: "Donation booked" },
+      },
+    );
+  }
+  if (!pending.url || pending.maxCents == null) return null;
+  const deal = await openDeal(ctx.store, {
+    moveId: ctx.move.id,
+    mode: "buy_item",
+    subjectId: null,
+    title: hostOf(pending.url),
+    askCents: pending.maxCents,
+    limitCents: pending.maxCents,
+  });
+  return replyTo(
+    ctx,
+    `Ceiling set at ${fmtUsd(pending.maxCents)} for ${pending.url} (ref ${deal.code}). I won't go over it. When the seller texts this number with that ref, I'll make the offer.`,
+    {
+      events: [
+        {
+          type: "buy.opened",
+          payload: { dealId: deal.id, code: deal.code, url: pending.url, maxCents: pending.maxCents },
+        },
+      ],
+      boardPatch: {
+        status: "working",
+        currentTask: `Buying ${hostOf(pending.url)}`,
+        lastUpdate: `Ceiling ${fmtUsd(pending.maxCents)} (ref ${deal.code})`,
+      },
+    },
+  );
+}
+
+async function startBuy(ctx: ElfContext, text: string): Promise<ElfResult | null> {
+  const pending = await readPending(ctx);
+  const url = extractListingUrls(text)[0] ?? (pending?.kind === "buy" ? pending.url : "");
+  const max = parsePriceCents(text) ?? (pending?.kind === "buy" ? pending.maxCents : null);
+  if (!url)
+    return replyTo(ctx, "Forward the listing link and the most you'll pay. I won't send an offer until you say yes.");
+  if (max == null)
+    return replyTo(ctx, `What's the most you'll pay for ${url}?`, {
+      events: [{ type: "buy.pending", payload: { url, maxCents: null } }],
+    });
+  return replyTo(
+    ctx,
+    `I'll cap the offer at ${fmtUsd(max)} for ${url}. Say yes and I'll set that ceiling. I won't contact them until you do.`,
+    { events: [{ type: "buy.pending", payload: { url, maxCents: max } }] },
+  );
+}
+
+async function askDonate(ctx: ElfContext, text: string): Promise<ElfResult | null> {
+  const items = await ctx.store.listItems(ctx.move.id);
+  const named = namedItem(text, items);
+  const target = named ?? (items.length === 1 ? items[0]! : null);
+  if (!target)
+    return replyTo(
+      ctx,
+      items.length
+        ? `Which one should I donate: ${items.map((i) => i.name).join(", ")}?`
+        : "Which item should I donate? A name is enough, and I'll book the pickup once you say yes.",
+    );
+  return replyTo(ctx, `Say yes and I'll book a donation pickup for the ${target.name}. Nothing goes out until you do.`, {
+    events: [{ type: "donate.pending", payload: { itemId: target.id, name: target.name } }],
+    boardPatch: { status: "waiting", currentTask: `Donate ${target.name}?`, lastUpdate: "Waiting on a yes" },
+  });
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "listing";
+  }
+}
+
+function namedItem(text: string, items: Item[]): Item | null {
+  const t = text.toLowerCase();
+  const byName = items.find((i) => t.includes(i.name.toLowerCase()));
+  if (byName) return byName;
+  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
+      const m = items.find((i) => i.category === cat);
+      if (m) return m;
+    }
+  }
+  return null;
+}
 
 function pickTarget(text: string, items: Item[], justIdentified: Item[]): Item | null {
   const t = text.toLowerCase();
@@ -209,13 +406,15 @@ function template(
   facts: { photosUnreadable: number; itemsStillNeedingAFloor: string[] },
   identified: Item[],
   priced: Item | null,
-  approved: Item[],
+  approved: ApprovedItem[],
+  poolNumber: string | null,
 ): string {
   const lines: string[] = [];
   if (approved.length) {
     lines.push(
-      `Listed: ${approved.map((i) => `${i.name} at ${fmtUsd(i.listPriceCents ?? 0)}`).join(", ")}. Buyers text this number and I'll keep you posted.`,
+      `Listed: ${approved.map((i) => `${i.name} at ${fmtUsd(i.listPriceCents ?? 0)}`).join(", ")}. Buyers text this number and I'll handle them inside your floor.`,
     );
+    for (const a of approved) lines.push(`For your post: ${postLine(a, poolNumber)}`);
     return lines.join("\n");
   }
   if (identified.length) lines.push(`I see ${identified.map(describeItem).join("; ")}.`);

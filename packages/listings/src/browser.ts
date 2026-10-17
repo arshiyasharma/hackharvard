@@ -43,9 +43,22 @@ export interface BrowserSession {
     opts: { page: PageLike; timeoutMs: number; locator?: string },
   ): Promise<T>;
   act(instruction: string, opts: { page: PageLike; timeoutMs: number }): Promise<void>;
+  /** The page title ("" when unavailable); how a block page is told apart from an empty result list. */
+  title(page: PageLike): Promise<string>;
+  /** Node id -> href for every link in the current accessibility snapshot ({} when unavailable). */
+  linkMap(page: PageLike): Promise<Record<string, string>>;
+  /**
+   * Close whatever modal greeted us (price notices, sign-in prompts) with Escape. An open modal is all the
+   * accessibility snapshot contains, so extraction on it finds nothing.
+   */
+  dismiss(page: PageLike): Promise<void>;
   /** stagehand.close() then browser.close(); safe to call twice. */
   close(): Promise<void>;
 }
+
+/** Titles of anti-bot and access-denied pages; an empty extraction on one of these is a failed run. */
+export const BLOCK_PAGE_TITLE =
+  /access denied|just a moment|attention required|verify you are (a )?human|are you a robot|pardon our interruption|blocked|captcha|security check|unusual traffic/i;
 
 export type BrowserOpener = (cfg: BrowserConfig, log: Logger) => Promise<BrowserSession>;
 
@@ -56,6 +69,9 @@ interface StagehandPage {
   waitForLoadState?(state: "load" | "domcontentloaded" | "networkidle", timeout?: number): Promise<unknown>;
   waitForSelector?(selector: string, opts?: { timeout?: number }): Promise<unknown>;
   waitForTimeout?(ms: number): Promise<unknown>;
+  title?(): Promise<string>;
+  keyPress?(key: string): Promise<unknown>;
+  snapshot?(): Promise<{ urlMap?: Record<string, string> }>;
 }
 interface StagehandBrowser {
   sessionId?: string | null;
@@ -148,8 +164,9 @@ export const openStagehandBrowser: BrowserOpener = async (cfg, log) => {
     sessionId,
     async newPage(url) {
       const page = await browser.context.newPage(url);
-      // Results lists render client-side; without this the snapshot is an empty shell.
+      // Results lists render client-side after load; without these waits the snapshot is an empty shell.
       await page.waitForLoadState?.("load", 15_000).catch(() => {});
+      await page.waitForLoadState?.("networkidle", 8_000).catch(() => {});
       const wrapper: PageLike = {
         // The URL we opened; v4's page.url() is async and nothing here needs the post-redirect one.
         url: () => url,
@@ -177,10 +194,34 @@ export const openStagehandBrowser: BrowserOpener = async (cfg, log) => {
       const extra: Record<string, unknown> = { page, timeout: opts.timeoutMs };
       if (opts.locator && typeof page.locator === "function") extra.locator = page.locator(opts.locator);
       const res = await stagehand.extract(instruction, schema, extra);
-      return schema.parse(res.data);
+      // Stagehand already shaped the data to the schema; one bad field (an unresolved link) must not sink the
+      // whole page, so hand the rows on and let toResults drop the bad ones.
+      const parsed = schema.safeParse(res.data);
+      if (!parsed.success)
+        log.debug("extraction did not fully match the schema", { issues: parsed.error.issues.length });
+      return parsed.success ? parsed.data : (res.data as ReturnType<typeof schema.parse>);
     },
     async act(instruction, opts) {
       await stagehand.act(instruction, { page: pageOf(opts.page), timeout: opts.timeoutMs });
+    },
+    async title(p) {
+      const page = pageOf(p);
+      return (await page.title?.().catch(() => "")) ?? "";
+    },
+    async linkMap(p) {
+      const page = pageOf(p);
+      try {
+        return (await page.snapshot?.())?.urlMap ?? {};
+      } catch (err) {
+        log.debug("snapshot for links failed", { error: String(err) });
+        return {};
+      }
+    },
+    async dismiss(p) {
+      const page = pageOf(p);
+      await page.keyPress?.("Escape").catch(() => {});
+      // Let the page re-render before anything snapshots it; a snapshot mid-render is an empty shell.
+      await page.waitForTimeout?.(800).catch(() => {});
     },
     async close() {
       if (closed) return;

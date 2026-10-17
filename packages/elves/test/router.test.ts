@@ -110,6 +110,14 @@ describe("route()", () => {
     expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
     expect(await route(batchOf("tell me about 1"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
     expect(await route(batchOf("more"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("search again"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(
+      await route(
+        batchOf("what about https://boston.craigslist.org/gbs/roo/d/allston-garden-level-room/1.html"),
+        d,
+        opts,
+      ),
+    ).toMatchObject({ elf: "home", via: "followup" });
     await fresh.setThreadOwner(spaceOwnerKey("s1"), "crew_lead");
     expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
   });

@@ -1,5 +1,6 @@
 export * from "./contract.ts";
 export { crewLead } from "./crew-lead.ts";
+export * from "./deal.ts";
 export * from "./facts.ts";
 export * from "./home.ts";
 export * from "./home-facts.ts";

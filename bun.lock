@@ -16,6 +16,7 @@
       "dependencies": {
         "@elves/db": "workspace:*",
         "@elves/elves": "workspace:*",
+        "@elves/engine": "workspace:*",
         "@elves/listings": "workspace:*",
         "@elves/llm": "workspace:*",
         "@elves/memory": "workspace:*",
@@ -36,11 +37,21 @@
       "name": "@elves/elves",
       "version": "0.1.0",
       "dependencies": {
+        "@elves/engine": "workspace:*",
         "@elves/listings": "workspace:*",
         "@elves/llm": "workspace:*",
         "@elves/memory": "workspace:*",
         "@elves/photon": "workspace:*",
         "@elves/pipeline": "workspace:*",
+        "@elves/shared": "workspace:*",
+        "zod": "^4.1.0",
+      },
+    },
+    "packages/engine": {
+      "name": "@elves/engine",
+      "version": "0.1.0",
+      "dependencies": {
+        "@elves/llm": "workspace:*",
         "@elves/shared": "workspace:*",
         "zod": "^4.1.0",
       },
@@ -136,6 +147,8 @@
     "@elves/db": ["@elves/db@workspace:packages/db"],
 
     "@elves/elves": ["@elves/elves@workspace:packages/elves"],
+
+    "@elves/engine": ["@elves/engine@workspace:packages/engine"],
 
     "@elves/listings": ["@elves/listings@workspace:packages/listings"],
 
