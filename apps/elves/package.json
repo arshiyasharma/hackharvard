@@ -1,0 +1,18 @@
+{
+  "name": "@elves/service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@elves/db": "workspace:*",
+    "@elves/elves": "workspace:*",
+    "@elves/engine": "workspace:*",
+    "@elves/listings": "workspace:*",
+    "@elves/llm": "workspace:*",
+    "@elves/memory": "workspace:*",
+    "@elves/photon": "workspace:*",
+    "@elves/pipeline": "workspace:*",
+    "@elves/shared": "workspace:*",
+    "hono": "^4.13.0"
+  }
+}

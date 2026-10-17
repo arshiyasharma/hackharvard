@@ -1,0 +1,13 @@
+{
+  "name": "@elves/photon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@elves/shared": "workspace:*",
+    "socket.io-client": "^4.8.0"
+  }
+}
