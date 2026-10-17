@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "heif2jpeg": "^0.1.0"
   }
 }

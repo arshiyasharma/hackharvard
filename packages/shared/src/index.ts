@@ -85,8 +85,17 @@ export interface Item {
   name: string;
   category: string;
   weightLb: number;
+  /** Listing copy and pricing, filled by intake from a photo. */
+  title: string | null;
+  description: string | null;
+  condition: string | null;
+  priceLowCents: number | null;
+  priceHighCents: number | null;
   listPriceCents: number | null;
   floorPriceCents: number | null;
+  photoAttachmentIds: string[];
+  /** Owner said "list it" (or equivalent) after seeing the price. */
+  listingApproved: boolean;
   outcome: ItemOutcome;
   createdAt: string;
 }
@@ -120,7 +129,7 @@ export interface Store {
   listEvents(moveId: string): Promise<EventRow[]>;
 
   listItems(moveId: string): Promise<Item[]>;
-  upsertItem(input: Omit<Item, "id" | "createdAt"> & { id?: string }): Promise<Item>;
+  upsertItem(input: Partial<Item> & Pick<Item, "moveId" | "name" | "category">): Promise<Item>;
 
   getThreadOwner(messageId: string): Promise<ElfName | undefined>;
   setThreadOwner(messageId: string, elf: ElfName): Promise<void>;
@@ -252,10 +261,26 @@ export class MemoryStore implements Store {
   async listItems(moveId: string) {
     return [...this.items.values()].filter((i) => i.moveId === moveId);
   }
-  async upsertItem(input: Omit<Item, "id" | "createdAt"> & { id?: string }) {
+  async upsertItem(input: Partial<Item> & Pick<Item, "moveId" | "name" | "category">) {
     const id = input.id ?? newId("it");
     const prev = this.items.get(id);
-    const item: Item = { ...(prev ?? { createdAt: nowIso() }), ...input, id } as Item;
+    const item: Item = {
+      weightLb: 25,
+      title: null,
+      description: null,
+      condition: null,
+      priceLowCents: null,
+      priceHighCents: null,
+      listPriceCents: null,
+      floorPriceCents: null,
+      photoAttachmentIds: [],
+      listingApproved: false,
+      outcome: "listed",
+      createdAt: nowIso(),
+      ...(prev ?? {}),
+      ...input,
+      id,
+    };
     this.items.set(id, item);
     return item;
   }

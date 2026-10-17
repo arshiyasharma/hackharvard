@@ -1,9 +1,10 @@
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, Store } from "@elves/shared";
-import { batchText, type Elf } from "./contract.ts";
+import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { parsePriceCents } from "./intake.ts";
 
-export type RouteVia = "first_contact" | "thread" | "llm" | "keyword" | "default";
+export type RouteVia = "first_contact" | "thread" | "photo" | "price" | "llm" | "keyword" | "default";
 export interface RouteDecision {
   elf: ElfName;
   via: RouteVia;
@@ -53,6 +54,21 @@ export async function route(
   }
 
   const text = batchText(batch);
+  // Photos and bare prices are the Sell Elf's job; no model call needed.
+  if (hasPhotos(batch) && deps.elves.some((e) => e.name === "sell"))
+    return { elf: "sell", via: "photo", confidence: 0.95 };
+  const plain = batch.messages
+    .map((m) => m.text ?? "")
+    .join(" ")
+    .trim();
+  if (
+    plain &&
+    plain.length <= 40 &&
+    parsePriceCents(plain) != null &&
+    deps.elves.some((e) => e.name === "sell")
+  ) {
+    return { elf: "sell", via: "price", confidence: 0.9 };
+  }
   if (!text.trim()) return { elf: "crew_lead", via: "default", confidence: 0.5 };
 
   const min = deps.minConfidence ?? 0.5;

@@ -153,6 +153,44 @@ export class PhotonClient {
     return this.request<unknown>("POST", `/spaces/${spaceId}/typing`, { body: { senderId, typing } });
   }
 
+  // ---- attachments ----
+  getAttachment(attachmentId: string) {
+    return this.request<{ id: string; contentType: string; filename?: string; sizeBytes?: number }>(
+      "GET",
+      `/attachments/${attachmentId}`,
+    );
+  }
+  /** Raw bytes; retries once when Photon reports ATTACHMENT_NOT_READY. */
+  async downloadAttachment(
+    attachmentId: string,
+  ): Promise<{ bytes: Uint8Array; contentType: string; filename?: string }> {
+    const url = `${this.projectPath}/attachments/${attachmentId}/content`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.apiKey}` } });
+      if (res.status === 409 || res.status === 425 || res.status === 503) {
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (!res.ok) {
+        const text = await res.text();
+        throw new PhotonApiError(
+          res.status,
+          undefined,
+          `Photon GET attachment ${attachmentId} -> ${res.status} ${text.slice(0, 200)}`,
+        );
+      }
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const disp = res.headers.get("content-disposition") ?? "";
+      const m = disp.match(/filename="([^"]+)"/);
+      return {
+        bytes,
+        contentType: res.headers.get("content-type") ?? "application/octet-stream",
+        filename: m?.[1],
+      };
+    }
+    throw new PhotonApiError(409, "ATTACHMENT_NOT_READY", `attachment ${attachmentId} not ready`);
+  }
+
   // ---- users & spaces ----
   createOrGetUser(handle: string, platform: string) {
     return this.request<{ id: string; handle: string; kind: string; platform: string }>("POST", "/users", {

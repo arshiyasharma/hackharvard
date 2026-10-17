@@ -10,7 +10,9 @@ Phase 1 (foundation) is live:
 
 - A text to an assigned pool number gets a read receipt, a typing indicator and a Crew Lead reply written by Claude, with the move-out date and items captured into the move.
 - Three rapid texts become one reply (per-space debounce with cancel and carry-forward).
-- The Crew Lead routes follow-ups to the right Elf (thread ownership → Claude classification → keyword fallback); the other nine Elves are stubs that acknowledge in their own voice and update the Crew Board.
+- Photo intake: an iPhone photo (HEIC) is downloaded, decoded, identified by Claude vision (item, condition, weight, fair resale range, listing title and description) and becomes an `items` row with a suggested list price.
+- Sell Elf: a dollar amount sets the floor; the list price is held at the range's upper middle and never below the floor; "yes, list it" marks it approved. Buyers reach it by texting the same number (buyer DMs are the next ticket).
+- The Crew Lead routes follow-ups to the right Elf (thread ownership → photo/price rules → Claude classification → keyword fallback); the remaining Elves are stubs that acknowledge in their own voice and update the Crew Board.
 - Hosted on Railway: `https://elves-production.up.railway.app/health`.
 
 Next: Deal Engine (`packages/engine`), Supabase store, Sell Elf with buyer DMs, Money (Nessie), Scam Shield, Last Call. See the implementation plan's work queue.
@@ -32,7 +34,7 @@ Environment (all read in `apps/elves/src/config.ts`):
 | Variable | Meaning |
 | --- | --- |
 | `PHOTON_PROJECT_ID`, `PHOTON_API_KEY` | Photon 2.0 project and `pho_sk_` key |
-| `PHOTON_INBOUND` | `poll` (GET /messages every `PHOTON_POLL_MS`, default) or `socket` (Socket.IO event stream with cursor replay) |
+| `PHOTON_INBOUND` | `poll` (GET /messages every `PHOTON_POLL_MS`, default) or `socket` (Socket.IO event stream with cursor replay, plus a slow poll as a safety net) |
 | `PHOTON_SINCE` | ISO time; on boot, also handle messages created after this (replay). Default: boot time |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL_FAST`, `ANTHROPIC_MODEL_SMART` | Claude; `claude-haiku-5-5` routes and extracts, `claude-sonnet-5-5` drafts. Unset key → deterministic template replies |
 | `ELVES_TRANSPORT` | `photon2` or `script` (in-memory) |
@@ -59,7 +61,8 @@ Every Elf is `handle(ctx) → { replies, boardPatch, events, movePatch }`. The s
 | Primitive | Endpoint | Where it fires | Verified live |
 | --- | --- | --- | --- |
 | Inbound messages | `GET /v1/projects/{id}/messages?direction=received&createdSince=…` | poll loop, idempotent on message id, cursor persisted | yes |
-| Inbound events | Socket.IO `/v1/projects/{id}/events/ws`, `subscribe {startSeq}` → `delivery(event, {seq})`, `message.received` | `PHOTON_INBOUND=socket` | subscribe verified; delivery path tested offline |
+| Inbound events | Socket.IO `/v1/projects/{id}/events/ws`, `subscribe {startSeq}` → `delivery(event, {seq})`, `message.received` | `PHOTON_INBOUND=socket` (hosted) | subscribe verified; delivery path tested offline |
+| Attachments | `GET /attachments/{id}` + `/content` (HEIC bytes) | photo intake | yes |
 | Reply as the right agent | `POST /messages` with `senderId = receivedBy.id`, `Idempotency-Key = reply:<msgId>:<n>` | every Elf reply | yes, delivered |
 | Threaded reply | `parentMessageId` | every Elf reply | shared pool refuses (409 `SPACE_NOT_SENDABLE`); the transport falls back to a flat send and remembers the space |
 | Read receipt | `POST /messages/{id}/read` | after the batch is read | yes |

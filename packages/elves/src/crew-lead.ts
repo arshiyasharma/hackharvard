@@ -1,6 +1,13 @@
 import { ELF_LABELS } from "@elves/shared";
 import { batchText, type Elf, type ElfContext, type ElfResult, lastMessageId } from "./contract.ts";
 import { DEFAULT_WEIGHT_LB, ExtractedFacts, extractFactsHeuristic, formatDate } from "./facts.ts";
+import {
+  approvePendingListings,
+  describeItem,
+  identifyFromPhotos,
+  isApproval,
+  itemStatus,
+} from "./intake.ts";
 
 const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts. Ten specialist Elves work under you (Sell, Buy, Green, Money, Haul, Map, Lease, Hunt, Move-in). You run the owner's group chat.
 
@@ -9,7 +16,9 @@ Write the reply as a text message:
 - 2 to 4 short lines. Each line is one sentence.
 - Confirm what you captured (dates, items, addresses) in the owner's own words.
 - Say which Elf is on what, in one line. Mention ONLY the Elves listed under elvesWithWork in the facts; if that list is empty, mention no Elf. Never invent work for an Elf.
-- Ask for at most ONE missing thing. If the move-out date is unknown, ask for it. Otherwise, if an item is for sale, ask for a photo and the lowest price they'd take for the first item.
+- If identifiedFromPhotos is non-empty, say in one line what the photo shows (material, color, condition) and the fair price range; the Sell Elf has it.
+- Ask for at most ONE missing thing. If the move-out date is unknown, ask for it. Otherwise, if an item has a photo but no floor (see items), ask for the lowest price they'd take for it. Otherwise, if an item for sale has no photo, ask for a photo and the lowest price. Never ask for a photo or a floor an item already has.
+- If justApproved is non-empty, confirm those items are listed at their list price and that buyers will text this number.
 - Never promise to move money, post to a marketplace, or book anything without the owner's OK.
 - If this is the first contact, open with one line saying you're their moving crew and they can text you anything about the move.
 - Do not repeat facts you already confirmed in earlier turns.`;
@@ -43,8 +52,8 @@ export const crewLead: Elf = {
     const text = batchText(ctx.batch);
     const now = ctx.now();
     const heuristic = extractFactsHeuristic(text, now);
-    let facts = heuristic;
-    if (ctx.llm.name !== "fake") {
+    const extraction = (async () => {
+      if (ctx.llm.name === "fake") return heuristic;
       try {
         const llmFacts = await ctx.llm.extract(ExtractedFacts, {
           system:
@@ -52,19 +61,44 @@ export const crewLead: Elf = {
             "Resolve relative dates to ISO dates. Only include items the owner actually mentions. Use null when unknown.",
           user: text,
         });
-        facts = {
+        return {
           ...llmFacts,
           moveOutDate: llmFacts.moveOutDate ?? heuristic.moveOutDate,
           items: llmFacts.items.length ? llmFacts.items : heuristic.items,
         };
       } catch (err) {
         ctx.log.warn("fact extraction failed; using heuristic", { error: String(err) });
+        return heuristic;
       }
-    }
+    })();
+    // Fact extraction and photo identification are independent; run them together.
+    const [facts, intake] = await Promise.all([extraction, identifyFromPhotos(ctx)]);
     if (ctx.signal.aborted) return { replies: [] };
 
     const movePatch: ElfResult["movePatch"] = {};
     const events: ElfResult["events"] = [];
+    for (const it of intake.items) {
+      events.push({
+        type: "item.identified",
+        payload: {
+          itemId: it.id,
+          name: it.name,
+          category: it.category,
+          condition: it.condition,
+          priceLowCents: it.priceLowCents,
+          priceHighCents: it.priceHighCents,
+        },
+      });
+    }
+    let justApproved: Awaited<ReturnType<typeof approvePendingListings>> = [];
+    if (intake.items.length === 0 && isApproval(text)) {
+      justApproved = await approvePendingListings(ctx);
+      for (const it of justApproved)
+        events.push({
+          type: "listing.approved",
+          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents },
+        });
+    }
     if (facts.moveOutDate && facts.moveOutDate !== ctx.move.moveOutAt) {
       movePatch.moveOutAt = facts.moveOutDate;
       events.push({ type: "move.date_captured", payload: { kind: "move_out", date: facts.moveOutDate } });
@@ -96,6 +130,14 @@ export const crewLead: Elf = {
       });
     }
     const sellItems = facts.items.filter((i) => i.intent === "sell" || i.intent === "unknown");
+    for (const it of intake.items) {
+      if (!sellItems.some((s) => s.name === it.name))
+        sellItems.push({
+          name: it.name,
+          category: it.category as (typeof facts.items)[number]["category"],
+          intent: "sell",
+        });
+    }
     if (sellItems.length) {
       await ctx.store.patchBoard(ctx.move.id, "sell", {
         status: "working",
@@ -118,6 +160,10 @@ export const crewLead: Elf = {
     const summary = {
       firstContact: ctx.firstContact,
       elvesWithWork,
+      identifiedFromPhotos: intake.items.map(describeItem),
+      photosUnreadable: intake.failed,
+      justApproved: justApproved.map((i) => i.name),
+      items: itemStatus(await ctx.store.listItems(ctx.move.id)),
       moveOutDate: moveOut,
       moveInDate: movePatch.moveInAt ?? ctx.move.moveInAt,
       itemsMentionedNow: facts.items,
@@ -170,12 +216,19 @@ function templateReply(s: {
   moveOutDate: string | null;
   itemsMentionedNow: { name: string; intent: string }[];
   allItems: string[];
+  identifiedFromPhotos: string[];
+  photosUnreadable: number;
+  justApproved: string[];
+  items: { name: string; hasPhoto: boolean; floor: string | null; listPrice: string | null }[];
 }): string {
   const lines: string[] = [];
   if (s.firstContact)
     lines.push(
       "Hey, this is your moving crew. Text me anything about the move and I'll put the right Elf on it.",
     );
+  if (s.identifiedFromPhotos.length)
+    lines.push(`From your photo: ${s.identifiedFromPhotos.join("; ")}. Sell Elf has it.`);
+  else if (s.photosUnreadable) lines.push("I couldn't read the photo you sent; can you send it again?");
   const got: string[] = [];
   if (s.moveOutDate) got.push(`move-out ${formatDate(s.moveOutDate)}`);
   const sell = s.itemsMentionedNow
@@ -184,9 +237,15 @@ function templateReply(s: {
   if (sell.length) got.push(`${sell.join(" and ")} to sell`);
   if (got.length) lines.push(`Got it: ${got.join(", ")}.`);
   if (sell.length) lines.push(`Sell Elf is on the ${sell.join(" and ")}.`);
+  if (s.justApproved.length) lines.push(`Listed: ${s.justApproved.join(", ")}. Buyers text this number.`);
+  const needsFloor = s.items.find((i) => i.hasPhoto && !i.floor);
+  const needsPhoto = s.items.find((i) => !i.hasPhoto);
   if (!s.moveOutDate) lines.push("When's your move-out date?");
-  else if (sell.length)
-    lines.push(`Send a photo of the ${sell[0]} and the lowest price you'd take, and I'll get it listed.`);
-  else lines.push("What should the crew start on?");
+  else if (needsFloor) lines.push(`What's the lowest you'd take for the ${needsFloor.name}?`);
+  else if (needsPhoto)
+    lines.push(
+      `Send a photo of the ${needsPhoto.name} and the lowest price you'd take, and I'll get it listed.`,
+    );
+  else if (!s.justApproved.length && !s.items.length) lines.push("What should the crew start on?");
   return lines.join("\n");
 }

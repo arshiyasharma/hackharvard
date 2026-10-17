@@ -1,4 +1,5 @@
 import type { LLM } from "@elves/llm";
+import type { AttachmentFile } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, ElfStatusRow, Logger, Move, Participant, Store } from "@elves/shared";
 
@@ -15,6 +16,11 @@ export interface ElfContext {
   publicUrl: string | null;
   firstContact: boolean;
   now: () => Date;
+  fetchAttachment: (id: string) => Promise<AttachmentFile | null>;
+}
+
+export function hasPhotos(batch: Batch): boolean {
+  return batch.messages.some((m) => m.attachments.length > 0);
 }
 
 export interface ElfReply {

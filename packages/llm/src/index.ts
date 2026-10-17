@@ -13,16 +13,48 @@ export interface ClassifyResult {
   reason: string;
 }
 
+export interface ImageInput {
+  /** image/jpeg, image/png, image/gif or image/webp (see prepareImage for HEIC) */
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  base64: string;
+}
+
 export interface LLM {
   readonly name: string;
   classify(input: ClassifyInput): Promise<ClassifyResult>;
   draft(input: { system: string; user: string; maxTokens?: number }): Promise<string>;
   extract<T>(schema: z.ZodType<T>, input: { system: string; user: string }): Promise<T>;
+  /** Structured extraction over one or more images plus text. */
+  extractFromImages<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; images: ImageInput[] },
+  ): Promise<T>;
+}
+
+const CLAUDE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+/**
+ * Turn attachment bytes into an image Claude accepts. HEIC/HEIF (every iPhone photo) is decoded to JPEG
+ * with heif2jpeg (prebuilt binaries for macOS and Linux). Returns null for non-images.
+ */
+export async function prepareImage(bytes: Uint8Array, contentType: string): Promise<ImageInput | null> {
+  const ct = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (ct === "image/heic" || ct === "image/heif") {
+    const { heifToJpeg } = await import("heif2jpeg");
+    const jpeg = await heifToJpeg(Buffer.from(bytes), { quality: 80 });
+    return { mediaType: "image/jpeg", base64: Buffer.from(jpeg).toString("base64") };
+  }
+  if (CLAUDE_IMAGE_TYPES.has(ct)) {
+    return { mediaType: ct as ImageInput["mediaType"], base64: Buffer.from(bytes).toString("base64") };
+  }
+  return null;
 }
 
 /** Keyword-driven stand-in used in tests and when no API key is configured. */
 export class FakeLLM implements LLM {
   readonly name = "fake";
+  /** Tests set this to control what "vision" returns. */
+  visionResult: unknown = null;
   constructor(private readonly keywords: Record<string, string[]> = {}) {}
   async classify(input: ClassifyInput): Promise<ClassifyResult> {
     const t = input.text.toLowerCase();
@@ -37,6 +69,10 @@ export class FakeLLM implements LLM {
   }
   async extract<T>(schema: z.ZodType<T>): Promise<T> {
     return schema.parse({});
+  }
+  async extractFromImages<T>(schema: z.ZodType<T>): Promise<T> {
+    if (this.visionResult == null) throw new Error("FakeLLM.visionResult not set");
+    return schema.parse(this.visionResult);
   }
 }
 
@@ -114,6 +150,30 @@ export class ClaudeLLM implements LLM {
       messages: [{ role: "user", content: input.user }],
     });
     if (res.parsed_output == null) throw new Error("extraction returned no parsable output");
+    return res.parsed_output;
+  }
+
+  async extractFromImages<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; images: ImageInput[] },
+  ): Promise<T> {
+    const content: Anthropic.ContentBlockParam[] = [
+      ...input.images.map(
+        (img): Anthropic.ImageBlockParam => ({
+          type: "image",
+          source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+        }),
+      ),
+      { type: "text", text: input.user },
+    ];
+    const res = await this.client.messages.parse({
+      model: this.smart,
+      max_tokens: 2048,
+      output_config: { effort: "low", format: zodOutputFormat(schema) },
+      system: input.system,
+      messages: [{ role: "user", content }],
+    });
+    if (res.parsed_output == null) throw new Error("image extraction returned no parsable output");
     return res.parsed_output;
   }
 }

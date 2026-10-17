@@ -38,6 +38,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.135.0",
+        "heif2jpeg": "^0.1.0",
         "zod": "^4.1.0",
       },
     },
@@ -100,6 +101,18 @@
 
     "@elves/shared": ["@elves/shared@workspace:packages/shared"],
 
+    "@heif2jpeg/heif2jpeg-darwin-arm64": ["@heif2jpeg/heif2jpeg-darwin-arm64@0.1.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-HSXg4gGIb/RUwdUyRfXMopxvs8JpTLexW5+XLV3MqNZ8bMjUINv8aAigBECZ7It8dFWfcpui236S+z/LLMMFHQ=="],
+
+    "@heif2jpeg/heif2jpeg-darwin-x64": ["@heif2jpeg/heif2jpeg-darwin-x64@0.1.6", "", { "os": "darwin", "cpu": "x64" }, "sha512-2Rno3RuhB5jK61RoMThoD9XNG+p997xOs9qN+qAk4vlr8IVFvAamunWvmtumHiJOWQ97mL7WuvpTa4PGDadqcQ=="],
+
+    "@heif2jpeg/heif2jpeg-linux-arm64-gnu": ["@heif2jpeg/heif2jpeg-linux-arm64-gnu@0.1.6", "", { "os": "linux", "cpu": "arm64" }, "sha512-myeXEKyYG39tPz7Tir526LozlRKk8a70zdpiBoEIZs1vxft3NAyj7OiR2SHbEQVOuRmcdOtJ6wxswvbafzOtAw=="],
+
+    "@heif2jpeg/heif2jpeg-linux-x64-gnu": ["@heif2jpeg/heif2jpeg-linux-x64-gnu@0.1.6", "", { "os": "linux", "cpu": "x64" }, "sha512-fvxLcCxbmXNHEvGpnKjVZmO3Wx1ew/e2+LvOOKW1vHbH5/5E7xdgYpbJVGcVa4s4nneKbybhNXDfaMdcZYqRgg=="],
+
+    "@heif2jpeg/heif2jpeg-win32-arm64-msvc": ["@heif2jpeg/heif2jpeg-win32-arm64-msvc@0.1.6", "", { "os": "win32", "cpu": "arm64" }, "sha512-WWh/rOngHL+q27Y8TXIwsBH111gBf5Z7kBc14LZg+LoD/EnK1KzXx5NcguIyhuKzAEQJk+BwTIqfP7HeFWCrmw=="],
+
+    "@heif2jpeg/heif2jpeg-win32-x64-msvc": ["@heif2jpeg/heif2jpeg-win32-x64-msvc@0.1.6", "", { "os": "win32", "cpu": "x64" }, "sha512-Op3rpPzCwUxXHbzJD9hHNFBlV2nLr2/j+oNg5v0v4utKhLJ5GZg7NbfMJa07T1MkYMRs6lS60QhY/IWwWbSlFQ=="],
+
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
@@ -119,6 +132,8 @@
     "engine.io-parser": ["engine.io-parser@5.2.3", "", {}, "sha512-HqD3yTBfnBxIrbnM1DoD6Pcq8NECnh8d4As1Qgh0z5Gg3jRRIqijury0CL3ghu/edArpUYiYqQiDUQBIs4np3Q=="],
 
     "fast-sha256": ["fast-sha256@1.3.0", "", {}, "sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ=="],
+
+    "heif2jpeg": ["heif2jpeg@0.1.6", "", { "optionalDependencies": { "@heif2jpeg/heif2jpeg-darwin-arm64": "0.1.6", "@heif2jpeg/heif2jpeg-darwin-x64": "0.1.6", "@heif2jpeg/heif2jpeg-linux-arm64-gnu": "0.1.6", "@heif2jpeg/heif2jpeg-linux-x64-gnu": "0.1.6", "@heif2jpeg/heif2jpeg-win32-arm64-msvc": "0.1.6", "@heif2jpeg/heif2jpeg-win32-x64-msvc": "0.1.6" } }, "sha512-pXgHIbFS6HDcGhcYHkTltdKG+WSEb7Xtk8NSzQf7tVz3Nw8JzXojqyOqyqRfMLYLbHzxTuLN3a4FZKFlTHzcRA=="],
 
     "hono": ["hono@4.13.13", "", {}, "sha512-CQ46U0ZkAGmbT/4UxdzzGJpacP2IeKgY4a5/tOI9AABbpOMfK739wfDXmv1usCk+3RkKj1hQy4/fjhiwa2xlrA=="],
 

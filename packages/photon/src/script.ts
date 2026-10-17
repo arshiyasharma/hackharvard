@@ -1,4 +1,4 @@
-import type { InboundMessage, OutboundReply, Transport } from "./transport.ts";
+import type { AttachmentFile, InboundMessage, OutboundReply, Transport } from "./transport.ts";
 
 export interface ScriptSend extends OutboundReply {
   id: string;
@@ -16,6 +16,7 @@ export class ScriptTransport implements Transport {
   readonly reactions: { messageId: string; emoji: string }[] = [];
   readonly typingEvents: { spaceId: string; on: boolean }[] = [];
   readonly reads: string[] = [];
+  readonly attachments = new Map<string, AttachmentFile>();
   private queue: InboundMessage[] = [];
   private waiters: ((m: InboundMessage | null) => void)[] = [];
   private sendWaiters: { n: number; resolve: () => void }[] = [];
@@ -93,6 +94,13 @@ export class ScriptTransport implements Transport {
   }
   async read(messageId: string) {
     this.reads.push(messageId);
+  }
+  /** Register bytes for an attachment id so `push(handle, null, { attachments: [{ id }] })` can be fetched. */
+  addAttachment(id: string, bytes: Uint8Array, contentType: string, filename?: string) {
+    this.attachments.set(id, { id, bytes, contentType, filename });
+  }
+  async fetchAttachment(id: string) {
+    return this.attachments.get(id) ?? null;
   }
 
   /** Resolve once the inbound loop has consumed every pushed message and is waiting for more. */

@@ -6,7 +6,11 @@ import type { Batch } from "@elves/pipeline";
 import { type ElfName, MemoryStore } from "@elves/shared";
 
 let seq = 0;
-const batchOf = (text: string, parentMessageId: string | null = null): Batch => {
+const batchOf = (
+  text: string | null,
+  parentMessageId: string | null = null,
+  attachments: { id: string }[] = [],
+): Batch => {
   const m: InboundMessage = {
     id: `m${++seq}`,
     spaceId: "s1",
@@ -17,7 +21,7 @@ const batchOf = (text: string, parentMessageId: string | null = null): Batch => 
     agentId: "a1",
     agentHandle: "+1628",
     text,
-    attachments: [],
+    attachments,
     reaction: null,
     parentMessageId,
     receivedAt: new Date().toISOString(),
@@ -87,6 +91,30 @@ describe("route()", () => {
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
     expect(r).toMatchObject({ elf: "haul", via: "keyword" });
+  });
+  test("a photo goes to the Sell Elf unless it is first contact", async () => {
+    expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({
+      elf: "sell",
+      via: "photo",
+    });
+    expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: true })).toMatchObject({
+      elf: "crew_lead",
+      via: "first_contact",
+    });
+  });
+  test("a bare price goes to the Sell Elf", async () => {
+    expect(await route(batchOf("4 dollars"), deps, { firstContact: false })).toMatchObject({
+      elf: "sell",
+      via: "price",
+    });
+    expect(await route(batchOf("$60"), deps, { firstContact: false })).toMatchObject({
+      elf: "sell",
+      via: "price",
+    });
+    expect(await route(batchOf("lowest I'd take is 80"), deps, { firstContact: false })).toMatchObject({
+      elf: "sell",
+      via: "price",
+    });
   });
   test("unknown text defaults to the Crew Lead", async () => {
     const r = await route(batchOf("zzzz qqqq"), deps, { firstContact: false });

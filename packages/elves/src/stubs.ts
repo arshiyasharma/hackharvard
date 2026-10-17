@@ -12,33 +12,6 @@ interface StubSpec {
 
 const SPECS: StubSpec[] = [
   {
-    name: "sell",
-    description:
-      "Selling furniture and items: listings, prices, photos of items to sell, buyers, pickups for sold items",
-    keywords: [
-      "sell",
-      "selling",
-      "list",
-      "listing",
-      "price",
-      "couch",
-      "sofa",
-      "mattress",
-      "desk",
-      "lamp",
-      "dresser",
-      "buyer",
-      "offer",
-      "lowest",
-      "floor",
-      "photo",
-      "pickup",
-    ],
-    task: "Drafting listings",
-    reply:
-      "Sell Elf here. Send me a photo and the lowest price you'd take and I'll draft the listing and handle the buyers from this number.",
-  },
-  {
     name: "buy",
     description:
       "Buying items: a listing link or screenshot the owner forwards, offers to a seller, delivery of something bought",

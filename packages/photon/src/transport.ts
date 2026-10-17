@@ -27,6 +27,13 @@ export interface OutboundReply {
   format?: "plain" | "markdown";
 }
 
+export interface AttachmentFile {
+  id: string;
+  bytes: Uint8Array;
+  contentType: string;
+  filename?: string;
+}
+
 export interface Transport {
   readonly name: string;
   /** Yields inbound messages until the signal aborts. Implementations must be restart-safe. */
@@ -39,6 +46,8 @@ export interface Transport {
   ): Promise<void>;
   typing(spaceId: string, senderId: string, on: boolean): Promise<void>;
   read(messageId: string, key: string): Promise<void>;
+  /** Download an inbound attachment's bytes, or null when the provider no longer has it. */
+  fetchAttachment(id: string): Promise<AttachmentFile | null>;
 }
 
 function flattenContent(c: PhotonContent): PhotonContent[] {

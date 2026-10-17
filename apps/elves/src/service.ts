@@ -146,6 +146,7 @@ export function createService(deps: ServiceDeps): Service {
       publicUrl: deps.publicUrl,
       firstContact,
       now,
+      fetchAttachment: (id) => deps.transport.fetchAttachment(id),
     };
     let result: Awaited<ReturnType<Elf["handle"]>>;
     try {

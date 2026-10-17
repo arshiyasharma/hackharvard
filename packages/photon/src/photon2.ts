@@ -1,6 +1,7 @@
 import { createLogger, type Logger } from "@elves/shared";
 import { PhotonApiError, type PhotonClient } from "./client.ts";
 import {
+  type AttachmentFile,
   type InboundMessage,
   normalizePhotonMessage,
   type OutboundReply,
@@ -10,7 +11,7 @@ import type { MessageEventData, PhotonEvent, PhotonMessage } from "./types.ts";
 
 export interface Photon2TransportOptions {
   client: PhotonClient;
-  /** poll = GET /messages on an interval (works anywhere); socket = Socket.IO event stream with cursor replay. */
+  /** poll = GET /messages on an interval (works anywhere); socket = Socket.IO event stream plus a slow poll as a safety net. */
   inbound?: "poll" | "socket";
   pollMs?: number;
   /** Only handle messages created at/after this time (ISO). Defaults to boot time minus 5 s. */
@@ -90,13 +91,37 @@ export class Photon2Transport implements Transport {
   }
 
   inbound(signal: AbortSignal): AsyncIterable<InboundMessage> {
-    return this.mode === "socket" ? this.inboundSocket(signal) : this.inboundPoll(signal);
+    if (this.mode !== "socket") return this.inboundPoll(signal, this.pollMs);
+    // Socket for latency, a slow poll so nothing is lost if the stream hiccups; the seen-set dedups.
+    const queue = new AsyncQueue<InboundMessage>();
+    const pump = async (src: AsyncIterable<InboundMessage>, name: string) => {
+      try {
+        for await (const m of src) queue.push(m);
+      } catch (err) {
+        this.log.error(`${name} inbound stopped`, { error: String(err) });
+      }
+    };
+    void Promise.all([
+      pump(this.inboundSocket(signal), "socket"),
+      pump(this.inboundPoll(signal, Math.max(this.pollMs * 5, 10_000)), "poll"),
+    ]).finally(() => queue.close());
+    return queue;
   }
 
-  private async *inboundPoll(signal: AbortSignal): AsyncIterable<InboundMessage> {
+  async fetchAttachment(id: string): Promise<AttachmentFile | null> {
+    try {
+      const { bytes, contentType, filename } = await this.client.downloadAttachment(id);
+      return { id, bytes, contentType, filename };
+    } catch (err) {
+      this.log.warn("attachment download failed", { id, error: String(err) });
+      return null;
+    }
+  }
+
+  private async *inboundPoll(signal: AbortSignal, pollMs: number): AsyncIterable<InboundMessage> {
     let createdSince = (await this.cursor?.get("photon2:poll:createdSince")) ?? this.since;
     if (createdSince < this.since) createdSince = this.since;
-    this.log.info("polling for inbound messages", { createdSince, pollMs: this.pollMs });
+    this.log.info("polling for inbound messages", { createdSince, pollMs });
     let failures = 0;
     while (!signal.aborted) {
       try {
@@ -128,9 +153,9 @@ export class Photon2Transport implements Transport {
         failures++;
         this.log.warn("poll failed", { attempt: failures, error: String(err) });
       }
-      const wait = Math.min(this.pollMs * 2 ** Math.min(failures, 5), 30_000);
+      const wait = Math.min(pollMs * 2 ** Math.min(failures, 5), 30_000);
       await new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, failures ? wait : this.pollMs);
+        const t = setTimeout(resolve, failures ? wait : pollMs);
         signal.addEventListener("abort", () => {
           clearTimeout(t);
           resolve();
