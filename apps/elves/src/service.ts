@@ -1,11 +1,14 @@
 import {
   allElves,
   batchText,
+  type DealHooks,
   type Elf,
   type ElfContext,
   type ElfReply,
   EMPTY_CONVERSATION,
+  noDealHooks,
   route,
+  runLastCall,
   spaceOwnerKey,
 } from "@elves/elves";
 import { FakeListings, type ListingSource } from "@elves/listings";
@@ -13,7 +16,14 @@ import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
 import type { InboundMessage, Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
-import { createLogger, type Logger, type Move, type Participant, type Store } from "@elves/shared";
+import {
+  createLogger,
+  type ElfName,
+  type Logger,
+  type Move,
+  type Participant,
+  type Store,
+} from "@elves/shared";
 
 export interface ServiceDeps {
   store: Store;
@@ -28,12 +38,23 @@ export interface ServiceDeps {
   publicUrl: string | null;
   logger?: Logger;
   now?: () => Date;
+  /** The Deal Engine's side of selling; defaults to no-op hooks until it is merged. */
+  deals?: DealHooks;
+  /** How often Last Call checks every move, in ms (default 60 s); 0 turns the timer off (tests). */
+  lastCallMs?: number;
 }
 
 export interface Service {
   pipeline: Pipeline;
   handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
+  /** Advance Last Call on every move (or one) as of `at`; returns what changed per move. */
+  tickLastCall: (opts?: {
+    moveId?: string;
+    at?: Date;
+  }) => Promise<{ moveId: string; stage: string | null; sent: boolean }[]>;
+  /** Text the owner of a move outside of a reply (Last Call, reminders). Idempotent on `key`. */
+  notifyOwner: (move: Move, elf: ElfName, text: string, key: string) => Promise<boolean>;
   stats: () => Record<string, unknown>;
 }
 
@@ -45,6 +66,7 @@ export function createService(deps: ServiceDeps): Service {
   const elves = deps.elves ?? allElves;
   const now = deps.now ?? (() => new Date());
   const listings = deps.listings ?? new FakeListings();
+  const deals = deps.deals ?? noDealHooks;
   const counters = {
     inbound: 0,
     replies: 0,
@@ -52,6 +74,9 @@ export function createService(deps: ServiceDeps): Service {
     failures: 0,
     lastInboundAt: null as string | null,
     lastReplyAt: null as string | null,
+    lastCallTicks: 0,
+    lastCallSends: 0,
+    lastCallFailures: 0,
   };
   const mem = deps.memory ?? null;
   /** Memory must never block a reply: log and move on. */
@@ -214,6 +239,7 @@ export function createService(deps: ServiceDeps): Service {
       fetchAttachment: (id) => deps.transport.fetchAttachment(id),
       conversation,
       listings,
+      deals,
     };
     let result: Awaited<ReturnType<Elf["handle"]>>;
     try {
@@ -379,9 +405,111 @@ export function createService(deps: ServiceDeps): Service {
     });
   }
 
+  async function notifyOwner(move: Move, elf: ElfName, text: string, key: string): Promise<boolean> {
+    if (await deps.store.getSend(key)) return false;
+    const people = await deps.store.listParticipants(move.id);
+    const owner =
+      people.find((p) => p.role === "owner" && p.spaceId === move.ownerSpaceId) ??
+      people.find((p) => p.role === "owner");
+    if (!owner?.agentUserId) {
+      // Loud: without the agent id we cannot send on the shared pool, and the owner would never hear about it.
+      log.error("cannot notify owner: no agent id on the owner participant", { moveId: move.id, key });
+      await deps.store.appendEvent({
+        moveId: move.id,
+        type: "notify.failed",
+        payload: { elf, key, reason: "no owner agent id" },
+        traceId: null,
+      });
+      return false;
+    }
+    const sent = await deps.transport.send(
+      { spaceId: owner.spaceId, senderId: owner.agentUserId, text, format: "plain" },
+      key,
+    );
+    await deps.store.recordSend(key, sent.id);
+    await deps.store.setThreadOwner(sent.id, elf);
+    await deps.store.setThreadOwner(spaceOwnerKey(owner.spaceId), elf);
+    await deps.store.appendEvent({
+      moveId: move.id,
+      type: "reply.sent",
+      payload: { elf, messageId: sent.id, parentMessageId: null, text, proactive: true },
+      traceId: null,
+    });
+    await safeMem("remember notify", (m) =>
+      m.remember({
+        threadId: owner.spaceId,
+        moveId: move.id,
+        role: "assistant",
+        id: sent.id,
+        text,
+        elf,
+        metadata: { key },
+      }),
+    );
+    counters.replies++;
+    counters.lastReplyAt = new Date().toISOString();
+    return true;
+  }
+
+  async function tickLastCall(opts: { moveId?: string; at?: Date } = {}) {
+    const at = opts.at ?? now();
+    const moves = opts.moveId
+      ? [await deps.store.getMove(opts.moveId)].filter((m): m is Move => !!m)
+      : (await deps.store.listMoves()).filter((m) => m.moveOutAt);
+    const out: { moveId: string; stage: string | null; sent: boolean }[] = [];
+    counters.lastCallTicks++;
+    for (const move of moves) {
+      try {
+        const run = await runLastCall(deps.store, deals, move, at);
+        for (const ev of run.events)
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: ev.type,
+            payload: { ...ev.payload, elf: "stuff" },
+            traceId: null,
+          });
+        let sent = false;
+        if (run.stage && run.ownerText) {
+          await deps.store.patchBoard(move.id, "stuff", {
+            status: run.stage === "closed" ? "done" : "working",
+            currentTask: "Last Call",
+            lastUpdate: `Last Call: ${run.stage}`,
+          });
+          sent = await notifyOwner(
+            move,
+            "stuff",
+            run.ownerText,
+            `lastcall:${move.id}:${run.stage}:${at.toISOString().slice(0, 13)}`,
+          );
+          if (sent) counters.lastCallSends++;
+        }
+        out.push({ moveId: move.id, stage: run.stage, sent });
+      } catch (err) {
+        counters.lastCallFailures++;
+        log.error("last call failed", { moveId: move.id, error: String(err) });
+        out.push({ moveId: move.id, stage: null, sent: false });
+      }
+    }
+    return out;
+  }
+
   const pipeline = new Pipeline({ debounceMs: deps.debounceMs, handle: handleBatch, logger: log });
 
   async function run(signal: AbortSignal) {
+    const every = deps.lastCallMs ?? 60_000;
+    if (every > 0) {
+      let busy = false;
+      const timer = setInterval(() => {
+        if (busy) return;
+        busy = true;
+        tickLastCall()
+          .catch((err) => log.error("last call tick crashed", { error: String(err) }))
+          .finally(() => {
+            busy = false;
+          });
+      }, every);
+      signal.addEventListener("abort", () => clearInterval(timer), { once: true });
+    }
     log.info("inbound loop started", {
       transport: deps.transport.name,
       llm: deps.llm.name,
@@ -408,6 +536,8 @@ export function createService(deps: ServiceDeps): Service {
     pipeline,
     handleBatch,
     run,
+    tickLastCall,
+    notifyOwner,
     stats: () => ({
       ...counters,
       memory: mem?.stats() ?? { kind: "off" },

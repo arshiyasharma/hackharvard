@@ -16,7 +16,13 @@ export const ELF_LABELS: Record<ElfName, string> = {
 
 export type Role = "owner" | "roommate" | "buyer" | "seller" | "applicant" | "lister";
 export type ElfStatus = "idle" | "working" | "waiting" | "done" | "blocked";
-export type ItemOutcome = "listed" | "sold" | "given" | "donated" | "dumped";
+/** "kept" = the owner is taking it (it goes on the truck); neither diverted nor dumped in the Move Report. */
+export type ItemOutcome = "listed" | "sold" | "given" | "donated" | "dumped" | "kept";
+/** What the owner wants done with an item; "buy" is something they're getting for the new place. */
+export const ITEM_INTENTS = ["sell", "give", "donate", "keep", "buy"] as const;
+export type ItemIntent = (typeof ITEM_INTENTS)[number];
+/** Last Call progress on an unsold item: price dropped (T-48h), relisted free (T-24h), closed (T-0). */
+export type LastCallStage = "dropped" | "free" | "closed";
 
 export interface Move {
   id: string;
@@ -81,7 +87,35 @@ export interface Item {
   /** Owner said "list it" (or equivalent) after seeing the price. */
   listingApproved: boolean;
   outcome: ItemOutcome;
+  intent: ItemIntent;
+  /** Set when the outcome changes from "listed". */
+  outcomeAt: string | null;
+  /** Leaves before move day (sold, given, donated): the Move-day Elf drops it from the truck estimate. */
+  leavesBeforeMoveDay: boolean;
+  lastCallStage: LastCallStage | null;
   createdAt: string;
+}
+
+/** Column defaults for an item row, shared by every Store implementation. */
+export function itemDefaults(): Omit<Item, "id" | "moveId" | "name" | "category"> {
+  return {
+    weightLb: 25,
+    title: null,
+    description: null,
+    condition: null,
+    priceLowCents: null,
+    priceHighCents: null,
+    listPriceCents: null,
+    floorPriceCents: null,
+    photoAttachmentIds: [],
+    listingApproved: false,
+    outcome: "listed",
+    intent: "sell",
+    outcomeAt: null,
+    leavesBeforeMoveDay: false,
+    lastCallStage: null,
+    createdAt: nowIso(),
+  };
 }
 
 export interface SendRecord {
@@ -285,7 +319,10 @@ export function dealDefaults(): Omit<Deal, "id" | "moveId" | "mode" | "title" | 
   };
 }
 
-export function dealPartyDefaults(): Omit<DealParty, "id" | "dealId" | "moveId" | "spaceId" | "handle" | "role"> {
+export function dealPartyDefaults(): Omit<
+  DealParty,
+  "id" | "dealId" | "moveId" | "spaceId" | "handle" | "role"
+> {
   const ts = nowIso();
   return {
     status: "talking",
@@ -502,23 +539,7 @@ export class MemoryStore implements Store {
   async upsertItem(input: Partial<Item> & Pick<Item, "moveId" | "name" | "category">) {
     const id = input.id ?? newId("it");
     const prev = this.items.get(id);
-    const item: Item = {
-      weightLb: 25,
-      title: null,
-      description: null,
-      condition: null,
-      priceLowCents: null,
-      priceHighCents: null,
-      listPriceCents: null,
-      floorPriceCents: null,
-      photoAttachmentIds: [],
-      listingApproved: false,
-      outcome: "listed",
-      createdAt: nowIso(),
-      ...(prev ?? {}),
-      ...input,
-      id,
-    };
+    const item: Item = { ...itemDefaults(), ...(prev ?? {}), ...input, id };
     this.items.set(id, item);
     return item;
   }

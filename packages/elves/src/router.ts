@@ -3,7 +3,11 @@ import type { Batch } from "@elves/pipeline";
 import type { ElfName, Store } from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
 import { isHuntFollowUp } from "./home-followups.ts";
-import { parsePriceCents } from "./intake.ts";
+import { isApproval, parsePriceCents } from "./intake.ts";
+
+/** A short answer to whatever was just asked: "yes", "no", "go ahead", "hold off". */
+const SHORT_ANSWER =
+  /^(yes|yep|yeah|yup|sure|ok|okay|go ahead|do it|send it|list it|sounds good|no|nope|not yet|wait|hold|hold off|nah)\b[\s\S]{0,30}$/i;
 
 export type RouteVia =
   | "first_contact"
@@ -80,6 +84,14 @@ export async function route(
     const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
     if (lastElf === "home" && (await deps.store.listListings(opts.moveId)).length)
       return { elf: "home", via: "followup", confidence: 0.95 };
+  }
+  // "yes" / "no" right after the Stuff Elf asked something (list it? send this offer?) is an answer to it.
+  if (opts.moveId && deps.elves.some((e) => e.name === "stuff") && !hasPhotos(batch)) {
+    const plainText = text.trim();
+    if (SHORT_ANSWER.test(plainText) || (isApproval(plainText) && plainText.length <= 30)) {
+      const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+      if (lastElf === "stuff") return { elf: "stuff", via: "followup", confidence: 0.9 };
+    }
   }
   // Photos and bare prices are the Stuff Elf's job; no model call needed.
   if (hasPhotos(batch) && deps.elves.some((e) => e.name === "stuff"))

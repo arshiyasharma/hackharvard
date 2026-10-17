@@ -35,7 +35,14 @@ export { InMemoryBackend } from "./backends/inmemory.ts";
 export { PostgresBackend } from "./backends/postgres.ts";
 export { type ExtractedFact, FactExtraction, heuristicFacts } from "./consolidate.ts";
 export * from "./types.ts";
-export { type HousingView, housingLines, itemLine, renderWorkingMemory } from "./working.ts";
+export {
+  type HousingView,
+  housingLines,
+  itemLine,
+  publicItemLine,
+  renderPublicWorkingMemory,
+  renderWorkingMemory,
+} from "./working.ts";
 
 export interface MemoryBudget {
   /** Tokens for the verbatim transcript window. */
@@ -264,9 +271,13 @@ export class MoveMemory {
     const summary = thread?.summary ? clipToTokens(thread.summary, cfg.budget.summary) : null;
     const housing = search || listings.length ? { search: search ?? null, listings } : null;
     const workingMemory = move
-      ? clipToTokens(renderWorkingMemory(move, items, board, participants, housing), cfg.budget.working)
+      ? clipToTokens(
+          renderWorkingMemory(move, items, board, participants, housing, isOwner ? "owner" : "public"),
+          cfg.budget.working,
+        )
       : null;
-    const noteMap = notes.length ? Object.fromEntries(notes.map((n) => [n.key, n.value])) : null;
+    // An Elf's notes are its private scratchpad for the move (may hold floors, budgets): owner threads only.
+    const noteMap = isOwner && notes.length ? Object.fromEntries(notes.map((n) => [n.key, n.value])) : null;
     const ctx: ConversationContext = {
       transcript,
       summary,

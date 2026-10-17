@@ -4,6 +4,7 @@ import { type ConversationContext, EMPTY_CONVERSATION, renderPreamble } from "@e
 import type { AttachmentFile } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, ElfStatusRow, Logger, Move, Participant, Store } from "@elves/shared";
+import type { DealHooks } from "./deal-hooks.ts";
 
 export interface ElfContext {
   store: Store;
@@ -23,6 +24,8 @@ export interface ElfContext {
   conversation: ConversationContext;
   /** Where the Home Elf searches for housing, hotels and storage. */
   listings: ListingSource;
+  /** The Deal Engine's side of selling; `noDealHooks` until it is merged. */
+  deals?: DealHooks;
 }
 
 export type { ConversationContext };

@@ -122,11 +122,17 @@ describe.each(backends)("MoveMemory (%s)", (_name, open) => {
     expect(ctx.workingMemory).toContain("Move-out date: 2026-11-01");
     expect(ctx.workingMemory).toContain("couch · floor $80 · list $120 · awaiting approval");
     expect(ctx.workingMemory).toContain("Stuff Elf (working): Listing couch");
-    // a buyer thread of the same move sees the same structured state
+    // a buyer thread of the same move sees listed items at their public price, and never the floor
+    const items = await o.store.listItems(move.id);
+    await o.store.upsertItem({ ...items[0]!, listingApproved: true, title: "Gray couch" });
     await m.ensureThread(`${run}:buyer-${move.id}`, { moveId: move.id, role: "buyer" });
-    expect(
-      (await m.context({ threadId: `${run}:buyer-${move.id}`, moveId: move.id })).workingMemory,
-    ).toContain("couch");
+    const buyer =
+      (await m.context({ threadId: `${run}:buyer-${move.id}`, moveId: move.id })).workingMemory ?? "";
+    expect(buyer).toContain("Gray couch · $120 · available");
+    expect(buyer).not.toContain("$80");
+    expect(buyer).not.toContain("floor");
+    expect(buyer).not.toContain(move.ownerHandle);
+    expect(buyer).not.toContain("Move-out");
   });
 
   test("facts: extracted after a turn, deduplicated, ranked by relevance, scoped by audience", async () => {

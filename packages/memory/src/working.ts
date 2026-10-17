@@ -62,13 +62,30 @@ export function itemLine(i: Item): string {
     i.priceLowCents != null && i.priceHighCents != null
       ? ` · range ${usd(i.priceLowCents)}-${usd(i.priceHighCents)}`
       : "";
-  const tail = i.outcome !== "listed" ? ` · ${i.outcome}` : "";
+  const tail = `${i.outcome !== "listed" ? ` · ${i.outcome}` : ""}${i.intent !== "sell" ? ` · intent ${i.intent}` : ""}${i.lastCallStage ? ` · last call ${i.lastCallStage}` : ""}`;
   return `- ${i.name} · floor ${usd(i.floorPriceCents)} · list ${usd(i.listPriceCents)}${range} · ${stage}${tail}`;
+}
+
+/** What a buyer (or any non-owner) may see about an item: no floor, no range, no other buyers. */
+export function publicItemLine(i: Item): string {
+  const status = i.outcome === "listed" ? (i.listingApproved ? "available" : "not listed yet") : i.outcome;
+  const price = i.listPriceCents === 0 ? "free" : usd(i.listPriceCents);
+  return `- ${i.title ?? i.name} · ${price} · ${status}${i.condition ? ` · ${i.condition.replace("_", " ")} condition` : ""}`;
+}
+
+/**
+ * Working memory for a non-owner thread (a buyer, a seller, an applicant): listed items at their public price only.
+ * Floors, ranges, addresses, the owner's handle, other people and the housing search never appear here.
+ */
+export function renderPublicWorkingMemory(items: Item[]): string {
+  const listed = items.filter((i) => i.listingApproved && i.outcome === "listed");
+  return `# Listings (public)
+${listed.length ? listed.map(publicItemLine).join("\n") : "- (nothing listed)"}`;
 }
 
 /**
  * Working memory is a view, not a store: rendered from the structured state on every turn so it can never drift
- * from what the Crew Board and the items table say.
+ * from what the Crew Board and the items table say. Pass `audience: "public"` for any thread that isn't the owner's.
  */
 export function renderWorkingMemory(
   move: Move,
@@ -76,7 +93,9 @@ export function renderWorkingMemory(
   board: ElfStatusRow[],
   participants: Participant[] = [],
   housing: HousingView | null = null,
+  audience: "owner" | "public" = "owner",
 ): string {
+  if (audience === "public") return renderPublicWorkingMemory(items);
   const people = participants.filter((p) => p.role !== "owner").map((p) => `${p.role} ${p.handle}`);
   const crew = board
     .filter((b) => b.status === "working" || b.status === "waiting" || b.status === "blocked")

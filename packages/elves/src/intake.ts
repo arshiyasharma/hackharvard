@@ -121,12 +121,49 @@ export function isApproval(text: string): boolean {
   return APPROVAL.test(text) && !DECLINE.test(text);
 }
 
-/** Mark every priced, unapproved item as approved; returns the items that flipped. */
-export async function approvePendingListings(ctx: ElfContext): Promise<Item[]> {
+const ALL_OF_THEM = /\b(all of them|them all|both|everything|(?:list|post) (?:them )?all)\b/i;
+
+/** The item the text names, by name then category word; null when it names none. */
+export function findItemByText(text: string, items: Item[]): Item | null {
+  const t = text.toLowerCase();
+  const byName = items.find((i) => t.includes(i.name.toLowerCase()));
+  if (byName) return byName;
+  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
+      const m = items.find((i) => i.category === cat);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
+/**
+ * Approve listing for the item this yes answers, and only that one: the item named in the text; else every
+ * pending item when the owner says "all" / "both"; else the item whose floor was set most recently (the one the
+ * last "want me to list it?" was about). Returns the items that flipped.
+ */
+export async function approvePendingListings(ctx: ElfContext, text: string): Promise<Item[]> {
   const items = await ctx.store.listItems(ctx.move.id);
-  const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
+  const pending = items.filter(
+    (i) => i.floorPriceCents != null && !i.listingApproved && i.outcome === "listed" && i.intent === "sell",
+  );
+  if (!pending.length) return [];
+  let chosen: Item[];
+  const named = findItemByText(text, pending);
+  if (named) chosen = [named];
+  else if (ALL_OF_THEM.test(text)) chosen = pending;
+  else if (pending.length === 1) chosen = pending;
+  else {
+    const events = await ctx.store.listEvents(ctx.move.id);
+    const lastAsked = [...events]
+      .reverse()
+      .find((e) => e.type === "item.floor_set" && pending.some((p) => p.id === e.payload.itemId));
+    chosen = [
+      pending.find((p) => p.id === lastAsked?.payload.itemId) ?? (pending[pending.length - 1] as Item),
+    ];
+  }
   const out: Item[] = [];
-  for (const it of pending) {
+  for (const it of chosen) {
     out.push(
       await ctx.store.upsertItem({
         id: it.id,
@@ -138,6 +175,21 @@ export async function approvePendingListings(ctx: ElfContext): Promise<Item[]> {
     );
   }
   return out;
+}
+
+/** Tell the Deal Engine about newly approved items; returns item id → buyer-facing code when it gave one. */
+export async function openDeals(ctx: ElfContext, approved: Item[]): Promise<Record<string, string>> {
+  const codes: Record<string, string> = {};
+  if (!ctx.deals) return codes;
+  for (const it of approved) {
+    try {
+      const res = await ctx.deals.listingApproved(it);
+      if (res?.code) codes[it.id] = res.code;
+    } catch (err) {
+      ctx.log.error("deal engine: listingApproved failed", { itemId: it.id, error: String(err) });
+    }
+  }
+  return codes;
 }
 
 /** Compact per-item status for prompts, so an Elf never asks for what it already has. */
@@ -153,6 +205,8 @@ export function itemStatus(items: Item[]) {
     listPrice: i.listPriceCents != null ? fmtUsd(i.listPriceCents) : null,
     listingApproved: i.listingApproved,
     outcome: i.outcome,
+    intent: i.intent,
+    lastCallStage: i.lastCallStage,
   }));
 }
 

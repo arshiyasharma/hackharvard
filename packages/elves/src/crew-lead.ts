@@ -14,6 +14,7 @@ import {
   identifyFromPhotos,
   isApproval,
   itemStatus,
+  openDeals,
 } from "./intake.ts";
 
 const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts. Four specialist Elves work under you: Stuff (selling, buying, donating), Money (payments, escrow, splits), Move-day (trucks, storage, the Move Map) and Home (lease, finding a place, move-in week). You run the owner's group chat.
@@ -99,11 +100,17 @@ export const crewLead: Elf = {
     }
     let justApproved: Awaited<ReturnType<typeof approvePendingListings>> = [];
     if (intake.items.length === 0 && isApproval(text)) {
-      justApproved = await approvePendingListings(ctx);
+      justApproved = await approvePendingListings(ctx, text);
+      const codes = await openDeals(ctx, justApproved);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
-          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents },
+          payload: {
+            itemId: it.id,
+            name: it.name,
+            listPriceCents: it.listPriceCents,
+            code: codes[it.id] ?? null,
+          },
         });
     }
     if (facts.moveOutDate && facts.moveOutDate !== ctx.move.moveOutAt) {

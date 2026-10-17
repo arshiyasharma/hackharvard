@@ -5,6 +5,7 @@ import {
   type EventRow,
   type HousingSearch,
   type Item,
+  itemDefaults,
   type Listing,
   listingDefaults,
   type Move,
@@ -91,6 +92,10 @@ function itemRow(r: Row): Item {
     photoAttachmentIds: ((json(r.photo_attachment_ids) as string[]) ?? []).map(String),
     listingApproved: Boolean(r.listing_approved),
     outcome: r.outcome as Item["outcome"],
+    intent: ((r.intent as string) ?? "sell") as Item["intent"],
+    outcomeAt: r.outcome_at == null ? null : iso(r.outcome_at),
+    leavesBeforeMoveDay: Boolean(r.leaves_before_move_day),
+    lastCallStage: str(r.last_call_stage) as Item["lastCallStage"],
     createdAt: iso(r.created_at),
   };
 }
@@ -271,37 +276,23 @@ export class PostgresStore implements Store {
     const id = input.id ?? newId("it");
     const prevRow = input.id ? (await this.sql`select * from items where id = ${id}`)[0] : undefined;
     const prev = prevRow ? itemRow(prevRow) : undefined;
-    const item: Item = {
-      weightLb: 25,
-      title: null,
-      description: null,
-      condition: null,
-      priceLowCents: null,
-      priceHighCents: null,
-      listPriceCents: null,
-      floorPriceCents: null,
-      photoAttachmentIds: [],
-      listingApproved: false,
-      outcome: "listed",
-      createdAt: new Date().toISOString(),
-      ...(prev ?? {}),
-      ...input,
-      id,
-    };
+    const item: Item = { ...itemDefaults(), ...(prev ?? {}), ...input, id };
     const rows = await this.sql`
       insert into items (id, move_id, name, category, weight_lb, title, description, condition,
         price_low_cents, price_high_cents, list_price_cents, floor_price_cents, photo_attachment_ids,
-        listing_approved, outcome)
+        listing_approved, outcome, intent, outcome_at, leaves_before_move_day, last_call_stage)
       values (${id}, ${item.moveId}, ${item.name}, ${item.category}, ${item.weightLb}, ${item.title}, ${item.description},
         ${item.condition}, ${item.priceLowCents}, ${item.priceHighCents}, ${item.listPriceCents}, ${item.floorPriceCents},
-        ${JSON.stringify(item.photoAttachmentIds)}::jsonb, ${item.listingApproved}, ${item.outcome})
+        ${JSON.stringify(item.photoAttachmentIds)}::jsonb, ${item.listingApproved}, ${item.outcome}, ${item.intent},
+        ${item.outcomeAt}::timestamptz, ${item.leavesBeforeMoveDay}, ${item.lastCallStage})
       on conflict (id) do update set
         move_id = excluded.move_id, name = excluded.name, category = excluded.category, weight_lb = excluded.weight_lb,
         title = excluded.title, description = excluded.description, condition = excluded.condition,
         price_low_cents = excluded.price_low_cents, price_high_cents = excluded.price_high_cents,
         list_price_cents = excluded.list_price_cents, floor_price_cents = excluded.floor_price_cents,
         photo_attachment_ids = excluded.photo_attachment_ids, listing_approved = excluded.listing_approved,
-        outcome = excluded.outcome
+        outcome = excluded.outcome, intent = excluded.intent, outcome_at = excluded.outcome_at,
+        leaves_before_move_day = excluded.leaves_before_move_day, last_call_stage = excluded.last_call_stage
       returning *`;
     return itemRow(rows[0] as Row);
   }

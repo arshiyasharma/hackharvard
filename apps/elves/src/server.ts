@@ -1,4 +1,5 @@
 import { type Db, pingDb } from "@elves/db";
+import { moveReport } from "@elves/elves";
 import type { MoveMemory } from "@elves/memory";
 import { ELF_LABELS, type Store } from "@elves/shared";
 import { Hono } from "hono";
@@ -10,12 +11,16 @@ export function createServer(deps: {
   memory?: MoveMemory | null;
   db?: Db | null;
   info: Record<string, unknown>;
+  /** Bearer token for /ops routes; unset disables them. */
+  opsToken?: string | null;
 }) {
   const app = new Hono();
   const started = Date.now();
 
   app.get("/", (c) =>
-    c.text("Elves: a moving crew you text. /health, /moves, /board/:moveId, /events/:moveId, /b/:moveId"),
+    c.text(
+      "Elves: a moving crew you text. /health, /moves, /board/:moveId, /events/:moveId, /report/:moveId, /b/:moveId",
+    ),
   );
   app.get("/health", async (c) => {
     const db = deps.db ? await pingDb(deps.db, 2000) : null;
@@ -50,6 +55,22 @@ export function createServer(deps: {
       deps.memory.notes(moveId),
     ]);
     return c.json({ kind: deps.memory.kind, threads, facts, notes });
+  });
+  /** The Move Report, rebuilt from items and the event log on every request. */
+  app.get("/report/:moveId", async (c) => {
+    const move = await deps.store.getMove(c.req.param("moveId"));
+    if (!move) return c.json({ error: "not found" }, 404);
+    return c.json(moveReport(await deps.store.listItems(move.id), await deps.store.listEvents(move.id)));
+  });
+  /** Operator: run Last Call now, optionally as of another time (demo: ?at=2026-10-19T23:00:00Z). */
+  app.post("/ops/last-call", async (c) => {
+    if (!deps.opsToken) return c.json({ error: "ops routes are off; set ELVES_OPS_TOKEN" }, 404);
+    if (c.req.header("authorization") !== `Bearer ${deps.opsToken}`)
+      return c.json({ error: "unauthorized" }, 401);
+    const at = c.req.query("at");
+    const when = at ? new Date(at) : undefined;
+    if (when && Number.isNaN(when.getTime())) return c.json({ error: `bad at: ${at}` }, 400);
+    return c.json(await deps.service.tickLastCall({ moveId: c.req.query("moveId"), at: when }));
   });
   app.get("/b/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));
