@@ -15,3 +15,4 @@ export * from "./machine.ts";
 export * from "./negotiate.ts";
 export * from "./policy.ts";
 export * from "./shield.ts";
+export * from "./voice.ts";

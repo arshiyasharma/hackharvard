@@ -393,8 +393,8 @@ function forwardedResults(search: HousingSearch, urls: string[]): SiteResult[] {
   }));
 }
 
-/** The message the owner sends. Home drafts it and does not contact the lister. */
-function draftOutreach(search: HousingSearch, listing: Listing): string {
+/** The first text to a lister: what the owner wants, when, and the budget. No name, no reasons for moving. */
+export function outreachNote(search: HousingSearch, listing: Listing): string {
   const when =
     search.moveIn && search.moveOut
       ? ` from ${formatDate(search.moveIn)} to ${formatDate(search.moveOut)}`
@@ -405,12 +405,30 @@ function draftOutreach(search: HousingSearch, listing: Listing): string {
     search.budgetMaxCents != null
       ? ` My budget is ${fmtPrice(search.budgetMaxCents, "month").replace("/mo", "")} a month.`
       : "";
+  return `Hi, I saw your listing for ${listing.title}${when}.${budget} Is it still available?`;
+}
+
+/** The message the owner sends when the listing shows no phone. Home drafts it and does not contact the lister. */
+function draftOutreach(search: HousingSearch, listing: Listing): string {
   return [
     `Saved ${listing.rank}: ${listing.title}.`,
     "You send this; I won't contact them:",
-    `"Hi, I saw your listing for ${listing.title}${when}.${budget} Is it still available?"`,
+    `"${outreachNote(search, listing)}"`,
     listing.url,
   ].join("\n");
+}
+
+/**
+ * A phone number as a messaging handle (E.164). Ten digits are taken as US; anything that is not 8 to 15 digits
+ * is not a number the crew can text.
+ */
+export function phoneHandle(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (raw.trim().startsWith("+") && digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+  return null;
 }
 
 async function runSearch(
@@ -623,24 +641,85 @@ async function followUp(
   if (fu.kind === "reach") {
     await ctx.store.upsertListing({ ...target, status: "shortlisted" });
     const cents = search.budgetMaxCents ?? target.priceCents;
+    // We are the buyer: open at or under the owner's line, so a lister holding at a rent above the budget is
+    // countered at the budget and then put to the owner, never accepted just because it is the listed price.
+    const askCents =
+      search.budgetMaxCents != null && target.priceCents != null
+        ? Math.min(search.budgetMaxCents, target.priceCents)
+        : (target.priceCents ?? search.budgetMaxCents);
     const deal = await openDeal(ctx.store, {
       moveId: ctx.move.id,
       mode: "find_sublet",
       subjectId: null,
       title: target.title,
-      askCents: target.priceCents,
+      askCents,
       limitCents: cents,
     });
-    return reply(
-      `${draftOutreach(search, target)}\nRef ${deal.code}. When they text this number with that ref, I'll negotiate${cents != null ? ` up to ${fmtPrice(cents, "month")}` : ""}. I still won't message them myself.`,
-      {
-        events: [
-          { type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } },
-          { type: "deal.opened", payload: { dealId: deal.id, mode: "find_sublet", code: deal.code } },
+    const events: NonNullable<ElfResult["events"]> = [
+      { type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } },
+      { type: "deal.opened", payload: { dealId: deal.id, mode: "find_sublet", code: deal.code } },
+    ];
+    const boardPatch: ElfResult["boardPatch"] = {
+      status: "working",
+      lastUpdate: `Sublet: ${target.title} (ref ${deal.code})`,
+    };
+    const upTo = cents != null ? ` up to ${fmtPrice(cents, "month")}` : "";
+    /** The lister's replies, summarized in the owner chat, thread under this message. */
+    const anchor = async (messageId: string) => {
+      const fresh = await ctx.store.getDeal(deal.id);
+      if (fresh && !fresh.ownerThreadId) await ctx.store.upsertDeal({ ...fresh, ownerThreadId: messageId });
+    };
+    const handoff = (lead: string) =>
+      `${lead}${draftOutreach(search, target)}\nRef ${deal.code}. When they text this number with that ref, I'll negotiate${upTo}. I still won't message them myself.`;
+    const handle = phoneHandle(target.contact.phone);
+    if (!handle)
+      return {
+        replies: [{ text: handoff(""), parentMessageId: parent, onSent: anchor }],
+        events,
+        boardPatch,
+      };
+
+    // The listing shows a number: the dedicated line texts the lister first, and the owner hears which line did.
+    const note = outreachNote(search, target);
+    let line: string | null | undefined; // undefined until the note is actually sent
+    return {
+      replies: [],
+      outbound: [
+        {
+          to: { handle, platform: ctx.participant.platform },
+          dealId: deal.id,
+          text: note,
+          parentMessageId: null,
+          onSent: async (_id, info) => {
+            line = info.line;
+          },
+        },
+      ],
+      events: [
+        ...events,
+        { type: "housing.lister_texted", payload: { listingId: target.id, handle, dealId: deal.id } },
+      ],
+      boardPatch,
+      later: async () => ({
+        replies: [
+          {
+            text:
+              line === undefined
+                ? handoff("I couldn't text them from my line. ")
+                : `Texted them from ${line ?? "my line"}: "${note}"\nRef ${deal.code}. I'll relay what they say and negotiate${upTo}.`,
+            parentMessageId: parent,
+            onSent: anchor,
+          },
         ],
-        boardPatch: { status: "working", lastUpdate: `Sublet: ${target.title} (ref ${deal.code})` },
-      },
-    );
+        boardPatch: {
+          ...boardPatch,
+          lastUpdate:
+            line === undefined
+              ? `Sublet: ${target.title} (ref ${deal.code}); owner sends the note`
+              : `Sublet: texted the lister of ${target.title} (ref ${deal.code})`,
+        },
+      }),
+    };
   }
   await ctx.store.upsertListing({ ...target, status: "shortlisted" });
   return reply(draftOutreach(search, target), {

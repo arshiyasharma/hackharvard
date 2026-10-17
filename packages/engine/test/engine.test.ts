@@ -221,6 +221,138 @@ async function buyer(store: MemoryStore, dealId: string, n: string) {
   ).party;
 }
 
+describe("find_sublet: the crew is the buyer and texted the lister first", () => {
+  /** The owner's budget is $1,200; the listing says $1,250, so the deal opens at the budget on both sides. */
+  async function seedSublet() {
+    const { store, move } = await seed();
+    await store.updateMove(move.id, { fromAddress: "12 Owner St" });
+    const deal = await openDeal(store, {
+      moveId: move.id,
+      mode: "find_sublet",
+      subjectId: null,
+      title: "Allston Green",
+      askCents: 120000,
+      limitCents: 120000,
+    });
+    const party = (
+      await joinDeal(store, deal, {
+        spaceId: "spc_lister",
+        handle: "+1617",
+        platform: "sms",
+        agentUserId: "usr_line",
+      })
+    ).party;
+    const fresh = (await store.getMove(move.id))!;
+    return { store, move: fresh, deal, party };
+  }
+
+  test("a question gets a buyer's greeting, not 'the place is available'", async () => {
+    const { store, move, party } = await seedSublet();
+    const r = await counterpartyTurn({
+      store,
+      move,
+      party,
+      text: "Is this for you? When do you need it?",
+      clock,
+    });
+    expect(r.messages.map((m) => [m.to, m.kind])).toEqual([["counterparty", "greet"]]);
+    expect(r.messages[0]!.text).toBe(
+      "Thanks! Is the Allston Green still available? We can do up to $1,200/mo.",
+    );
+    // After a counter, a question restates where we stand.
+    const countered = await counterpartyTurn({ store, move, party: r.party!, text: "$1250", clock });
+    const again = await counterpartyTurn({ store, move, party: countered.party!, text: "Parking?", clock });
+    expect(again.messages[0]).toMatchObject({
+      kind: "info",
+      text: "We can do up to $1,200/mo. Does that work?",
+    });
+  });
+
+  test("the listed rent above the budget is countered, relayed, then put to the owner; yes books a viewing", async () => {
+    const { store, move, deal } = await seedSublet();
+    let party = (await store.listDealParties(deal.id))[0]!;
+    const say = async (text: string) => {
+      const r = await counterpartyTurn({ store, move, party, text, clock });
+      party = r.party!;
+      return r;
+    };
+
+    let r = await say("Yes it's still available, $1250 a month");
+    expect(r.messages.map((m) => [m.to, m.kind, m.text])).toEqual([
+      ["counterparty", "counter", "I can do $1,200/mo."],
+      ["owner", "counter", "The lister wants $1,250/mo for the Allston Green; I offered $1,200/mo."],
+    ]);
+    expect(party.status).toBe("talking");
+    expect(party.agreedCents).toBeNull();
+
+    r = await say("1250 is firm");
+    expect(r.messages.map((m) => [m.to, m.kind])).toEqual([
+      ["counterparty", "checking"],
+      ["owner", "ask"],
+    ]);
+    expect(r.messages[0]!.text).toBe("Let me check with the person I'm helping and get back to you.");
+    expect(r.messages[1]!.text).toBe(
+      "The lister wants $1,250/mo for the Allston Green (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
+    );
+
+    const o = await ownerTurn({ store, move, text: "yes", parentMessageIds: [], clock });
+    party = o!.party!;
+    expect(party.agreedCents).toBe(125000);
+    const toLister = o!.messages.find((m) => m.to === "counterparty")!;
+    expect(toLister.text).toStartWith("Good news: $1,250/mo works. When could we see it? We could do 1) ");
+    expect(toLister.text).not.toContain("Deal at");
+    expect(o!.messages.find((m) => m.to === "owner")?.text).toBe(
+      "Done: $1,250/mo for the Allston Green. I'm setting up the viewing.",
+    );
+
+    // Booking a viewing never sends the owner's address to the lister.
+    r = await say("2");
+    expect(r.deal.state).toBe("scheduled");
+    const booked = r.messages.find((m) => m.kind === "booked" && m.to === "counterparty")!;
+    expect(booked.text).toBe("Booked: viewing Fri 6pm. $1,250/mo; any deposit goes through Elves escrow.");
+    expect(JSON.stringify(booked)).not.toContain("Owner St");
+    expect(r.messages.find((m) => m.to === "owner")?.text).toBe(
+      "Booked: viewing of the Allston Green Fri 6pm at $1,250/mo.",
+    );
+    r = await say("what time was it again?");
+    expect(r.messages[0]!.text).toBe("We're set for Fri 6pm.");
+    expect(JSON.stringify(r.messages)).not.toContain("Owner St");
+  });
+
+  test("a rent at or under the budget is taken; the owner's no is phrased as a ceiling", async () => {
+    const { store, move, deal } = await seedSublet();
+    let party = (await store.listDealParties(deal.id))[0]!;
+    let r = await counterpartyTurn({ store, move, party, text: "yes, $1100 works", clock });
+    expect(r.party!.agreedCents).toBe(110000);
+    expect(r.messages[0]!.text).toStartWith("Great, $1,100/mo works. When could we see it?");
+
+    const other = await openDeal(store, {
+      moveId: move.id,
+      mode: "find_sublet",
+      subjectId: null,
+      title: "Brighton loft",
+      askCents: 120000,
+      limitCents: 120000,
+    });
+    party = (
+      await joinDeal(store, other, {
+        spaceId: "spc_l2",
+        handle: "+1857",
+        platform: "sms",
+        agentUserId: "usr_line",
+      })
+    ).party;
+    party = (await counterpartyTurn({ store, move, party, text: "$1300", clock })).party!;
+    r = await counterpartyTurn({ store, move, party, text: "$1300, final", clock });
+    expect(r.party!.status).toBe("awaiting_owner");
+    const o = await ownerTurn({ store, move, text: "no", parentMessageIds: [], clock });
+    expect(o!.messages.map((m) => m.text)).toEqual([
+      "I checked and can't go that high; $1,200/mo is the most we can do.",
+      "Got it. I told them $1,200/mo is the most for the Brighton loft.",
+    ]);
+  });
+});
+
 describe("a sale end to end against the store", () => {
   test("attribution by code and by item word; ambiguity returns null", async () => {
     const { store, deal } = await seed();

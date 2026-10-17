@@ -361,6 +361,129 @@ describe("housing hunt", () => {
     stop();
   });
 
+  test("reach out to a pick with a phone: the dedicated line texts the lister and relays their reply through the deal", async () => {
+    const { transport, store, service, memory, stop } = boot(null);
+    const lister = "+16175550142"; // the number on pick 2 (Allston Green)
+    transport.push(owner, "hi");
+    await transport.settled();
+    await service.pipeline.idle();
+    transport.push(owner, ask);
+    await transport.settled();
+    await service.pipeline.idle();
+    const ownerSpace = transport.spaceFor(owner);
+    const before = transport.sent.length;
+
+    const m = transport.push(owner, "reach out to 2");
+    await transport.settled();
+    await service.pipeline.idle();
+    const out = transport.sent.slice(before);
+    expect(out).toHaveLength(2);
+    const [toLister, toOwner] = out;
+    const listerSpace = transport.spaceFor(lister);
+    expect(toLister!.spaceId).toBe(listerSpace);
+    expect(toLister!.senderId).toBe(transport.dedicatedId);
+    expect(toLister!.text).toStartWith("Hi, I saw your listing for Allston Green");
+    expect(toLister!.text).not.toContain(owner);
+    expect(toOwner!.spaceId).toBe(ownerSpace);
+    expect(toOwner!.senderId).toBe(m.agentId);
+    expect(toOwner!.parentMessageId).toBe(m.id);
+    expect(toOwner!.text).toStartWith(`Texted them from ${transport.dedicatedHandle}:`);
+    expect(toOwner!.text).toContain("I'll relay what they say");
+
+    const move = (await store.listMoves())[0]!;
+    const deal = (await store.listDeals(move.id)).find((d) => d.mode === "find_sublet")!;
+    expect(deal.ownerThreadId).toBe(toOwner!.id);
+    expect(toOwner!.text).toContain(`Ref ${deal.code}`);
+    const party = (await store.listDealParties(deal.id))[0]!;
+    expect(party).toMatchObject({ spaceId: listerSpace, handle: lister, role: "lister" });
+    expect(await store.getParticipantBySpace(listerSpace)).toMatchObject({
+      moveId: move.id,
+      role: "lister",
+      agentUserId: transport.dedicatedId,
+    });
+    expect(await store.getThreadOwner(`space:${listerSpace}`)).toBe("home");
+    const types = (await store.listEvents(move.id)).map((e) => e.type);
+    expect(types).toContain("housing.lister_texted");
+    expect(types).toContain("deal.party_joined");
+    expect(types).toContain("outbound.sent");
+
+    // The lister answers the line: no new move, the engine handles it, the owner gets a threaded summary.
+    // $1,250 is the listed rent but over the $1,200 budget, so the crew (the buyer here) counters at the budget.
+    const n = transport.sent.length;
+    const reply = transport.push(lister, "Yes it's still available, $1250 a month");
+    expect(reply.agentId).toBe(transport.dedicatedId);
+    await transport.settled();
+    await service.pipeline.idle();
+    expect((await store.listMoves()).length).toBe(1);
+    const after = transport.sent.slice(n);
+    const back = after.find((s) => s.spaceId === listerSpace)!;
+    expect(back.senderId).toBe(transport.dedicatedId);
+    expect(back.text).toBe("I can do $1,200/mo.");
+    const summary = after.find((s) => s.spaceId === ownerSpace)!;
+    expect(summary.parentMessageId).toBe(toOwner!.id);
+    expect(summary.senderId).toBe(m.agentId);
+    expect(summary.text).toBe(
+      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room; I offered $1,200/mo.",
+    );
+    expect((await store.getDeal(deal.id))?.state).toBe("negotiating");
+    expect((await store.listDealParties(deal.id))[0]?.agreedCents).toBeNull();
+
+    // The lister holds firm: one question to the owner, phrased for a buyer; a yes agrees and asks to see it.
+    const firm = transport.sent.length;
+    transport.push(lister, "1250 is firm");
+    await transport.settled();
+    await service.pipeline.idle();
+    const held = transport.sent.slice(firm);
+    expect(held.find((s) => s.spaceId === listerSpace)?.text).toBe(
+      "Let me check with the person I'm helping and get back to you.",
+    );
+    const question = held.find((s) => s.spaceId === ownerSpace)!;
+    expect(question.text).toBe(
+      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
+    );
+    const yes = transport.sent.length;
+    transport.push(owner, "yes", { parentMessageId: question.id });
+    await transport.settled();
+    await service.pipeline.idle();
+    const agreed = transport.sent.slice(yes);
+    expect(agreed.find((s) => s.spaceId === listerSpace)?.text).toStartWith(
+      "Good news: $1,250/mo works. When could we see it? We could do 1)",
+    );
+    expect(agreed.find((s) => s.spaceId === ownerSpace)?.text).toBe(
+      "Done: $1,250/mo for the Allston Green, shared 4BR, private room. I'm setting up the viewing.",
+    );
+    expect(
+      (await store.listEvents(move.id)).find(
+        (e) => e.type === "message.routed" && e.payload.via === "counterparty" && e.payload.elf === "home",
+      ),
+    ).toBeDefined();
+    // The lister's thread memory never carries the owner's number.
+    const ctx = await memory!.context({ threadId: listerSpace, moveId: move.id, role: "lister" });
+    expect(ctx.transcript).toContain("Hi, I saw your listing");
+    expect(ctx.transcript).not.toContain(owner);
+    stop();
+  });
+
+  test("reach out to a pick with no phone: the owner sends the note, as before", async () => {
+    const { transport, service, stop } = boot(null);
+    transport.push(owner, "hi");
+    await transport.settled();
+    await service.pipeline.idle();
+    transport.push(owner, ask);
+    await transport.settled();
+    await service.pipeline.idle();
+    const before = transport.sent.length;
+    transport.push(owner, "reach out to 1");
+    await transport.settled();
+    await service.pipeline.idle();
+    const out = transport.sent.slice(before);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.spaceId).toBe(transport.spaceFor(owner));
+    expect(out[0]!.text).toContain("You send this; I won't contact them");
+    expect(transport.opened.size).toBe(0);
+    stop();
+  });
+
   test("a text that arrives during the search waits for it instead of cancelling it", async () => {
     const { transport, service, stop } = boot(null, { listings: new FakeListings({ delayMs: 200 }) });
     transport.push(owner, "hi");

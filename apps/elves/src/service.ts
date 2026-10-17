@@ -6,7 +6,9 @@ import {
   type ElfOutbound,
   type ElfReply,
   EMPTY_CONVERSATION,
+  isAddressedOutbound,
   route,
+  type SentInfo,
   spaceOwnerKey,
 } from "@elves/elves";
 import { attributeInbound, dealBoard, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
@@ -155,33 +157,95 @@ export function createService(deps: ServiceDeps): Service {
     return parts.join(" ") || "[empty]";
   }
 
-  async function runOnSent(reply: ElfReply, messageId: string) {
+  async function runOnSent(reply: ElfReply, messageId: string, info: SentInfo = { line: null }) {
     if (!reply.onSent) return;
     try {
-      await reply.onSent(messageId);
+      await reply.onSent(messageId, info);
     } catch (err) {
       log.warn("onSent hook failed", { error: String(err) });
     }
   }
 
   /**
-   * Send a text into another space of the move, as the pool number that space talks to, and remember it in that
-   * space's transcript. Idempotent on `key`.
+   * Open the space for a handle-addressed note from the dedicated line and put that person on the deal as its
+   * counterparty (a lister). Null when the project cannot text first; the note is then dropped and logged.
+   */
+  async function openFor(
+    move: Move,
+    note: Extract<ElfOutbound, { to: unknown }>,
+    key: string,
+    traceId: string | null,
+  ): Promise<{ spaceId: string; senderId: string; line: string | null; target: Participant } | null> {
+    try {
+      const opened = await deps.transport.openSpace(note.to.handle, note.to.platform);
+      const who = {
+        spaceId: opened.spaceId,
+        handle: note.to.handle,
+        platform: note.to.platform,
+        agentUserId: opened.senderId,
+      };
+      const deal = await deps.store.getDeal(note.dealId);
+      let target: Participant;
+      if (deal) {
+        const { participant, party } = await joinDeal(deps.store, deal, who);
+        target = participant;
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "deal.party_joined",
+          payload: { dealId: deal.id, partyId: party.id, via: "outreach", role: participant.role },
+          traceId,
+        });
+      } else {
+        target = await deps.store.upsertParticipant({ moveId: move.id, role: "lister", ...who });
+      }
+      log.info("opened a space from the dedicated line", {
+        moveId: move.id,
+        spaceId: opened.spaceId,
+        line: opened.senderHandle,
+        dealId: note.dealId,
+      });
+      return { spaceId: opened.spaceId, senderId: opened.senderId, line: opened.senderHandle, target };
+    } catch (err) {
+      counters.failures++;
+      log.error("could not open a space for outreach; note dropped", {
+        key,
+        handle: note.to.handle,
+        error: String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Send a text into another space of the move, as the pool number that space talks to (or, for a note addressed
+   * to a handle, from the dedicated line into a space opened for it), and remember it in that space's transcript.
+   * Idempotent on `key`.
    */
   async function deliverTo(move: Move, elf: ElfName, note: ElfOutbound, key: string, traceId: string | null) {
-    const target = await deps.store.getParticipantBySpace(note.spaceId);
-    const senderId =
-      target?.agentUserId ??
-      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
-        ?.agentUserId;
+    let spaceId: string;
+    let senderId: string | null | undefined;
+    let line: string | null = null;
+    let target: Participant | undefined;
+    if (isAddressedOutbound(note)) {
+      const opened = await openFor(move, note, key, traceId);
+      if (!opened) return;
+      ({ spaceId, senderId, line, target } = opened);
+    } else {
+      spaceId = note.spaceId;
+      target = await deps.store.getParticipantBySpace(spaceId);
+      senderId =
+        target?.agentUserId ??
+        (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
+          ?.agentUserId;
+    }
     if (!senderId) {
-      log.warn("no sender for outbound text; skipped", { spaceId: note.spaceId, key });
+      log.warn("no sender for outbound text; skipped", { spaceId, key });
       return;
     }
     try {
       const sent = await deps.transport.send(
         {
-          spaceId: note.spaceId,
+          spaceId,
           senderId,
           text: note.text,
           parentMessageId: note.parentMessageId ?? undefined,
@@ -191,23 +255,23 @@ export function createService(deps: ServiceDeps): Service {
       );
       await deps.store.recordSend(key, sent.id);
       await deps.store.setThreadOwner(sent.id, elf);
-      await deps.store.setThreadOwner(spaceOwnerKey(note.spaceId), elf);
-      await runOnSent(note, sent.id);
+      await deps.store.setThreadOwner(spaceOwnerKey(spaceId), elf);
+      await runOnSent(note, sent.id, { line });
       counters.outbound++;
       await deps.store.appendEvent({
         moveId: move.id,
         type: "outbound.sent",
-        payload: { elf, spaceId: note.spaceId, messageId: sent.id, text: note.text },
+        payload: { elf, spaceId, messageId: sent.id, text: note.text, ...(line ? { line } : {}) },
         traceId,
       });
       await safeMem("remember outbound", async (m) => {
-        await m.ensureThread(note.spaceId, {
+        await m.ensureThread(spaceId, {
           moveId: move.id,
           role: target?.role ?? "owner",
           handle: target?.handle ?? null,
         });
         await m.remember({
-          threadId: note.spaceId,
+          threadId: spaceId,
           moveId: move.id,
           role: "assistant",
           id: sent.id,
@@ -218,7 +282,7 @@ export function createService(deps: ServiceDeps): Service {
       });
     } catch (err) {
       counters.failures++;
-      log.error("outbound send failed", { key, spaceId: note.spaceId, error: String(err) });
+      log.error("outbound send failed", { key, spaceId, error: String(err) });
     }
   }
 

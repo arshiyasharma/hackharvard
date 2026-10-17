@@ -34,11 +34,26 @@ export interface AttachmentFile {
   filename?: string;
 }
 
+/** A space the service opened itself (nobody texted in): where a dedicated line can message someone first. */
+export interface OpenedSpace {
+  spaceId: string;
+  /** The agent user to send as in that space: the dedicated line. */
+  senderId: string;
+  /** The dedicated line's own handle (its phone number), when the transport knows it. */
+  senderHandle: string | null;
+}
+
 export interface Transport {
   readonly name: string;
   /** Yields inbound messages until the signal aborts. Implementations must be restart-safe. */
   inbound(signal: AbortSignal): AsyncIterable<InboundMessage>;
   send(reply: OutboundReply, idempotencyKey: string): Promise<{ id: string }>;
+  /**
+   * Open (or find) the direct space between the dedicated line and `handle` on `platform`, so the crew can text
+   * someone who has never written in. Rejects when the project has no dedicated line: the shared pool only
+   * answers people who texted first.
+   */
+  openSpace(handle: string, platform: string): Promise<OpenedSpace>;
   react(
     target: { spaceId: string; senderId: string; messageId: string },
     emoji: string,
