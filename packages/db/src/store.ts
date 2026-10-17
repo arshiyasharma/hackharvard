@@ -1,4 +1,8 @@
 import {
+  type Deal,
+  type DealParty,
+  dealDefaults,
+  dealPartyDefaults,
   ELF_NAMES,
   type ElfName,
   type ElfStatusRow,
@@ -11,6 +15,7 @@ import {
   newId,
   type Participant,
   type SendRecord,
+  type Slot,
   type Store,
 } from "@elves/shared";
 import type { SQL } from "bun";
@@ -147,6 +152,55 @@ function listingRow(r: Row): Listing {
     createdAt: iso(r.created_at),
   };
 }
+
+function dealRow(r: Row): Deal {
+  return {
+    id: r.id as string,
+    moveId: r.move_id as string,
+    mode: r.mode as Deal["mode"],
+    subjectId: str(r.subject_id),
+    title: r.title as string,
+    code: r.code as string,
+    state: r.state as Deal["state"],
+    askCents: num(r.ask_cents),
+    limitCents: num(r.limit_cents),
+    unit: (r.unit as Deal["unit"]) ?? "each",
+    ownerThreadId: str(r.owner_thread_id),
+    winnerPartyId: str(r.winner_party_id),
+    agreedCents: num(r.agreed_cents),
+    slot: (json(r.slot) as Slot | null) ?? null,
+    outcome: (str(r.outcome) as Deal["outcome"]) ?? null,
+    createdAt: iso(r.created_at),
+    updatedAt: iso(r.updated_at),
+  };
+}
+
+function dealPartyRow(r: Row): DealParty {
+  return {
+    id: r.id as string,
+    dealId: r.deal_id as string,
+    moveId: r.move_id as string,
+    spaceId: r.space_id as string,
+    handle: r.handle as string,
+    role: r.role as DealParty["role"],
+    status: r.status as DealParty["status"],
+    lastOfferCents: num(r.last_offer_cents),
+    lastCounterCents: num(r.last_counter_cents),
+    agreedCents: num(r.agreed_cents),
+    rounds: Number(r.rounds ?? 0),
+    offeredSlots: ((json(r.offered_slots) as Slot[]) ?? []).slice(),
+    slot: (json(r.slot) as Slot | null) ?? null,
+    ownerAskMessageId: str(r.owner_ask_message_id),
+    ownerApprovedCents: num(r.owner_approved_cents),
+    scamFlags: ((json(r.scam_flags) as string[]) ?? []).map(String),
+    noShows: Number(r.no_shows ?? 0),
+    createdAt: iso(r.created_at),
+    updatedAt: iso(r.updated_at),
+  };
+}
+
+/** jsonb parameter for a nullable object. */
+const jsonb = (v: unknown) => (v == null ? null : JSON.stringify(v));
 
 /**
  * The Store on Postgres. Every write is an upsert keyed on the row's id, so retries and replays are harmless.
@@ -354,6 +408,74 @@ export class PostgresStore implements Store {
         reason = excluded.reason, rank = excluded.rank, status = excluded.status, found_at = excluded.found_at
       returning *`;
     return listingRow(rows[0] as Row);
+  }
+
+  async listDeals(moveId: string) {
+    return (await this.sql`select * from deals where move_id = ${moveId} order by seq`).map(dealRow);
+  }
+  async getDeal(id: string) {
+    const rows = await this.sql`select * from deals where id = ${id}`;
+    return rows[0] ? dealRow(rows[0]) : undefined;
+  }
+  async getDealByCode(code: string) {
+    const rows = await this.sql`select * from deals where code = ${code.toUpperCase()}`;
+    return rows[0] ? dealRow(rows[0]) : undefined;
+  }
+  async listOpenDeals() {
+    return (
+      await this.sql`select * from deals where state in ('listed', 'negotiating', 'scheduled', 'relisted') order by seq`
+    ).map(dealRow);
+  }
+  async upsertDeal(input: Partial<Deal> & Pick<Deal, "moveId" | "mode" | "title" | "code">) {
+    const prev = input.id ? await this.getDeal(input.id) : undefined;
+    const id = prev?.id ?? input.id ?? newId("dl");
+    const d: Deal = { ...dealDefaults(), ...(prev ?? {}), ...input, code: input.code.toUpperCase(), id };
+    const rows = await this.sql`
+      insert into deals (id, move_id, mode, subject_id, title, code, state, ask_cents, limit_cents, unit,
+        owner_thread_id, winner_party_id, agreed_cents, slot, outcome)
+      values (${id}, ${d.moveId}, ${d.mode}, ${d.subjectId}, ${d.title}, ${d.code}, ${d.state}, ${d.askCents},
+        ${d.limitCents}, ${d.unit}, ${d.ownerThreadId}, ${d.winnerPartyId}, ${d.agreedCents}, ${jsonb(d.slot)}::jsonb,
+        ${d.outcome})
+      on conflict (id) do update set
+        move_id = excluded.move_id, mode = excluded.mode, subject_id = excluded.subject_id, title = excluded.title,
+        code = excluded.code, state = excluded.state, ask_cents = excluded.ask_cents, limit_cents = excluded.limit_cents,
+        unit = excluded.unit, owner_thread_id = excluded.owner_thread_id, winner_party_id = excluded.winner_party_id,
+        agreed_cents = excluded.agreed_cents, slot = excluded.slot, outcome = excluded.outcome, updated_at = now()
+      returning *`;
+    return dealRow(rows[0] as Row);
+  }
+  async listDealParties(dealId: string) {
+    return (await this.sql`select * from deal_parties where deal_id = ${dealId} order by seq`).map(dealPartyRow);
+  }
+  async listDealPartiesBySpace(spaceId: string) {
+    return (await this.sql`select * from deal_parties where space_id = ${spaceId} order by seq`).map(dealPartyRow);
+  }
+  async upsertDealParty(
+    input: Partial<DealParty> & Pick<DealParty, "dealId" | "moveId" | "spaceId" | "handle" | "role">,
+  ) {
+    const prevRow = input.id
+      ? (await this.sql`select * from deal_parties where id = ${input.id}`)[0]
+      : (await this.sql`select * from deal_parties where deal_id = ${input.dealId} and space_id = ${input.spaceId}`)[0];
+    const prev = prevRow ? dealPartyRow(prevRow) : undefined;
+    const id = prev?.id ?? input.id ?? newId("dp");
+    const p: DealParty = { ...dealPartyDefaults(), ...(prev ?? {}), ...input, id };
+    const rows = await this.sql`
+      insert into deal_parties (id, deal_id, move_id, space_id, handle, role, status, last_offer_cents,
+        last_counter_cents, agreed_cents, rounds, offered_slots, slot, owner_ask_message_id, owner_approved_cents,
+        scam_flags, no_shows)
+      values (${id}, ${p.dealId}, ${p.moveId}, ${p.spaceId}, ${p.handle}, ${p.role}, ${p.status}, ${p.lastOfferCents},
+        ${p.lastCounterCents}, ${p.agreedCents}, ${p.rounds}, ${JSON.stringify(p.offeredSlots)}::jsonb,
+        ${jsonb(p.slot)}::jsonb, ${p.ownerAskMessageId}, ${p.ownerApprovedCents},
+        ${JSON.stringify(p.scamFlags)}::jsonb, ${p.noShows})
+      on conflict (id) do update set
+        deal_id = excluded.deal_id, move_id = excluded.move_id, space_id = excluded.space_id, handle = excluded.handle,
+        role = excluded.role, status = excluded.status, last_offer_cents = excluded.last_offer_cents,
+        last_counter_cents = excluded.last_counter_cents, agreed_cents = excluded.agreed_cents, rounds = excluded.rounds,
+        offered_slots = excluded.offered_slots, slot = excluded.slot,
+        owner_ask_message_id = excluded.owner_ask_message_id, owner_approved_cents = excluded.owner_approved_cents,
+        scam_flags = excluded.scam_flags, no_shows = excluded.no_shows, updated_at = now()
+      returning *`;
+    return dealPartyRow(rows[0] as Row);
   }
 
   async getThreadOwner(messageId: string) {

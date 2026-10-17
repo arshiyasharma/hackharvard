@@ -341,6 +341,21 @@ export interface Store {
     input: Partial<Listing> & Pick<Listing, "moveId" | "site" | "kind" | "url" | "title">,
   ): Promise<Listing>;
 
+  listDeals(moveId: string): Promise<Deal[]>;
+  getDeal(id: string): Promise<Deal | undefined>;
+  getDealByCode(code: string): Promise<Deal | undefined>;
+  /** Every deal still on the table (listed, negotiating, scheduled, relisted), across moves. */
+  listOpenDeals(): Promise<Deal[]>;
+  /** Matches by id; a new deal needs a unique code. */
+  upsertDeal(input: Partial<Deal> & Pick<Deal, "moveId" | "mode" | "title" | "code">): Promise<Deal>;
+  listDealParties(dealId: string): Promise<DealParty[]>;
+  /** Every deal this space's counterparty is in, oldest first. */
+  listDealPartiesBySpace(spaceId: string): Promise<DealParty[]>;
+  /** Matches by id, else by (dealId, spaceId). */
+  upsertDealParty(
+    input: Partial<DealParty> & Pick<DealParty, "dealId" | "moveId" | "spaceId" | "handle" | "role">,
+  ): Promise<DealParty>;
+
   getThreadOwner(messageId: string): Promise<ElfName | undefined>;
   setThreadOwner(messageId: string, elf: ElfName): Promise<void>;
 

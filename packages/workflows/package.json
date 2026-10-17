@@ -1,0 +1,16 @@
+{
+  "name": "@elves/workflows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@elves/shared": "workspace:*",
+    "@elves/memory": "workspace:*",
+    "@mastra/core": "^1.78.0",
+    "@mastra/pg": "^1.31.2",
+    "zod": "^4.1.0"
+  }
+}

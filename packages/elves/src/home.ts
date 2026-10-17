@@ -8,6 +8,7 @@ import {
   lastMessageId,
   memoryPreamble,
 } from "./contract.ts";
+import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { formatDate } from "./facts.ts";
 import {
   emptySearch,
@@ -20,8 +21,15 @@ import {
   queriesFor,
   searchKey,
 } from "./home-facts.ts";
-import { type FollowUp, parseFollowUp } from "./home-followups.ts";
-import { type Candidate, describeAsk, formatDetail, formatPicks, rankListings } from "./home-rank.ts";
+import { extractListingUrls, type FollowUp, parseFollowUp, wantsFreshSearch } from "./home-followups.ts";
+import {
+  type Candidate,
+  describeAsk,
+  fmtPrice,
+  formatDetail,
+  formatPicks,
+  rankListings,
+} from "./home-rank.ts";
 import { pickSkill, type Skill, skillReply } from "./stubs.ts";
 
 export const LEASE_SKILL: Skill = {
@@ -110,6 +118,10 @@ export const homeElf: Elf = {
   keywords: [...LEASE_SKILL.keywords, ...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
+    // Sublet applicants and listers talk to the Deal Engine in their own space.
+    if (ctx.participant.role !== "owner") return handleCounterparty(ctx);
+    const decided = await handleOwnerDecision(ctx);
+    if (decided) return decided;
     const text = batchText(ctx.batch);
     const parent = lastMessageId(ctx.batch);
     const now = ctx.now();
@@ -157,7 +169,11 @@ export const homeElf: Elf = {
       }
     }
 
-    const search = mergeSearch(saved, reqs, ctx.move, now);
+    let search = mergeSearch(saved, reqs, ctx.move, now);
+    for (const url of extractListingUrls(text)) {
+      const tag = `link:${url}`;
+      if (!search.notes.includes(tag)) search = { ...search, notes: [...search.notes, tag] };
+    }
     await ctx.store.saveSearch(search);
     const events: NonNullable<ElfResult["events"]> = [
       {
@@ -198,7 +214,9 @@ export const homeElf: Elf = {
       saved.lastSearchedAt != null &&
       now.getTime() - Date.parse(saved.lastSearchedAt) < SEARCH_WINDOW_MS;
     const ranked = listings.filter((l) => l.rank != null && l.status !== "rejected").sort(byRank);
-    if (recent && ranked.length) {
+    const refresh = wantsFreshSearch(text);
+    const forwarded = forwardedResults(search, extractListingUrls(text));
+    if (recent && ranked.length && !refresh && !forwarded.length) {
       return {
         replies: [
           {
@@ -219,12 +237,21 @@ export const homeElf: Elf = {
     }
 
     const labels = [...new Set(queries.flatMap((q) => ctx.listings.sitesFor(q.kind)))];
+    const extras = forwardedResults(search, rememberedLinks(search));
+    const addOnly = forwarded.length > 0 && ranked.length > 0 && !refresh;
     events.push({
       type: "housing.search_started",
-      payload: { sites: labels, kinds: queries.map((q) => q.kind), key },
+      payload: { sites: addOnly ? [] : labels, kinds: queries.map((q) => q.kind), key },
     });
     return {
-      replies: [{ text: ackText(search, queries, labels), parentMessageId: parent }],
+      replies: [
+        {
+          text: addOnly
+            ? `Adding the listing you sent to ${describeAsk(search)}.`
+            : ackText(search, queries, labels),
+          parentMessageId: parent,
+        },
+      ],
       events,
       movePatch,
       boardPatch: {
@@ -232,7 +259,7 @@ export const homeElf: Elf = {
         currentTask: `Searching: ${describeAsk(search)}`,
         lastUpdate: labels.length ? `Checking ${labels.join(", ")}` : "No sites available for this search",
       },
-      later: () => runSearch(ctx, search, queries, key, labels, parent),
+      later: () => runSearch(ctx, search, queries, key, labels, parent, { extras, skipFetch: addOnly }),
     };
   },
 };
@@ -282,7 +309,8 @@ async function draftAsk(
 function templateAsk(search: HousingSearch, missing: MissingRequirement, reqs: HousingRequirements): string {
   const captured =
     reqs.kinds.length || reqs.neighborhoods.length || reqs.budgetMaxUsd != null || reqs.moveIn || reqs.city;
-  const first = captured ? `Got it: ${describeAsk(search)}.` : "I can find you a place.";
+  const held = search.notes.some((n) => n.startsWith("link:")) ? " I'll hold onto the link you sent." : "";
+  const first = `${captured ? `Got it: ${describeAsk(search)}.` : "I can find you a place."}${held}`;
   const ask =
     missing === "budget"
       ? "What's the most you'd want to pay per month?"
@@ -294,6 +322,87 @@ function templateAsk(search: HousingSearch, missing: MissingRequirement, reqs: H
   return `${first}\n${ask}`;
 }
 
+const LINK_PREFIX = "link:";
+
+function rememberedLinks(search: HousingSearch): string[] {
+  return search.notes.filter((n) => n.startsWith(LINK_PREFIX)).map((n) => n.slice(LINK_PREFIX.length));
+}
+
+function siteOf(url: string): string {
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "link";
+  }
+  if (host.includes("craigslist")) return "craigslist";
+  if (host.includes("airbnb")) return "airbnb";
+  if (host.includes("apartments.com")) return "apartments";
+  if (host.includes("zillow")) return "zillow";
+  if (host.includes("booking.com")) return "booking";
+  if (host.includes("facebook") || host === "fb.com") return "facebook";
+  if (host.includes("sparefoot")) return "sparefoot";
+  return host.split(".")[0] || "link";
+}
+
+function titleFromUrl(url: string): string {
+  try {
+    const last = decodeURIComponent(new URL(url).pathname).split("/").filter(Boolean);
+    for (const part of [...last].reverse()) {
+      const words = part
+        .replace(/\.[a-z0-9]{2,4}$/i, "")
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\d{4,}\b/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (/[a-z]/i.test(words) && words.length >= 8) return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+  } catch {
+    // a bad URL still becomes a listing the owner can see
+  }
+  return "Listing you sent";
+}
+
+/** A link the owner forwarded, with no price invented. Ranked beside what the sites returned. */
+function forwardedResults(search: HousingSearch, urls: string[]): SiteResult[] {
+  const kind = search.kinds.find((k) => HOUSING_KINDS.includes(k)) ?? search.kinds[0] ?? "room";
+  return urls.map((url) => ({
+    site: siteOf(url),
+    kind,
+    url,
+    title: titleFromUrl(url),
+    priceCents: null,
+    priceUnit: kind === "hotel" ? "night" : "month",
+    location: search.neighborhoods[0] ?? null,
+    availableFrom: null,
+    bedrooms: null,
+    snippet: "Forwarded by the owner.",
+    postedAt: null,
+    photoCount: null,
+    contact: { phone: null, email: null, messageUrl: url },
+  }));
+}
+
+/** The message the owner sends. Home drafts it and does not contact the lister. */
+function draftOutreach(search: HousingSearch, listing: Listing): string {
+  const when =
+    search.moveIn && search.moveOut
+      ? ` from ${formatDate(search.moveIn)} to ${formatDate(search.moveOut)}`
+      : search.moveIn
+        ? ` starting ${formatDate(search.moveIn)}`
+        : "";
+  const budget =
+    search.budgetMaxCents != null
+      ? ` My budget is ${fmtPrice(search.budgetMaxCents, "month").replace("/mo", "")} a month.`
+      : "";
+  return [
+    `Saved ${listing.rank}: ${listing.title}.`,
+    "You send this; I won't contact them:",
+    `"Hi, I saw your listing for ${listing.title}${when}.${budget} Is it still available?"`,
+    listing.url,
+  ].join("\n");
+}
+
 async function runSearch(
   ctx: ElfContext,
   search: HousingSearch,
@@ -301,11 +410,21 @@ async function runSearch(
   key: string,
   labels: string[],
   parent: string,
+  opts: { extras?: SiteResult[]; skipFetch?: boolean } = {},
 ): Promise<Pick<ElfResult, "replies" | "boardPatch" | "events">> {
   const t0 = Date.now();
+  const extras = opts.extras ?? [];
   let outcome: Awaited<ReturnType<ListingSource["search"]>>;
   try {
-    outcome = await ctx.listings.search(queries, { signal: ctx.signal, log: ctx.log });
+    if (opts.skipFetch) {
+      const existing = await ctx.store.listListings(ctx.move.id);
+      const seen = new Set(existing.map((l) => l.url));
+      outcome = { results: [...existing, ...extras.filter((e) => !seen.has(e.url))], runs: [] };
+    } else {
+      outcome = await ctx.listings.search(queries, { signal: ctx.signal, log: ctx.log });
+      const seen = new Set(outcome.results.map((r) => r.url));
+      outcome.results.push(...extras.filter((e) => !seen.has(e.url)));
+    }
   } catch (err) {
     ctx.log.error("housing search failed", { error: String(err) });
     return {
@@ -492,7 +611,7 @@ async function followUp(
     });
   }
   await ctx.store.upsertListing({ ...target, status: "shortlisted" });
-  return reply(`Saved ${fu.n}: ${target.title}. When you're ready to reach out, I'll draft the message.`, {
+  return reply(draftOutreach(search, target), {
     events: [{ type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } }],
     boardPatch: { status: "working", lastUpdate: `Shortlisted: ${target.title}` },
   });

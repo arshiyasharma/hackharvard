@@ -11,9 +11,10 @@ import { zillow } from "./zillow.ts";
 export const RECIPES: SiteRecipe[] = [craigslist, apartments, zillow, facebook, airbnb, booking, sparefoot];
 
 /**
- * Sites verified to answer a plain headless Chrome. Apartments.com (Akamai), Zillow (PerimeterX) and Facebook
- * (login) are enabled per deployment once they pass `bun run browser search` there (Browserbase + proxies).
+ * Sites verified live from a plain headless Chrome: Craigslist and Airbnb (rooms, sublets and the hotel gap).
+ * Apartments.com (Akamai block), SpareFoot (Cloudflare challenge), Booking.com (drops URL search params), Zillow
+ * (PerimeterX) and Facebook (login) are enabled per deployment once `bun run browser search` passes there.
  */
-export const DEFAULT_SITES = ["craigslist", "airbnb", "booking", "sparefoot"];
+export const DEFAULT_SITES = ["craigslist", "airbnb"];
 
 export { airbnb, apartments, booking, craigslist, facebook, sparefoot, zillow };

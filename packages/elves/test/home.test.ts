@@ -126,6 +126,8 @@ describe("Home Elf: hunt", () => {
 
     const save = await w.say("save 1");
     expect(text(save)).toContain("Saved 1: Sunny furnished room");
+    expect(text(save)).toContain("You send this; I won't contact them");
+    expect(text(save)).toContain("Is it still available?");
     expect((await w.store.listListings(w.move.id)).find((l) => l.rank === 1)?.status).toBe("shortlisted");
   });
 
@@ -145,6 +147,46 @@ describe("Home Elf: hunt", () => {
       new Date(now.getTime() + 10 * 60_000),
     );
     expect(later.later).toBeDefined();
+  });
+
+  test("search again runs a new search inside the repeat window", async () => {
+    const w = await world();
+    const r = await w.say("looking for a room in allston under 1200 june 1 to aug 30");
+    await r.later!();
+    const again = await w.say("search again", new Date(now.getTime() + 60_000));
+    expect(again.later).toBeDefined();
+    expect(text(again)).toContain("Checking Craigslist");
+    await again.later!();
+    expect((w.listings as FakeListings).calls).toHaveLength(2);
+  });
+
+  test("a forwarded link is held until the ask is complete, then ranked with the picks", async () => {
+    const w = await world();
+    const link = "https://boston.craigslist.org/gbs/roo/d/allston-garden-level-room/7801.html";
+    const held = await w.say(`looking for a room ${link}`);
+    expect(text(held)).toContain("hold onto the link");
+    expect(text(held)).toContain("most you'd want to pay");
+    expect((await w.store.getSearch(w.move.id))?.notes).toContain(`link:${link}`);
+
+    await w.say("under 1200");
+    const r = await w.say("june 1 to aug 30");
+    const t = text(await r.later!());
+    expect(t).toContain("Allston garden level room");
+    expect(t).toContain(link);
+    expect((w.listings as FakeListings).calls).toHaveLength(1);
+  });
+
+  test("a link after the picks is added without searching the sites again", async () => {
+    const w = await world();
+    const r = await w.say("looking for a room in allston under 1200 june 1 to aug 30");
+    await r.later!();
+    const link = "https://boston.craigslist.org/gbs/roo/d/allston-garden-level-room/7801.html";
+    const added = await w.say(`what about ${link}`, new Date(now.getTime() + 60_000));
+    expect(added.later).toBeDefined();
+    expect(text(added)).toContain("Adding the listing you sent");
+    const t = text(await added.later!());
+    expect(t).toContain("Allston garden level room");
+    expect((w.listings as FakeListings).calls).toHaveLength(1);
   });
 
   test("a short gap before move-in adds a hotel line", async () => {

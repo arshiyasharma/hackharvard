@@ -323,6 +323,12 @@ describe("housing hunt", () => {
     await service.pipeline.idle();
     expect(transport.sent[4]!.text).toContain("That's everything I found");
 
+    transport.push(owner, "search again");
+    await transport.settled();
+    await service.pipeline.idle();
+    expect(transport.sent.at(-2)!.text).toContain("Checking Craigslist");
+    expect(transport.sent.at(-1)!.text.startsWith("Top picks")).toBe(true);
+
     const ctx = await memory!.context({
       threadId: transport.spaceFor(owner),
       moveId: move.id,
@@ -349,5 +355,171 @@ describe("housing hunt", () => {
     expect(texts[2]!.startsWith("Top picks")).toBe(true);
     expect(texts.length).toBe(4);
     stop();
+  });
+});
+
+describe("Deal Engine: buyers text the listing's number", () => {
+  const buyerA = "+16175550101";
+  const buyerB = "+16175550102";
+
+  /** Owner sends a chair photo, sets a $28 floor and approves; returns the deal. */
+  async function listChair(t: ReturnType<typeof boot>) {
+    const { transport, store, service, llm } = t;
+    llm.visionResult = CHAIR;
+    transport.addAttachment("att_chair", new Uint8Array([0xff, 0xd8, 0xff]), "image/jpeg", "IMG_1.jpg");
+    transport.push(owner, null, { attachments: [{ id: "att_chair" }] });
+    await transport.settled();
+    await service.pipeline.idle();
+    transport.push(owner, "28 dollars");
+    await transport.settled();
+    await service.pipeline.idle();
+    transport.push(owner, "yes list it", { parentMessageId: transport.sent[1]!.id });
+    await transport.settled();
+    await service.pipeline.idle();
+    const move = (await store.listMoves())[0]!;
+    const deal = (await store.listDeals(move.id))[0]!;
+    return { move, deal, listedMsg: transport.sent[2]! };
+  }
+
+  async function say(t: ReturnType<typeof boot>, from: string, text: string, extra = {}) {
+    const before = t.transport.sent.length;
+    t.transport.push(from, text, extra);
+    await t.transport.settled();
+    await t.service.pipeline.idle();
+    return t.transport.sent.slice(before);
+  }
+
+  test("approval opens a deal with a ref code and the post line; the deal threads under that message", async () => {
+    const t = boot(null);
+    const { deal, listedMsg } = await listChair(t);
+    expect(deal).toMatchObject({ mode: "sell_item", state: "listed", askCents: 3500, limitCents: 2800 });
+    expect(deal.code).toMatch(/^[A-Z][0-9][A-Z][0-9]$/);
+    expect(listedMsg.text).toContain(deal.code);
+    expect(listedMsg.text).toContain(t.transport.agentHandle);
+    expect(deal.ownerThreadId).toBe(listedMsg.id);
+    t.stop();
+  });
+
+  test("a buyer negotiates in their own space; the owner only sees threaded summaries and one question", async () => {
+    const t = boot(null);
+    const { move, deal, listedMsg } = await listChair(t);
+    const ownerSpace = t.transport.spaceFor(owner);
+    const buyerSpace = t.transport.spaceFor(buyerA);
+
+    // First text quotes the code: the buyer joins the owner's move, no new move is created.
+    let out = await say(t, buyerA, `hi is ${deal.code} still available?`);
+    expect((await t.store.listMoves()).length).toBe(1);
+    expect((await t.store.getParticipantBySpace(buyerSpace))?.role).toBe("buyer");
+    expect(out.map((s) => s.spaceId)).toEqual([buyerSpace]);
+    expect(out[0]!.text).toContain("$35");
+
+    out = await say(t, buyerA, "would you take 20?");
+    expect(out.map((s) => s.spaceId)).toEqual([buyerSpace]);
+    expect(out[0]!.text).toBe("I can do $30.");
+
+    // Past the floor and final: the buyer hears "checking", the owner gets one threaded question.
+    out = await say(t, buyerA, "20 is my final offer");
+    const toBuyer = out.filter((s) => s.spaceId === buyerSpace);
+    const toOwner = out.filter((s) => s.spaceId === ownerSpace);
+    expect(toBuyer.map((s) => s.text)).toEqual(["Let me check with the owner and get back to you."]);
+    expect(toOwner.length).toBe(1);
+    expect(toOwner[0]!.text).toContain("$20");
+    expect(toOwner[0]!.text).toContain("floor $28");
+    expect(toOwner[0]!.parentMessageId).toBe(listedMsg.id);
+
+    // The owner answers in that thread: the buyer gets the yes and three pickup times.
+    out = await say(t, owner, "yes", { parentMessageId: toOwner[0]!.id });
+    expect(out.find((s) => s.spaceId === ownerSpace)?.text).toContain("Done: $20");
+    const yes = out.find((s) => s.spaceId === buyerSpace)!;
+    expect(yes.text).toStartWith("Good news: the owner said yes.");
+    expect(yes.text).toContain("1)");
+
+    out = await say(t, buyerA, "1");
+    expect(out.find((s) => s.spaceId === buyerSpace)?.text).toStartWith("Booked:");
+    expect(out.find((s) => s.spaceId === ownerSpace)?.text).toContain("picks up the white plastic armchair");
+    expect((await t.store.getDeal(deal.id))?.state).toBe("scheduled");
+    // The buyer's thread memory is the public listing only.
+    const ctx = await t.memory!.context({
+      threadId: buyerSpace,
+      moveId: move.id,
+      role: "buyer",
+      query: "price",
+    });
+    expect(ctx.workingMemory).toContain("asking");
+    expect(ctx.workingMemory).not.toContain("$28");
+    expect(ctx.workingMemory).not.toContain(owner);
+
+    // A second buyer (matched by the item word) is waitlisted while the booking holds.
+    out = await say(t, buyerB, "is the armchair still for sale?");
+    expect(out[0]!.spaceId).toBe(t.transport.spaceFor(buyerB));
+    expect(out[0]!.text).toContain("I'll text you if it falls through");
+
+    out = await say(t, buyerA, "picked it up, thanks!");
+    const closed = (await t.store.getDeal(deal.id))!;
+    expect(closed.state).toBe("handed_off");
+    expect(closed.outcome).toBe("sold");
+    expect((await t.store.listItems(move.id))[0]!.outcome).toBe("sold");
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerB))?.text).toContain(
+      "went to someone else",
+    );
+    const types = (await t.store.listEvents(move.id)).map((e) => e.type);
+    for (const ty of [
+      "deal.party_joined",
+      "deal.countered",
+      "deal.owner_asked",
+      "deal.agreed",
+      "deal.scheduled",
+      "deal.handed_off",
+      "escrow.requested",
+    ])
+      expect(types).toContain(ty);
+
+    // Nothing the buyer received carries the floor.
+    for (const s of t.transport.sent.filter((s) => s.spaceId === buyerSpace))
+      expect(s.text).not.toContain("$28");
+    // The owner's working memory has the deal with its line.
+    const own = await t.memory!.context({ threadId: ownerSpace, moveId: move.id, role: "owner" });
+    expect(own.workingMemory).toContain(`ref ${deal.code}`);
+    expect(own.workingMemory).toContain("line $28");
+    const board = await t.store.getBoard(move.id);
+    expect(board.find((b) => b.elf === "stuff")?.currentTask).toContain("Deals:");
+    t.stop();
+  });
+
+  test("a stranger with no code and nothing to match still starts their own move", async () => {
+    const t = boot(null);
+    await listChair(t);
+    await say(t, buyerA, "hi im moving out next week");
+    expect((await t.store.listMoves()).length).toBe(2);
+    t.stop();
+  });
+
+  test("Scam Shield stops a pay-outside-escrow buyer and tells the owner", async () => {
+    const t = boot(null);
+    const { deal } = await listChair(t);
+    const out = await say(
+      t,
+      buyerA,
+      `${deal.code} i'm overseas, my mover will pick it up and i'll send a cashier's check`,
+    );
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("I'll pass");
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("Scam Shield");
+    t.stop();
+  });
+
+  test("Last Call relists an unsold item free 48h before move-out, once", async () => {
+    const t = boot(null);
+    const { move, deal } = await listChair(t);
+    await say(t, buyerA, `${deal.code} would you take 10`);
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    await t.store.updateMove(move.id, { moveOutAt: tomorrow });
+    const before = t.transport.sent.length;
+    expect(await t.service.sweep()).toBe(2);
+    const sent = t.transport.sent.slice(before);
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("Last Call");
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("free now");
+    expect((await t.store.getDeal(deal.id))?.state).toBe("relisted");
+    expect(await t.service.sweep()).toBe(0);
+    t.stop();
   });
 });

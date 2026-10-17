@@ -6,8 +6,10 @@ export const SiteExtraction = z.object({
   listings: z.array(
     z.object({
       title: z.string(),
-      // z.url() matters: Stagehand resolves URL-typed fields to real hrefs; a plain string gets a node id.
-      url: z.url().describe("link to the listing"),
+      // A plain string on purpose: the model answers with the link's node id ("[1-778]") and the runner maps
+      // it to the real href through the snapshot's urlMap. z.url() would make Stagehand reject the whole
+      // page when one link does not resolve.
+      url: z.string().describe("the listing link: its href, or the id of the link node"),
       priceText: z
         .string()
         .nullable()
@@ -82,8 +84,12 @@ export function parseListingPrice(
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const cents = Math.round(amount * 100);
   const defaultUnit: PriceUnit = kind === "hotel" ? "night" : "month";
+  // "$375 for 5 nights": the site's own stay length beats the query's (Airbnb quotes a sample stay).
+  const stated = text.match(/\bfor\s+(\d{1,3})\s+nights?\b/i);
+  const span = stated?.[1] ? Number(stated[1]) : nights;
   let resolved: PriceBasis = basis;
-  if (resolved === "unknown") {
+  if (stated) resolved = "total";
+  else if (resolved === "unknown") {
     if (NIGHT_WORDS.test(text)) resolved = "night";
     else if (MONTH_WORDS.test(text)) resolved = "month";
     else if (/\btotal\b/i.test(text)) resolved = "total";
@@ -91,9 +97,13 @@ export function parseListingPrice(
   if (resolved === "month") return { cents, unit: "month" };
   if (resolved === "night") return { cents, unit: "night" };
   if (resolved === "total") {
-    if (!nights) return { cents, unit: defaultUnit };
-    if (kind === "hotel") return { cents: Math.round(cents / nights), unit: "night" };
-    return { cents: Math.round(cents / Math.max(1, nights / 30)), unit: "month" };
+    if (!span) return { cents, unit: defaultUnit };
+    const nightly = Math.round(cents / span);
+    if (kind === "hotel") return { cents: nightly, unit: "night" };
+    // Short sample stays are quoted per night; a real monthly quote spreads the total over its months.
+    return span < 28
+      ? { cents: nightly * 30, unit: "month" }
+      : { cents: Math.round(cents / Math.max(1, span / 30)), unit: "month" };
   }
   return { cents, unit: defaultUnit };
 }
@@ -124,6 +134,16 @@ function nonEmpty(s: string | null | undefined): string | null {
   return t ? t : null;
 }
 
+/** Model output is shaped by the schema but not guaranteed; coerce one field at a time. */
+function str(v: unknown): string | null {
+  return typeof v === "string" ? nonEmpty(v) : v == null ? null : nonEmpty(String(v));
+}
+function num(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
  * Model output -> SiteResults. Everything the owner will see is checked here: the URL must stay on the site,
  * the price is parsed by code, empty titles are dropped.
@@ -137,13 +157,22 @@ export function toResults(
   const nights = nightsBetween(q.moveIn, q.moveOut);
   const max = recipe.maxListings ?? DEFAULT_MAX_LISTINGS;
   const out: SiteResult[] = [];
-  for (const it of data.listings) {
+  for (const it of Array.isArray(data?.listings) ? data.listings : []) {
     if (out.length >= max) break;
-    const title = nonEmpty(it.title);
+    if (!it || typeof it !== "object") continue;
+    const title = typeof it.title === "string" ? nonEmpty(it.title) : null;
     if (!title) continue;
-    const url = resolveListingUrl(it.url, recipe, searchUrl);
+    const url = typeof it.url === "string" ? resolveListingUrl(it.url, recipe, searchUrl) : null;
     if (!url) continue;
-    const price = parseListingPrice(it.priceText, it.priceBasis, nights, q.kind);
+    const basis = (["month", "night", "total", "unknown"] as const).includes(it.priceBasis)
+      ? it.priceBasis
+      : "unknown";
+    const price = parseListingPrice(
+      typeof it.priceText === "string" ? it.priceText : null,
+      basis,
+      nights,
+      q.kind,
+    );
     out.push({
       site: recipe.site,
       kind: q.kind,
@@ -151,20 +180,57 @@ export function toResults(
       title,
       priceCents: price?.cents ?? null,
       priceUnit: price?.unit ?? q.priceUnit,
-      location: nonEmpty(it.location),
-      availableFrom: nonEmpty(it.availableFrom),
-      bedrooms: it.bedrooms ?? null,
-      snippet: nonEmpty(it.snippet),
-      postedAt: nonEmpty(it.postedAt),
-      photoCount: it.photoCount ?? null,
+      location: str(it.location),
+      availableFrom: str(it.availableFrom),
+      bedrooms: num(it.bedrooms),
+      snippet: str(it.snippet),
+      postedAt: str(it.postedAt),
+      photoCount: num(it.photoCount),
       contact: {
-        phone: nonEmpty(it.contactPhone),
-        email: nonEmpty(it.contactEmail),
+        phone: str(it.contactPhone),
+        email: str(it.contactEmail),
         messageUrl: null,
       },
     });
   }
   return out;
+}
+
+const NODE_ID = /^\[?(\d+-\d+)\]?$/;
+
+/**
+ * Replace node ids the model used as links ("[1-778]") with the hrefs the accessibility snapshot recorded
+ * for them. Anything already a URL is left alone.
+ */
+export function resolveNodeUrls(data: SiteExtraction, urlMap: Record<string, string>): SiteExtraction {
+  if (!Array.isArray(data?.listings)) return data;
+  // Link ids per frame, ascending, so a card id can find the first link inside the card.
+  const byFrame = new Map<string, number[]>();
+  for (const key of Object.keys(urlMap)) {
+    const m = key.match(/^\[?(\d+)-(\d+)\]?$/);
+    if (!m?.[1] || !m[2]) continue;
+    const list = byFrame.get(m[1]) ?? [];
+    list.push(Number(m[2]));
+    byFrame.set(m[1], list);
+  }
+  for (const list of byFrame.values()) list.sort((a, b) => a - b);
+  const MAX_DISTANCE = 200;
+  return {
+    ...data,
+    listings: data.listings.map((it) => {
+      const m = typeof it?.url === "string" ? it.url.trim().match(NODE_ID) : null;
+      if (!m?.[1]) return it;
+      const direct = urlMap[m[1]] ?? urlMap[`[${m[1]}]`];
+      if (direct) return { ...it, url: direct };
+      // The model usually names the card; its link is the next link node after it.
+      const [frame, n] = m[1].split("-");
+      const next = (byFrame.get(frame ?? "") ?? []).find(
+        (id) => id > Number(n) && id - Number(n) <= MAX_DISTANCE,
+      );
+      const href = next != null ? (urlMap[`${frame}-${next}`] ?? urlMap[`[${frame}-${next}]`]) : undefined;
+      return href ? { ...it, url: href } : it;
+    }),
+  };
 }
 
 export interface PlannedSearch {

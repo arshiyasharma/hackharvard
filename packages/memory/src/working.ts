@@ -1,4 +1,6 @@
 import {
+  type Deal,
+  type DealParty,
   ELF_LABELS,
   type ElfStatusRow,
   type HousingSearch,
@@ -66,6 +68,53 @@ export function itemLine(i: Item): string {
   return `- ${i.name} · floor ${usd(i.floorPriceCents)} · list ${usd(i.listPriceCents)}${range} · ${stage}${tail}`;
 }
 
+export interface DealView {
+  deal: Deal;
+  parties: DealParty[];
+}
+
+const MODE_LABEL: Record<Deal["mode"], string> = {
+  sell_item: "selling",
+  buy_item: "buying",
+  sublet_out: "subletting out",
+  find_sublet: "renting",
+};
+
+/** One line per deal for the owner's side: state, ask, line, who is talking, what is booked. */
+export function dealLine({ deal: d, parties }: DealView): string {
+  const unit = d.unit === "month" ? "/mo" : "";
+  const live = parties.filter((p) => ["talking", "agreed", "awaiting_owner", "waitlisted"].includes(p.status));
+  const asking = parties.filter((p) => p.status === "awaiting_owner");
+  const bits = [
+    `${d.title} (${MODE_LABEL[d.mode]}, ref ${d.code})`,
+    d.state,
+    `ask ${usd(d.askCents)}${unit}`,
+    `line ${usd(d.limitCents)}${unit}`,
+  ];
+  if (live.length) bits.push(`${live.length} talking`);
+  if (asking.length) bits.push(`waiting on the owner about ${asking.map((p) => usd(p.lastOfferCents)).join(", ")}`);
+  if (d.slot) bits.push(`booked ${d.slot.label}`);
+  if (d.agreedCents != null) bits.push(`agreed ${usd(d.agreedCents)}${unit}`);
+  if (d.outcome) bits.push(d.outcome);
+  return `- ${bits.join(" · ")}`;
+}
+
+/**
+ * What a buyer, seller or applicant thread may see: the listings and their asking prices. No floors, no owner
+ * details, no addresses, no other people, no crew chatter.
+ */
+export function renderPublicMemory(items: Item[], deals: DealView[]): string {
+  const listed = deals
+    .filter(({ deal }) => ["listed", "negotiating", "scheduled", "relisted"].includes(deal.state))
+    .map(({ deal }) => {
+      const item = items.find((i) => i.id === deal.subjectId);
+      const desc = item?.condition ? ` · ${item.condition.replace("_", " ")} condition` : "";
+      const ask = deal.askCents === 0 ? "free" : `${usd(deal.askCents)}${deal.unit === "month" ? "/mo" : ""}`;
+      return `- ${item?.title ?? deal.title} · asking ${ask}${desc}${item?.description ? ` · ${item.description}` : ""}`;
+    });
+  return `# Listings (public; this is everything you may share)\n${listed.length ? listed.join("\n") : "- (nothing listed right now)"}`;
+}
+
 /**
  * Working memory is a view, not a store: rendered from the structured state on every turn so it can never drift
  * from what the Crew Board and the items table say.
@@ -76,6 +125,7 @@ export function renderWorkingMemory(
   board: ElfStatusRow[],
   participants: Participant[] = [],
   housing: HousingView | null = null,
+  deals: DealView[] = [],
 ): string {
   const people = participants.filter((p) => p.role !== "owner").map((p) => `${p.role} ${p.handle}`);
   const crew = board
@@ -94,7 +144,7 @@ export function renderWorkingMemory(
 
 ## Items (name · floor · list · status)
 ${items.length ? items.map(itemLine).join("\n") : "- (none yet)"}
-${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}
+${deals.length ? `\n## Deals (state · ask · owner's line, never told to a counterparty)\n${deals.map(dealLine).join("\n")}\n` : ""}${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}
 ## Crew
 ${crew.length ? crew.join("\n") : "- everyone standing by"}`;
 }

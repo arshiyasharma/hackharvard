@@ -3,17 +3,19 @@ import {
   batchText,
   type Elf,
   type ElfContext,
+  type ElfOutbound,
   type ElfReply,
   EMPTY_CONVERSATION,
   route,
   spaceOwnerKey,
 } from "@elves/elves";
+import { attributeInbound, dealBoard, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
 import type { InboundMessage, Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
-import { createLogger, type Logger, type Move, type Participant, type Store } from "@elves/shared";
+import { createLogger, type ElfName, type Logger, type Move, type Participant, type Store } from "@elves/shared";
 
 export interface ServiceDeps {
   store: Store;
@@ -28,12 +30,16 @@ export interface ServiceDeps {
   publicUrl: string | null;
   logger?: Logger;
   now?: () => Date;
+  /** How often Last Call runs (relists anything unsold 48h before move-out); 0 turns the timer off. */
+  sweepMs?: number;
 }
 
 export interface Service {
   pipeline: Pipeline;
   handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
+  /** One Last Call pass now; returns how many texts went out. */
+  sweep: () => Promise<number>;
   stats: () => Record<string, unknown>;
 }
 
@@ -48,6 +54,8 @@ export function createService(deps: ServiceDeps): Service {
   const counters = {
     inbound: 0,
     replies: 0,
+    outbound: 0,
+    sweeps: 0,
     reactions: 0,
     failures: 0,
     lastInboundAt: null as string | null,
@@ -73,8 +81,34 @@ export function createService(deps: ServiceDeps): Service {
       const move = await deps.store.getMove(existing.moveId);
       if (move) return { move, participant: existing, firstContact: false };
     }
-    // A known owner texting from a new space (e.g. SMS after iMessage) joins their move; otherwise a new move.
+    // A stranger quoting a listing's ref code joins that deal, even if they run a move of their own; a stranger
+    // who is not an owner joins the one open deal on this number their text names ("is the couch available?").
     let move = await deps.store.getMoveByOwnerHandle(msg.senderHandle);
+    const attributed =
+      (await attributeInbound(deps.store, msg, { allowMatch: false })) ??
+      (move ? null : await attributeInbound(deps.store, msg, { allowMatch: true }));
+    if (attributed) {
+      const { participant, party } = await joinDeal(deps.store, attributed.deal, {
+        spaceId: msg.spaceId,
+        handle: msg.senderHandle,
+        platform: msg.platform,
+        agentUserId: msg.agentId,
+      });
+      await deps.store.appendEvent({
+        moveId: attributed.move.id,
+        type: "deal.party_joined",
+        payload: { dealId: attributed.deal.id, partyId: party.id, via: attributed.via, role: participant.role },
+        traceId: null,
+      });
+      log.info("counterparty joined a deal", {
+        moveId: attributed.move.id,
+        dealId: attributed.deal.id,
+        via: attributed.via,
+        spaceId: msg.spaceId,
+      });
+      return { move: attributed.move, participant, firstContact: false };
+    }
+    // A known owner texting from a new space (e.g. SMS after iMessage) joins their move; otherwise a new move.
     const firstContact = !move;
     if (!move) {
       move = await deps.store.createMove({
@@ -107,6 +141,111 @@ export function createService(deps: ServiceDeps): Service {
     for (const a of m.attachments) parts.push(a.mimeType?.startsWith("image/") ? "[photo]" : "[attachment]");
     if (m.reaction) parts.push(`[reaction ${m.reaction.emoji}]`);
     return parts.join(" ") || "[empty]";
+  }
+
+  async function runOnSent(reply: ElfReply, messageId: string) {
+    if (!reply.onSent) return;
+    try {
+      await reply.onSent(messageId);
+    } catch (err) {
+      log.warn("onSent hook failed", { error: String(err) });
+    }
+  }
+
+  /**
+   * Send a text into another space of the move, as the pool number that space talks to, and remember it in that
+   * space's transcript. Idempotent on `key`.
+   */
+  async function deliverTo(move: Move, elf: ElfName, note: ElfOutbound, key: string, traceId: string | null) {
+    const target = await deps.store.getParticipantBySpace(note.spaceId);
+    const senderId =
+      target?.agentUserId ??
+      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)?.agentUserId;
+    if (!senderId) {
+      log.warn("no sender for outbound text; skipped", { spaceId: note.spaceId, key });
+      return;
+    }
+    try {
+      const sent = await deps.transport.send(
+        {
+          spaceId: note.spaceId,
+          senderId,
+          text: note.text,
+          parentMessageId: note.parentMessageId ?? undefined,
+          format: note.format ?? "plain",
+        },
+        key,
+      );
+      await deps.store.recordSend(key, sent.id);
+      await deps.store.setThreadOwner(sent.id, elf);
+      await deps.store.setThreadOwner(spaceOwnerKey(note.spaceId), elf);
+      await runOnSent(note, sent.id);
+      counters.outbound++;
+      await deps.store.appendEvent({
+        moveId: move.id,
+        type: "outbound.sent",
+        payload: { elf, spaceId: note.spaceId, messageId: sent.id, text: note.text },
+        traceId,
+      });
+      await safeMem("remember outbound", async (m) => {
+        await m.ensureThread(note.spaceId, { moveId: move.id, role: target?.role ?? "owner", handle: target?.handle ?? null });
+        await m.remember({
+          threadId: note.spaceId,
+          moveId: move.id,
+          role: "assistant",
+          id: sent.id,
+          text: note.text,
+          elf,
+          metadata: { outbound: true, traceId },
+        });
+      });
+    } catch (err) {
+      counters.failures++;
+      log.error("outbound send failed", { key, spaceId: note.spaceId, error: String(err) });
+    }
+  }
+
+  /** Last Call: anything unsold 48h before move-out relists free; owner and interested parties hear it. */
+  async function sweep(): Promise<number> {
+    counters.sweeps++;
+    const res = await lastCallSweep(deps.store, { now: now() });
+    for (const ev of res.events)
+      await deps.store.appendEvent({ moveId: ev.moveId, type: ev.type, payload: ev.payload, traceId: null });
+    let sent = 0;
+    const touched = new Set<string>();
+    for (const m of res.messages) {
+      const move = await deps.store.getMove(m.moveId);
+      const deal = await deps.store.getDeal(m.dealId);
+      if (!move || !deal) continue;
+      const elfName = policyFor(deal.mode).elf;
+      const spaceId =
+        m.to === "owner"
+          ? move.ownerSpaceId
+          : (await deps.store.listDealParties(deal.id)).find((p) => p.id === m.partyId)?.spaceId;
+      if (!spaceId) continue;
+      // One Last Call text per deal and recipient, ever.
+      const key = sendKey("lastcall", `${deal.id}:${m.partyId ?? "owner"}`);
+      if (await deps.store.getSend(key)) continue;
+      await deliverTo(
+        move,
+        elfName,
+        { spaceId, text: m.text, parentMessageId: m.to === "owner" ? deal.ownerThreadId : null },
+        key,
+        null,
+      );
+      touched.add(`${move.id}:${elfName}`);
+      sent++;
+    }
+    for (const t of touched) {
+      const [moveId, elfName] = t.split(":") as [string, ElfName];
+      const board = await dealBoard(deps.store, moveId, ["sell_item", "buy_item"]);
+      await deps.store.patchBoard(moveId, elfName, {
+        status: "working",
+        currentTask: board ? `Deals: ${board}` : "Last Call",
+        lastUpdate: "Last Call: unsold items are free now",
+      });
+    }
+    return sent;
   }
 
   async function handleBatch(batch: Batch, { signal, settle }: { signal: AbortSignal; settle?: () => void }) {
@@ -162,7 +301,7 @@ export function createService(deps: ServiceDeps): Service {
         elves,
         context: `Move ${move.id}; move-out ${move.moveOutAt ?? "unknown"}`,
       },
-      { firstContact, moveId: move.id },
+      { firstContact, moveId: move.id, role: participant.role },
     );
     const elf = elves.find((e) => e.name === decision.elf) ?? elves[0]!;
     await deps.store.appendEvent({
@@ -272,6 +411,7 @@ export function createService(deps: ServiceDeps): Service {
           );
           await deps.store.recordSend(key, sent.id);
           await deps.store.setThreadOwner(sent.id, elf.name);
+          await runOnSent(reply, sent.id);
           counters.replies++;
           counters.lastReplyAt = new Date().toISOString();
           sentTexts.push(reply.text);
@@ -311,7 +451,19 @@ export function createService(deps: ServiceDeps): Service {
       return n;
     };
 
+    /** Texts for other spaces (a buyer's DM, the owner chat), keyed note:<lastId>:<n>. */
+    const sendOutbound = async (notes: ElfOutbound[], startN: number): Promise<number> => {
+      let k = startN;
+      for (const note of notes) {
+        const key = sendKey("note", last.id, k++);
+        if (await deps.store.getSend(key)) continue;
+        await deliverTo(move, elf.name, note, key, traceId);
+      }
+      return k;
+    };
+
     let n = await sendReplies(result.replies, 0);
+    let notes = await sendOutbound(result.outbound ?? [], 0);
 
     // Slow follow-up work (a housing search) runs after the ack is out.
     if (result.later) {
@@ -346,6 +498,7 @@ export function createService(deps: ServiceDeps): Service {
           traceId,
         });
       n = await sendReplies(more.replies, n);
+      notes = await sendOutbound(more.outbound ?? [], notes);
     }
 
     for (const m of batch.messages) await deps.store.setThreadOwner(m.id, elf.name);
@@ -373,6 +526,7 @@ export function createService(deps: ServiceDeps): Service {
       elf: elf.name,
       via: decision.via,
       replies: n,
+      outbound: notes,
       deferred: !!result.later,
       contextTokens: conversation.tokens,
       ms: Date.now() - t0,
@@ -382,6 +536,14 @@ export function createService(deps: ServiceDeps): Service {
   const pipeline = new Pipeline({ debounceMs: deps.debounceMs, handle: handleBatch, logger: log });
 
   async function run(signal: AbortSignal) {
+    const sweepMs = deps.sweepMs ?? 10 * 60_000;
+    if (sweepMs > 0) {
+      const timer = setInterval(
+        () => void sweep().catch((err) => log.error("last call sweep failed", { error: String(err) })),
+        sweepMs,
+      );
+      signal.addEventListener("abort", () => clearInterval(timer));
+    }
     log.info("inbound loop started", {
       transport: deps.transport.name,
       llm: deps.llm.name,
@@ -408,6 +570,7 @@ export function createService(deps: ServiceDeps): Service {
     pipeline,
     handleBatch,
     run,
+    sweep,
     stats: () => ({
       ...counters,
       memory: mem?.stats() ?? { kind: "off" },

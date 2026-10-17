@@ -20,6 +20,8 @@
       "@elves/elves": ["./packages/elves/src/index.ts"],
       "@elves/memory": ["./packages/memory/src/index.ts"],
       "@elves/db": ["./packages/db/src/index.ts"],
+      "@elves/engine": ["./packages/engine/src/index.ts"],
+      "@elves/workflows": ["./packages/workflows/src/index.ts"],
       "@elves/listings": ["./packages/listings/src/index.ts"]
     }
   },

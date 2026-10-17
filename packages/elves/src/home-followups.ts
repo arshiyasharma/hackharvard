@@ -26,3 +26,27 @@ export function parseFollowUp(text: string): FollowUp | null {
 export function isHuntFollowUp(text: string): boolean {
   return parseFollowUp(text) != null;
 }
+
+const REFRESH = /\b(?:search|look|try) again\b|\bretry(?: the search)?\b/i;
+
+/** "search again" should run a new search, not replay the picks from the last few minutes. */
+export function wantsFreshSearch(text: string): boolean {
+  return REFRESH.test(text.trim());
+}
+
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/gi;
+
+/** Listing links the owner pasted or forwarded. Trailing punctuation is stripped. */
+export function extractListingUrls(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(URL_RE)) {
+    const url = m[0].replace(/[.,);]+$/, "");
+    if (!out.includes(url)) out.push(url);
+  }
+  return out;
+}
+
+/** A hunt the Home Elf already started: retry the search, or rank a link the owner just sent. */
+export function isHomeContinuation(text: string): boolean {
+  return wantsFreshSearch(text) || extractListingUrls(text).length > 0;
+}

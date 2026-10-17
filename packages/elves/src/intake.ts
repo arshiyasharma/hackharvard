@@ -1,3 +1,4 @@
+import { openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
 import type { Item } from "@elves/shared";
 import { z } from "zod";
@@ -121,23 +122,50 @@ export function isApproval(text: string): boolean {
   return APPROVAL.test(text) && !DECLINE.test(text);
 }
 
-/** Mark every priced, unapproved item as approved; returns the items that flipped. */
-export async function approvePendingListings(ctx: ElfContext): Promise<Item[]> {
+/** An approved item and the sell deal it opened: buyers quote `dealCode` in their first text. */
+export type ApprovedItem = Item & { dealId: string; dealCode: string };
+
+/** Mark every priced, unapproved item as approved and open its sell deal; returns the items that flipped. */
+export async function approvePendingListings(ctx: ElfContext): Promise<ApprovedItem[]> {
   const items = await ctx.store.listItems(ctx.move.id);
   const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
-  const out: Item[] = [];
+  const out: ApprovedItem[] = [];
   for (const it of pending) {
-    out.push(
-      await ctx.store.upsertItem({
-        id: it.id,
-        moveId: it.moveId,
-        name: it.name,
-        category: it.category,
-        listingApproved: true,
-      }),
-    );
+    const item = await ctx.store.upsertItem({
+      id: it.id,
+      moveId: it.moveId,
+      name: it.name,
+      category: it.category,
+      listingApproved: true,
+    });
+    const deal = await openDeal(ctx.store, {
+      moveId: item.moveId,
+      mode: "sell_item",
+      subjectId: item.id,
+      title: item.name,
+      askCents: item.listPriceCents ?? item.floorPriceCents,
+      limitCents: item.floorPriceCents,
+    });
+    out.push({ ...item, dealId: deal.id, dealCode: deal.code });
   }
   return out;
+}
+
+/** onSent for the owner-chat message that announced these listings: their deal summaries thread under it. */
+export function anchorDeals(ctx: ElfContext, approved: ApprovedItem[]): ((id: string) => Promise<void>) | undefined {
+  if (!approved.length) return undefined;
+  return async (messageId) => {
+    for (const a of approved) {
+      const deal = await ctx.store.getDeal(a.dealId);
+      if (deal && !deal.ownerThreadId) await ctx.store.upsertDeal({ ...deal, ownerThreadId: messageId });
+    }
+  };
+}
+
+/** The line the owner pastes into a marketplace post, so buyers land in the right deal. */
+export function postLine(a: ApprovedItem, number: string | null): string {
+  const priceText = a.listPriceCents != null ? `, ${fmtUsd(a.listPriceCents)}` : "";
+  return `"${a.title ?? a.name}${priceText}. Text ${number ?? "this number"} and mention ${a.dealCode}."`;
 }
 
 /** Compact per-item status for prompts, so an Elf never asks for what it already has. */
