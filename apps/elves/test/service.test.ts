@@ -507,11 +507,14 @@ describe("Deal Engine: buyers text the listing's number", () => {
     t.stop();
   });
 
-  test("a stranger with no code and nothing to match still starts their own move", async () => {
+  test("a stranger texting a number with one open listing is a buyer for it, even with no code or item word", async () => {
+    // Every other text on a listing's number is a buyer, so there is no new move and no Crew Lead intro.
     const t = boot(null);
-    await listChair(t);
+    const { deal } = await listChair(t);
     await say(t, buyerA, "hi im moving out next week");
-    expect((await t.store.listMoves()).length).toBe(2);
+    expect((await t.store.listMoves()).length).toBe(1);
+    const parties = await t.store.listDealPartiesBySpace(t.transport.spaceFor(buyerA));
+    expect(parties.map((p) => p.dealId)).toEqual([deal.id]);
     t.stop();
   });
 
