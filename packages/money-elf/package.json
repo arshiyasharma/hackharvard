@@ -1,0 +1,18 @@
+{
+  "name": "@elves/money-elf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "chat": "bun run scripts/chat.ts",
+    "chat:nessie": "bun run scripts/chat.ts --nessie",
+    "smoke": "bun run scripts/smoke.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  }
+}

@@ -1,0 +1,251 @@
+/** The Ledger: one running list of every dollar in a move, plus the people and pending approvals behind it. */
+import { fmtUsd } from "./amounts.ts";
+import type { Role } from "./types.ts";
+
+export type EntryKind = "expense" | "split" | "deposit" | "sale" | "payment";
+/** The spec's pending / paid / refunded, plus cancelled for a payment the owner said no to. */
+export type EntryStatus = "pending" | "paid" | "refunded" | "cancelled";
+export type EscrowState = "held" | "released" | "refunded";
+
+export interface NessieRefs {
+  withdrawalIds: string[];
+  depositIds: string[];
+  billId: string | null;
+}
+
+export interface LedgerEntry {
+  id: string;
+  moveId: string;
+  /** YYYY-MM-DD the entry was made. */
+  date: string;
+  kind: EntryKind;
+  what: string;
+  /** Person ids. */
+  paidBy: string | null;
+  owedBy: string | null;
+  /** Payments and refunds: who received the money. */
+  paidTo: string | null;
+  amountCents: number;
+  status: EntryStatus;
+  /** Sales only: where the buyer's money is. */
+  escrow: EscrowState | null;
+  /** Deposits only: YYYY-MM-DD the deposit is due back. */
+  dueBackAt: string | null;
+  /** Split rows share the id of the expense they split. */
+  groupId: string | null;
+  /** Split rows: the request has been sent to the person (after the owner's yes). */
+  requested: boolean;
+  /** Split rows: the person has been texted the request (needs their number). */
+  notified: boolean;
+  /** Blocked by the scam check; never paid. */
+  flagged: boolean;
+  nessie: NessieRefs;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Person {
+  id: string;
+  moveId: string;
+  name: string;
+  /** Phone handle in E.164, when known. */
+  handle: string | null;
+  role: Role;
+  nessieCustomerId: string | null;
+  nessieAccountId: string | null;
+}
+
+export type PendingKind = "send_split_requests" | "release_escrow" | "refund_escrow" | "pay_person";
+
+/** A money-moving action waiting for the owner's explicit yes. One yes approves exactly one of these. */
+export interface PendingAction {
+  id: string;
+  moveId: string;
+  kind: PendingKind;
+  summary: string;
+  entryIds: string[];
+  createdAt: string;
+}
+
+export interface MoneyStore {
+  listEntries(moveId: string): Promise<LedgerEntry[]>;
+  getEntry(id: string): Promise<LedgerEntry | undefined>;
+  addEntry(
+    input: Pick<LedgerEntry, "moveId" | "date" | "kind" | "what" | "amountCents"> & Partial<LedgerEntry>,
+  ): Promise<LedgerEntry>;
+  updateEntry(
+    id: string,
+    patch: Partial<Omit<LedgerEntry, "id" | "moveId" | "createdAt">>,
+  ): Promise<LedgerEntry>;
+
+  listPeople(moveId: string): Promise<Person[]>;
+  getPerson(id: string): Promise<Person | undefined>;
+  upsertPerson(input: Pick<Person, "moveId" | "name" | "role"> & Partial<Person>): Promise<Person>;
+
+  listPending(moveId: string): Promise<PendingAction[]>;
+  addPending(input: Omit<PendingAction, "id" | "createdAt">): Promise<PendingAction>;
+  removePending(id: string): Promise<void>;
+
+  getEscrowAccount(moveId: string): Promise<string | undefined>;
+  setEscrowAccount(moveId: string, accountId: string): Promise<void>;
+}
+
+function newId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+export class MemoryMoneyStore implements MoneyStore {
+  entries = new Map<string, LedgerEntry>();
+  people = new Map<string, Person>();
+  pending = new Map<string, PendingAction>();
+  escrow = new Map<string, string>();
+  private seq = 0;
+
+  async listEntries(moveId: string) {
+    return [...this.entries.values()].filter((e) => e.moveId === moveId);
+  }
+  async getEntry(id: string) {
+    return this.entries.get(id);
+  }
+  async addEntry(
+    input: Pick<LedgerEntry, "moveId" | "date" | "kind" | "what" | "amountCents"> & Partial<LedgerEntry>,
+  ) {
+    if (!Number.isInteger(input.amountCents) || input.amountCents <= 0)
+      throw new Error(`ledger amounts are positive integer cents, got ${input.amountCents}`);
+    const ts = new Date().toISOString();
+    const e: LedgerEntry = {
+      paidBy: null,
+      owedBy: null,
+      paidTo: null,
+      status: "pending",
+      escrow: null,
+      dueBackAt: null,
+      groupId: null,
+      requested: false,
+      notified: false,
+      flagged: false,
+      nessie: { withdrawalIds: [], depositIds: [], billId: null },
+      createdAt: ts,
+      updatedAt: ts,
+      ...input,
+      id: input.id ?? newId("le"),
+    };
+    this.entries.set(e.id, e);
+    return e;
+  }
+  async updateEntry(id: string, patch: Partial<Omit<LedgerEntry, "id" | "moveId" | "createdAt">>) {
+    const e = this.entries.get(id);
+    if (!e) throw new Error(`ledger entry ${id} not found`);
+    const next = { ...e, ...patch, updatedAt: new Date().toISOString() };
+    this.entries.set(id, next);
+    return next;
+  }
+
+  async listPeople(moveId: string) {
+    return [...this.people.values()].filter((p) => p.moveId === moveId);
+  }
+  async getPerson(id: string) {
+    return this.people.get(id);
+  }
+  async upsertPerson(input: Pick<Person, "moveId" | "name" | "role"> & Partial<Person>) {
+    const prev = input.id ? this.people.get(input.id) : undefined;
+    const p: Person = {
+      handle: null,
+      nessieCustomerId: null,
+      nessieAccountId: null,
+      ...(prev ?? {}),
+      ...input,
+      id: input.id ?? newId("pp"),
+    };
+    this.people.set(p.id, p);
+    return p;
+  }
+
+  async listPending(moveId: string) {
+    return [...this.pending.values()].filter((p) => p.moveId === moveId);
+  }
+  async addPending(input: Omit<PendingAction, "id" | "createdAt">) {
+    // createdAt carries a sequence suffix so "most recent" is stable within one millisecond.
+    const a: PendingAction = {
+      ...input,
+      id: newId("pa"),
+      createdAt: `${new Date().toISOString()}#${String(++this.seq).padStart(6, "0")}`,
+    };
+    this.pending.set(a.id, a);
+    return a;
+  }
+  async removePending(id: string) {
+    this.pending.delete(id);
+  }
+
+  async getEscrowAccount(moveId: string) {
+    return this.escrow.get(moveId);
+  }
+  async setEscrowAccount(moveId: string, accountId: string) {
+    this.escrow.set(moveId, accountId);
+  }
+}
+
+export interface LedgerTotals {
+  /** Shared costs and deposits the owner paid out. */
+  spentCents: number;
+  /** Still owed to the owner by roommates (requested or not). */
+  owedToOwnerCents: number;
+  /** Paid back to the owner by roommates. */
+  collectedCents: number;
+  /** Buyer money sitting in escrow. */
+  inEscrowCents: number;
+  /** Sale money released to the owner. */
+  salesCents: number;
+  /** Deposits not yet returned. */
+  depositsOutCents: number;
+  pendingCount: number;
+}
+
+export function ledgerTotals(entries: LedgerEntry[], ownerId: string | null): LedgerTotals {
+  const t: LedgerTotals = {
+    spentCents: 0,
+    owedToOwnerCents: 0,
+    collectedCents: 0,
+    inEscrowCents: 0,
+    salesCents: 0,
+    depositsOutCents: 0,
+    pendingCount: 0,
+  };
+  for (const e of entries) {
+    if (e.flagged) continue;
+    if (e.status === "pending") t.pendingCount++;
+    switch (e.kind) {
+      case "expense":
+        if (e.paidBy === ownerId) t.spentCents += e.amountCents;
+        break;
+      case "split":
+        if (e.status === "pending") t.owedToOwnerCents += e.amountCents;
+        if (e.status === "paid") t.collectedCents += e.amountCents;
+        break;
+      case "deposit":
+        if (e.status === "pending") t.depositsOutCents += e.amountCents;
+        break;
+      case "sale":
+        if (e.escrow === "held") t.inEscrowCents += e.amountCents;
+        if (e.escrow === "released") t.salesCents += e.amountCents;
+        break;
+      case "payment":
+        if (e.paidBy === ownerId && e.status === "paid") t.spentCents += e.amountCents;
+        break;
+    }
+  }
+  return t;
+}
+
+/** One line for the Crew Board's Money row. */
+export function boardLine(t: LedgerTotals): string {
+  const parts: string[] = [];
+  if (t.spentCents) parts.push(`${fmtUsd(t.spentCents)} spent`);
+  if (t.owedToOwnerCents) parts.push(`${fmtUsd(t.owedToOwnerCents)} owed to you`);
+  if (t.collectedCents) parts.push(`${fmtUsd(t.collectedCents)} collected`);
+  if (t.inEscrowCents) parts.push(`${fmtUsd(t.inEscrowCents)} in escrow`);
+  if (t.salesCents) parts.push(`${fmtUsd(t.salesCents)} from sales`);
+  if (t.depositsOutCents) parts.push(`${fmtUsd(t.depositsOutCents)} in deposits out`);
+  return parts.length ? `Ledger: ${parts.join(", ")}` : "Ledger is empty";
+}
