@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 240 tests across 19 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 267 tests across 21 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -19,8 +19,8 @@ Branch from here when you want the crew that actually runs. The rows marked **em
 | Last Call | Sweep in `lastCallSweep`. T−48h: ask drops to 60% of list (`droppedAsk`). T−24h: relisted free and `pickup.requested` (donation or 311). Move-out: anything still open is `dumped`. "Keep the couch" sets `last_call_opt_out`. | The pickup is an event, not a booked truck. |
 | Deal Engine | Built. Postgres state machine plus a sweep. Not Mastra. Modes: `sell_item`, `buy_item`, `sublet_out`, `find_sublet`. States: listed → negotiating → scheduled → handed_off → paid, plus relisted / donated / dumped. Floor and ceiling are code. Three pickup slots, one shared calendar. Scam Shield blocks off-escrow payment on a deal. | No no-show timeout sweep. No poll for "both accepted". A stranger whose text matches two open deals is not joined (ambiguity returns null). A counterparty already in two talks is asked which item when the text names more than one. |
 | Money · Nessie | The engine emits `ledger.hold` when a price is agreed, `escrow.requested` and `ledger.release` on hand-off, and `ledger.refund` if that party walks before hand-off. | **Nessie is not integrated.** No `MoneyRails`, no Nessie client, no Moving Fund, no Escrow account, no Ledger page. The Money Elf is a canned reply. Real dollars are not moved. |
-| Home · Hunt | Built. One missing fact at a time (budget → area → dates), then Craigslist and Airbnb. Scam flags, rank, top 3. "more" / "tell me about 2" / "skip" / "save". "search again" bypasses the 3-minute cache. A forwarded listing URL is ranked with the picks. | Booking, SpareFoot, Apartments, Zillow, and Facebook are off the default allowlist (blocks). Save drafts a text the owner sends; Home does not contact the lister. |
-| Home · Sublet | "Sublet my room for $1500" opens `sublet_out` at once, then asks for dates and area one at a time, reads room photos with vision, and writes the post (title + body with the ref and the number) in `sublet_posts`. "Change …" redrafts, "post it" approves. "Reach out to 2" after picks opens `find_sublet` and still tells the owner to send the note. | The owner pastes the post; nothing is posted to Craigslist or Facebook by the crew. Move-in week is the canned checklist reply. No landlord is contacted. |
+| Home · Hunt | Built. One missing fact at a time (budget → area → dates), then Craigslist and Airbnb. Scam flags, rank, top 3. "more" / "tell me about 2" / "skip" / "save". "search again" bypasses the 3-minute cache. A forwarded listing URL is ranked with the picks. "Reach out to 2" opens `find_sublet`; when the listing shows a phone, the dedicated line texts the lister the drafted note, the owner hears "Texted them from <line>", and the lister's replies run through the Deal Engine as summaries in the owner chat. | Booking, SpareFoot, Apartments, Zillow, and Facebook are off the default allowlist (blocks). A listing with no phone (Craigslist, Airbnb) still gets a note the owner sends. Without a dedicated line (`PHOTON_DEDICATED_AGENT_ID` or a discoverable one) the note goes to the owner too; the shared pool cannot text first. Email contacts are not used. |
+| Home · Sublet | "Sublet my room for $1500" opens `sublet_out` at once, then asks for dates and area one at a time, reads room photos with vision, and writes the post (title + body with the ref and the number) in `sublet_posts`. "Change …" redrafts, "post it" approves. | The owner pastes the post; nothing is posted to Craigslist or Facebook by the crew. Move-in week is the canned checklist reply. No landlord is contacted. |
 | Home · Lease | A lease PDF (even as the first text) is read by Claude into `lease_readings`: sublet rule, notice period, lease end, rent, deposit and its return window, early-exit terms, landlord contact, with clauses quoted by page. "Can I sublet?", "how much notice?", "deposit?" are answered from it; "draft the notice" and "ask the landlord" produce the move-out notice and the sublet consent request for the owner to send. | Photos of lease pages are not read (PDF only). Nothing is sent to the landlord. Deposit deadlines are not tracked or reminded. |
 | Move-day | A booked slot emits `pickup.scheduled` with `subjectId` and the title, and the owner is told the item comes off the truck estimate. | **The Move-day Elf is empty.** Room Scan, U-Haul size and price, box list, Move Map, ETAs, and return-time planning are not built. Nothing reads `pickup.scheduled` yet. |
 | Owner yes | Inbound 👍 / heart / ✅ with no text counts as "yes" on the owner's question, and on a pending buy or donate. | Outbound 👍 fails on the shared Photon pool (`409`). Replies stay plain text. There is no tapback override for a scam flag. |
@@ -60,6 +60,7 @@ Environment (all read in `apps/elves/src/config.ts`):
 | `PHOTON_PROJECT_ID`, `PHOTON_API_KEY` | Photon 2.0 project and `pho_sk_` key |
 | `PHOTON_INBOUND` | `poll` (GET /messages every `PHOTON_POLL_MS`, default) or `socket` (Socket.IO event stream with cursor replay, plus a slow poll as a safety net) |
 | `PHOTON_SINCE` | ISO time; on boot, also handle messages created after this (replay). Default: boot time |
+| `PHOTON_DEDICATED_AGENT_ID` | Agent user id (`pho_usr_…`) of the dedicated iMessage line that may text someone first. Unset: discovered from the project's agent users (`details.type = dedicated`) |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL_FAST`, `ANTHROPIC_MODEL_SMART` | Claude; `claude-haiku-5-5` routes and extracts, `claude-sonnet-5-5` drafts. Unset key → deterministic template replies |
 | `ELVES_TRANSPORT` | `photon2` or `script` (in-memory) |
 | `ELVES_DEBOUNCE_MS` | quiet window before a batch is handled (default 1200) |
@@ -129,9 +130,12 @@ Every Elf is `handle(ctx) → { replies, boardPatch, events, movePatch }`. The s
 | Typing | `POST /spaces/{spaceId}/typing` | around model calls | yes |
 | Reaction | `POST /messages` `content.type=reaction` | on every inbound | refused on the shared pool (same 409); logged, not retried |
 | Shared-line assignments | `GET/POST /platforms/imessage/assignments` | `scripts/photon.ts` | yes |
-| Lines | `GET /platforms/resources` | `scripts/photon.ts status` | yes |
+| Lines | `GET /platforms/resources` | `scripts/photon.ts status`; dedicated-line discovery when several agents are dedicated | yes |
+| Text someone first | `GET /users?kind=agent` (find the dedicated agent, `details.type=dedicated`), `POST /users {handle, platform}`, `POST /spaces {participantIds: [line, them]}` with `Idempotency-Key = space:<line>:<user>`, then `POST /messages` as the line | `Transport.openSpace`, from the Home Elf's "reach out to N" when the listing shows a phone | offline (fake fetch); not yet exercised on a live dedicated line |
 
 Shared-pool rules that shaped the design: the pool only sends in direct spaces to a human with an active assignment who has texted first; the agent identity differs per human (each phone gets its own pool number), so the agent id is always taken from the inbound message rather than configured. A dedicated line (the project reports `dedicatedLineAvailableNow: true`) would lift the threading and reaction limits.
+
+**Which lines can message first.** Only a dedicated line. `Transport.openSpace(handle, platform)` creates (or finds) the Photon user for a phone number and the direct space between it and the dedicated line's agent user, then the service sends as that agent and records the person as a `lister` participant and deal party. The agent user comes from `PHOTON_DEDICATED_AGENT_ID`, or is discovered once from the project's agent users. Shared-pool numbers never open spaces: with no dedicated line `openSpace` rejects, the note is dropped with a log line, and the Home Elf falls back to handing the owner the text to send.
 
 ## Deploy
 

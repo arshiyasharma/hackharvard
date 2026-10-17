@@ -52,17 +52,38 @@ export function hasDocuments(batch: Batch): boolean {
   return batch.messages.some((m) => m.attachments.some(isDocumentAttachment));
 }
 
+export interface SentInfo {
+  /** The handle the text went out from (the dedicated line's number), when the transport knows it. */
+  line: string | null;
+}
+
 export interface ElfReply {
   text: string;
   parentMessageId?: string | null;
   format?: "plain" | "markdown";
   /** Called with the sent message id (a deal anchors its owner-chat thread on it). */
-  onSent?: (messageId: string) => Promise<void>;
+  onSent?: (messageId: string, info: SentInfo) => Promise<void>;
 }
 
 /** A text for a space other than the one being answered: a buyer's DM, or the owner chat from a buyer's turn. */
-export interface ElfOutbound extends ElfReply {
+export interface ElfOutboundToSpace extends ElfReply {
   spaceId: string;
+}
+
+/**
+ * A first text to someone who has never written in (a lister whose number was on the listing). The service opens
+ * the space from the dedicated line, joins them to `dealId` as its counterparty, then sends. Dropped, with
+ * `onSent` never called, when the project has no dedicated line.
+ */
+export interface ElfOutboundToHandle extends ElfReply {
+  to: { handle: string; platform: string };
+  dealId: string;
+}
+
+export type ElfOutbound = ElfOutboundToSpace | ElfOutboundToHandle;
+
+export function isAddressedOutbound(note: ElfOutbound): note is ElfOutboundToHandle {
+  return "to" in note;
 }
 
 export interface ElfResult {

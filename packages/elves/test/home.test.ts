@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { type ElfContext, type ElfResult, EMPTY_CONVERSATION, homeElf } from "@elves/elves";
+import {
+  type ElfContext,
+  type ElfOutboundToHandle,
+  type ElfResult,
+  EMPTY_CONVERSATION,
+  homeElf,
+  phoneHandle,
+} from "@elves/elves";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
 import type { InboundMessage } from "@elves/photon";
@@ -129,6 +136,77 @@ describe("Home Elf: hunt", () => {
     expect(text(save)).toContain("You send this; I won't contact them");
     expect(text(save)).toContain("Is it still available?");
     expect((await w.store.listListings(w.move.id)).find((l) => l.rank === 1)?.status).toBe("shortlisted");
+  });
+
+  test("reach out to a pick with a phone on the listing: the dedicated line texts the lister, then the owner hears from which line", async () => {
+    const w = await world();
+    const r = await w.say("looking for a room in allston under 1200 june 1 to aug 30");
+    await r.later!();
+
+    const reach = await w.say("reach out to 2"); // Allston Green shows (617) 555-0142
+    expect(reach.replies).toEqual([]);
+    expect(reach.outbound).toHaveLength(1);
+    const note = reach.outbound![0] as ElfOutboundToHandle;
+    expect(note.to).toEqual({ handle: "+16175550142", platform: "script" });
+    expect(note.text).toBe(
+      "Hi, I saw your listing for Allston Green, shared 4BR, private room from Jun 1 to Aug 30. My budget is $1,200 a month. Is it still available?",
+    );
+    const deals = await w.store.listDeals(w.move.id);
+    expect(deals).toHaveLength(1);
+    expect(deals[0]).toMatchObject({ mode: "find_sublet", askCents: 125000, limitCents: 120000 });
+    expect(note.dealId).toBe(deals[0]!.id);
+    expect(reach.events?.map((e) => e.type)).toEqual([
+      "housing.listing_shortlisted",
+      "deal.opened",
+      "housing.lister_texted",
+    ]);
+    expect((await w.store.listListings(w.move.id)).find((l) => l.rank === 2)?.status).toBe("shortlisted");
+
+    // the service reports the send; the owner's confirmation names the line and the ref
+    await note.onSent!("out_1", { line: "+16285550100" });
+    const told = await reach.later!();
+    expect(told.replies[0]!.text).toBe(
+      `Texted them from +16285550100: "${note.text}"\nRef ${deals[0]!.code}. I'll relay what they say and negotiate up to $1,200/mo.`,
+    );
+    await told.replies[0]!.onSent!("out_2", { line: null });
+    expect((await w.store.getDeal(deals[0]!.id))?.ownerThreadId).toBe("out_2");
+    expect(told.boardPatch?.lastUpdate).toContain("texted the lister");
+  });
+
+  test("reach out when the line could not text: the owner gets the note to send instead", async () => {
+    const w = await world();
+    const r = await w.say("looking for a room in allston under 1200 june 1 to aug 30");
+    await r.later!();
+    const reach = await w.say("contact 2");
+    const told = await reach.later!(); // onSent never fired
+    expect(told.replies[0]!.text).toContain("I couldn't text them from my line.");
+    expect(told.replies[0]!.text).toContain("You send this; I won't contact them:");
+    expect(told.replies[0]!.text).toContain("Ref ");
+  });
+
+  test("reach out to a pick with no phone keeps the owner as the sender", async () => {
+    const w = await world();
+    const r = await w.say("looking for a room in allston under 1200 june 1 to aug 30");
+    await r.later!();
+    const reach = await w.say("reach out to 1"); // Sunny furnished room: no contact
+    expect(reach.outbound).toBeUndefined();
+    expect(reach.later).toBeUndefined();
+    expect(text(reach)).toContain("Saved 1: Sunny furnished room");
+    expect(text(reach)).toContain("You send this; I won't contact them");
+    expect(text(reach)).toContain("I still won't message them myself.");
+    const deal = (await w.store.listDeals(w.move.id))[0]!;
+    expect(text(reach)).toContain(`Ref ${deal.code}`);
+    await reach.replies[0]!.onSent!("out_9", { line: null });
+    expect((await w.store.getDeal(deal.id))?.ownerThreadId).toBe("out_9");
+  });
+
+  test("phoneHandle: US ten digits, 1-prefixed, international, and junk", () => {
+    expect(phoneHandle("(617) 555-0142")).toBe("+16175550142");
+    expect(phoneHandle("1-617-555-0142")).toBe("+16175550142");
+    expect(phoneHandle("+44 20 7946 0958")).toBe("+442079460958");
+    expect(phoneHandle("call me")).toBeNull();
+    expect(phoneHandle("555-0142")).toBeNull();
+    expect(phoneHandle(null)).toBeNull();
   });
 
   test("the same ask again within minutes re-sends the picks instead of searching", async () => {
