@@ -11,6 +11,7 @@
     "start": "bun run apps/elves/src/index.ts",
     "demo": "bun run scripts/demo.ts",
     "photon": "bun run scripts/photon.ts",
+    "mock-call": "bun run scripts/mock-call.ts",
     "browser": "bun run scripts/browser.ts",
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
