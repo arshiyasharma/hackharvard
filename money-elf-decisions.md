@@ -108,3 +108,9 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     - Without a store (tests, local chat, smoke test), the handle stands in for the space.
     - `MoneyService` methods still return handle-addressed texts, so the Deal Engine can call them directly.
     (Claude; found merging `team-stable`)
+49. **When Elves can't text someone, the owner's reply tells them who to talk to and about what, in one short line.** Example: "Talk to Priya about the $30 gas share; I can't text them until they've texted Elves." Everything else still happens: the Ledger entry, the Nessie bill, loan or escrow record, and texts to everyone Elves can reach. Details:
+    - Each outbound text carries `toName` and a few-word `about`, and `talkLine()` in `packages/money-elf/src/money-elf.ts` groups them by person.
+    - The line always fits in the 3-line reply.
+    - The service takes a `Reach` check (`approve`, `executeSplitRequests`, `addContact`). Only reachable people count as "sent" or get `notified`, so the owner is never told a text went out when it didn't.
+    - Callers without a reach check (the Deal Engine, tests) treat everyone as reachable.
+    (team chose "only when it can't reach them"; wording Claude)

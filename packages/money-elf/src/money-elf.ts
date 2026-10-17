@@ -12,7 +12,7 @@ import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
-import { approvalPollFor, MoneyService, type OpResult } from "./service.ts";
+import { approvalPollFor, MoneyService, type OpResult, type Reach } from "./service.ts";
 import type {
   MoneyContext,
   MoneyEvent,
@@ -130,6 +130,9 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
   const role = ctx.participant.role;
   let r: OpResult = { lines: [], events: [], outbound: [] };
   const extras: Extras = {};
+  const spaceOf = await spaces(ctx);
+  const reach: Reach = (h) => spaceOf(h) !== undefined;
+  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf);
 
   // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
   const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
@@ -140,16 +143,21 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
     } else if (m?.[2]) {
       r = merge(
         r,
-        m[1] === "approve" ? await service.approve(move, m[2]) : await service.decline(move, m[2]),
+        m[1] === "approve" ? await service.approve(move, m[2], reach) : await service.decline(move, m[2]),
       );
       r.events.push({ type: "poll.voted", payload: { pendingId: m[2], choice: m[1] } });
     } else if (/^yes$/i.test(vote.text) || /^not now$/i.test(vote.text)) {
       // The platform dropped our option ids; fall back to the most recent action.
-      r = merge(r, /^yes$/i.test(vote.text) ? await service.approve(move) : await service.decline(move));
+      r = merge(
+        r,
+        /^yes$/i.test(vote.text)
+          ? await service.approve(move, undefined, reach)
+          : await service.decline(move),
+      );
     } else {
       r.lines.push("I couldn't tell which approval that was for. Reply yes or no instead.");
     }
-    return finish(service, ctx, r, extras);
+    return finish(r, extras);
   }
 
   // Card and bank numbers are never stored, parsed or echoed.
@@ -157,7 +165,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
     r.lines.push("Please don't text card or bank numbers here; I never need them.");
     r.lines.push("Payments run through the Ledger, so nobody has to share account details.");
     r.events.push({ type: "money.sensitive_blocked", payload: { role } });
-    return finish(service, ctx, r, extras);
+    return finish(r, extras);
   }
 
   const flags = scamCheck(text);
@@ -231,7 +239,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
         "Money Elf here. Payments for this move run through escrow on this number, never any other way.",
       );
     }
-    return finish(service, ctx, r, extras);
+    return finish(r, extras);
   }
 
   // A flagged message is never paid: warn, and if it asked to pay, record it as blocked.
@@ -249,12 +257,12 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
         ? "If you already paid it, tell me and I'll help you dispute it."
         : "I won't pay it. Want me to tell the Crew Lead to block them?",
     );
-    return finish(service, ctx, r, extras);
+    return finish(r, extras);
   }
 
   switch (intent.kind) {
     case "approve":
-      r = merge(r, await service.approve(move));
+      r = merge(r, await service.approve(move, undefined, reach));
       break;
     case "decline":
       r = merge(r, await service.decline(move));
@@ -319,7 +327,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
       r = merge(r, await service.proposeEscrow(move, "refund_escrow", intent.item));
       break;
     case "add_contact":
-      r = merge(r, await service.addContact(move, intent.name, intent.handle));
+      r = merge(r, await service.addContact(move, intent.name, intent.handle, reach));
       break;
     case "scam_check":
       r.lines.push("Nothing in that looks like a known scam pattern.");
@@ -360,29 +368,42 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
         `Tell me something like "split the $240 truck with Sam and Priya" or "I paid a $500 sublet deposit, due back Dec 1".`,
       );
   }
-  return finish(service, ctx, r, extras);
+  return finish(r, extras);
 }
 
 /**
- * Address each outbound text to the chat it goes into. The owner's is the move's owner space; anyone else's is
- * the space they text from. Without a crew store, the handle stands in for the space.
+ * Which chat each handle texts from: the owner's is the move's owner space, anyone else's the space they text
+ * from. Without a crew store (tests, local chat, smoke test), every handle is reachable and stands in for its
+ * own space.
  */
-async function addressed(
-  ctx: MoneyContext,
-  out: OutboundMessage[],
-): Promise<{ outbound: MoneyOutbound[]; unreachable: MoneyEvent[] }> {
-  if (!ctx.store) return { outbound: out.map((o) => ({ ...o, spaceId: o.toHandle })), unreachable: [] };
-  const people = out.length ? await ctx.store.listParticipants(ctx.move.id) : [];
-  const outbound: MoneyOutbound[] = [];
-  const unreachable: MoneyEvent[] = [];
-  for (const o of out) {
-    const spaceId =
-      (o.toHandle === ctx.move.ownerHandle ? ctx.move.ownerSpaceId : undefined) ??
-      people.find((p) => p.handle === o.toHandle)?.spaceId;
-    if (spaceId) outbound.push({ ...o, spaceId });
-    else unreachable.push({ type: "outbound.unreachable", payload: { toHandle: o.toHandle } });
+async function spaces(ctx: MoneyContext): Promise<(handle: string) => string | undefined> {
+  const store = ctx.store;
+  if (!store) return (h) => h;
+  const people = await store.listParticipants(ctx.move.id);
+  return (h) =>
+    (h === ctx.move.ownerHandle ? ctx.move.ownerSpaceId : undefined) ??
+    people.find((p) => p.handle === h)?.spaceId;
+}
+
+/**
+ * One short line telling the owner who to talk to and about what, for texts Elves couldn't send (the person
+ * hasn't texted Elves yet). Null when there are none.
+ */
+export function talkLine(missed: OutboundMessage[]): string | null {
+  const people = new Map<string, { name: string; about: string[] }>();
+  for (const o of missed) {
+    const p = people.get(o.toHandle) ?? { name: o.toName ?? o.toHandle, about: [] };
+    const about = o.about ?? "what I tried to text them";
+    if (!p.about.includes(about)) p.about.push(about);
+    people.set(o.toHandle, p);
   }
-  return { outbound, unreachable };
+  if (!people.size) return null;
+  const parts = [...people.values()].map((p) => `${p.name} about ${andList(p.about)}`);
+  return `Talk to ${andList(parts)}; I can't text them until they've texted Elves.`;
+}
+
+function andList(xs: string[]): string {
+  return xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`;
 }
 
 function merge(a: OpResult, b: OpResult): OpResult {
@@ -393,23 +414,37 @@ function merge(a: OpResult, b: OpResult): OpResult {
   };
 }
 
-async function finish(
+async function finishTurn(
   service: MoneyService,
   ctx: MoneyContext,
   r: OpResult,
   extras: Extras,
+  spaceOf: (handle: string) => string | undefined,
 ): Promise<MoneyResult> {
   await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
   const pending = await service.latestPending(ctx.move.id);
   // The board shows the live Ledger, read back from Nessie.
   const books = await service.books(ctx.move);
-  // Spec: 2-3 short plain lines per reply.
-  const lines = r.lines.filter(Boolean).slice(0, 3);
+  // Texts Elves can't deliver become one line telling the owner who to talk to; the Ledger already has the rest.
+  const outbound: MoneyOutbound[] = [];
+  const missed: OutboundMessage[] = [];
+  for (const o of r.outbound) {
+    const spaceId = spaceOf(o.toHandle);
+    if (spaceId) outbound.push({ ...o, spaceId });
+    else missed.push(o);
+  }
+  const unreachable: MoneyEvent[] = missed.map((o) => ({
+    type: "outbound.unreachable",
+    payload: { toHandle: o.toHandle },
+  }));
+  // Only the owner can pass a message on; in anyone else's turn, missed texts were for the owner anyway.
+  const talk = ctx.participant.role === "owner" ? talkLine(missed) : null;
+  // Spec: 2-3 short plain lines per reply. The talk line always makes it in.
+  const lines = [...r.lines.filter(Boolean).slice(0, talk ? 2 : 3), ...(talk ? [talk] : [])];
   // Anything the owner was just asked to approve also gets a tap-to-answer poll.
   const [pid] = ctx.participant.role === "owner" ? pendingIdsIn(r.events) : [];
   const poll = extras.poll ?? (pid ? await approvalPoll(service, ctx.move.id, pid) : undefined);
-  const { outbound, unreachable } = await addressed(ctx, r.outbound);
   return {
     ...(extras.images?.length ? { images: extras.images } : {}),
     ...(poll ? { poll } : {}),

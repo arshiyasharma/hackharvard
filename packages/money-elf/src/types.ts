@@ -100,6 +100,9 @@ export interface OutboundMessage {
   toHandle: string;
   text: string;
   poll?: MoneyPoll;
+  /** Who it's for and what it's about, in a few words ("the $30 gas share"), for telling the owner to pass it on. */
+  toName?: string;
+  about?: string;
 }
 
 /** An outbound message addressed for the crew service, which sends texts into a space (ElfOutbound). */

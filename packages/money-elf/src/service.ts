@@ -20,6 +20,14 @@ export interface OpResult {
 
 const empty = (): OpResult => ({ lines: [], events: [], outbound: [] });
 
+/**
+ * Whether Elves can text this handle right now. On the shared iMessage pool it can only text someone who has
+ * texted Elves first. The Money Elf passes the real answer; callers without one (the Deal Engine, tests)
+ * get "yes".
+ */
+export type Reach = (handle: string) => boolean;
+const ANYONE: Reach = () => true;
+
 function sameName(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
@@ -186,7 +194,7 @@ export class MoneyService {
   // ---------- contacts ----------
 
   /** Save a roommate's number and text them any approved requests that were waiting for it. */
-  async addContact(move: MoneyMove, name: string, handle: string): Promise<OpResult> {
+  async addContact(move: MoneyMove, name: string, handle: string, reach: Reach = ANYONE): Promise<OpResult> {
     const out = empty();
     const p = await this.person(move.id, name, "roommate", handle);
     out.lines.push(`Got it, ${p.name} is ${handle}.`);
@@ -194,11 +202,27 @@ export class MoneyService {
       (e) => e.kind === "split" && e.owedBy === p.id && e.requested && !e.notified && e.status === "pending",
     );
     for (const e of waiting) {
-      out.outbound.push({ toHandle: handle, text: await this.requestText(move, p, e) });
-      await this.store.updateEntry(e.id, { notified: true });
+      out.outbound.push(await this.requestFor(move, p, e, handle));
+      // Someone Elves can't text yet stays un-notified; the owner is told to pass it on instead.
+      if (reach(handle)) await this.store.updateEntry(e.id, { notified: true });
     }
-    if (waiting.length) out.lines.push(`I just texted ${p.name} the request for ${fmtUsd(sum(waiting))}.`);
+    if (waiting.length && reach(handle))
+      out.lines.push(`I just texted ${p.name} the request for ${fmtUsd(sum(waiting))}.`);
     return out;
+  }
+
+  private async requestFor(
+    move: MoneyMove,
+    p: Person,
+    e: LedgerEntry,
+    handle: string,
+  ): Promise<OutboundMessage> {
+    return {
+      toHandle: handle,
+      toName: p.name,
+      about: `the ${fmtUsd(e.amountCents)} ${e.what} share`,
+      text: await this.requestText(move, p, e),
+    };
   }
 
   private async requestText(move: MoneyMove, p: Person, e: LedgerEntry): Promise<string> {
@@ -284,7 +308,11 @@ export class MoneyService {
     return out;
   }
 
-  async executeSplitRequests(move: MoneyMove, action: PendingAction): Promise<OpResult> {
+  async executeSplitRequests(
+    move: MoneyMove,
+    action: PendingAction,
+    reach: Reach = ANYONE,
+  ): Promise<OpResult> {
     const out = empty();
     const owner = await this.owner(move);
     const missing: string[] = [];
@@ -314,9 +342,11 @@ export class MoneyService {
         },
       });
       if (p.handle) {
-        out.outbound.push({ toHandle: p.handle, text: await this.requestText(move, p, e) });
-        await this.store.updateEntry(e.id, { notified: true });
-        sent++;
+        out.outbound.push(await this.requestFor(move, p, e, p.handle));
+        if (reach(p.handle)) {
+          await this.store.updateEntry(e.id, { notified: true });
+          sent++;
+        }
       } else {
         missing.push(p.name);
       }
@@ -488,6 +518,8 @@ export class MoneyService {
     if (p.handle)
       out.outbound.push({
         toHandle: p.handle,
+        toName: p.name,
+        about: `the ${fmtUsd(remaining)} ${e.what} payment plan (${fmtUsd(monthly)} a month)`,
         text: `You're on a payment plan for the ${e.what}: ${fmtUsd(remaining)} at ${fmtUsd(monthly)} a month into the Moving Fund. Reply PAID each time you send a payment.`,
       });
     out.lines.push(
@@ -608,6 +640,8 @@ export class MoneyService {
     if (buyer.handle)
       out.outbound.push({
         toHandle: buyer.handle,
+        toName: buyer.name,
+        about: `confirming pickup of the ${input.item}`,
         text: `Your ${fmtUsd(entry.amountCents)} for the ${input.item} is held in escrow. Text "got it" here once you've picked it up.`,
       });
     return { ...out, entry };
@@ -702,6 +736,8 @@ export class MoneyService {
       if (buyer.handle)
         out.outbound.push({
           toHandle: buyer.handle,
+          toName: buyer.name,
+          about: `confirming pickup of the ${e.what}`,
           text: `Did you pick up the ${e.what}? Text "got it" here to confirm.`,
         });
       return out;
@@ -719,6 +755,8 @@ export class MoneyService {
     if (buyer.handle)
       out.outbound.push({
         toHandle: buyer.handle,
+        toName: buyer.name,
+        about: `their ${fmtUsd(e.amountCents)} refund for the ${e.what}`,
         text: `Your ${fmtUsd(e.amountCents)} for the ${e.what} has been refunded.`,
       });
     out.lines.push(
@@ -946,6 +984,8 @@ export class MoneyService {
     if (to.handle)
       out.outbound.push({
         toHandle: to.handle,
+        toName: to.name,
+        about: `the ${fmtUsd(e.amountCents)} you sent for ${e.what}`,
         text: `${owner.name} sent you ${fmtUsd(e.amountCents)} for ${e.what} through Elves.`,
       });
     out.lines.push(`Sent ${to.name} ${fmtUsd(e.amountCents)}${fromFund ? " from the Moving Fund" : ""}.`);
@@ -961,7 +1001,7 @@ export class MoneyService {
   }
 
   /** Approve one action: the one a poll vote names, or else the most recently proposed. */
-  async approve(move: MoneyMove, actionId?: string): Promise<OpResult> {
+  async approve(move: MoneyMove, actionId?: string, reach: Reach = ANYONE): Promise<OpResult> {
     const action = actionId
       ? (await this.store.listPending(move.id)).find((a) => a.id === actionId)
       : await this.latestPending(move.id);
@@ -980,7 +1020,7 @@ export class MoneyService {
     try {
       switch (action.kind) {
         case "send_split_requests":
-          r = await this.executeSplitRequests(move, action);
+          r = await this.executeSplitRequests(move, action, reach);
           break;
         case "release_escrow":
         case "refund_escrow":

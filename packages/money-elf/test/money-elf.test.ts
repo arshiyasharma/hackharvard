@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { talkLine } from "../src/money-elf.ts";
 import { isNoShow } from "../src/service.ts";
 import { eventTypes, NOW, OWNER, reply, setup } from "./helpers.ts";
 
@@ -162,7 +163,10 @@ describe("escrow for sales (SPEC §4: two signals, release into the Moving Fund)
     const opened = await couch(s);
     expect(eventTypes({ replies: [], events: opened.events })).toEqual(["escrow.opened"]);
     expect(opened.outbound[0]).toEqual({ toHandle: OWNER, text: expect.stringContaining("held in escrow") });
-    expect(opened.outbound[1]).toEqual({ toHandle: ALEX, text: expect.stringContaining('Text "got it"') });
+    expect(opened.outbound[1]).toMatchObject({
+      toHandle: ALEX,
+      text: expect.stringContaining('Text "got it"'),
+    });
 
     const r1 = await s.say("Alex picked up the couch");
     expect(reply(r1)).toContain("$90 for the couch is in escrow");
@@ -407,6 +411,44 @@ describe("scam check and guardrails", () => {
 });
 
 describe("outbound texts are addressed to spaces (the crew's ElfOutbound)", () => {
+  test("talkLine groups by person, drops repeats and stays one sentence", () => {
+    expect(
+      talkLine([
+        { toHandle: "a", toName: "Alex", about: "confirming pickup of the couch", text: "x" },
+        { toHandle: "a", toName: "Alex", about: "confirming pickup of the couch", text: "y" },
+        { toHandle: "p", toName: "Priya", about: "the $30 gas share", text: "z" },
+        { toHandle: "p", toName: "Priya", about: "the $45 truck share", text: "w" },
+      ]),
+    ).toBe(
+      "Talk to Alex about confirming pickup of the couch and Priya about the $30 gas share and the $45 truck share; I can't text them until they've texted Elves.",
+    );
+    expect(talkLine([])).toBeNull();
+  });
+
+  test("an unreachable buyer: the owner's OK tells the owner to ask them to confirm pickup", async () => {
+    const s = setup();
+    await s.elf.service.openEscrow(s.move, {
+      item: "couch",
+      buyerName: "Alex",
+      buyerHandle: ALEX,
+      amountCents: 9000,
+    });
+    await s.say("Alex picked up the couch");
+    const r = await s.elf.handle({
+      llm: { name: "fake", extract: async () => Promise.reject(new Error("no llm")) },
+      move: { ...s.move, ownerSpaceId: "sp_owner" },
+      participant: { handle: OWNER, role: "owner" },
+      batch: { spaceId: "sp_owner", traceId: "tr", messages: [{ id: "m_yes", text: "yes" }] },
+      traceId: "tr",
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+      now: () => NOW,
+      store: { listParticipants: async () => [] },
+    });
+    expect(r.outbound).toEqual([]);
+    expect(reply(r)).toContain("as soon as Alex confirms pickup");
+    expect(reply(r)).toContain("Talk to Alex about confirming pickup of the couch;");
+  });
+
   test("owner texts go to the owner space, others to their own space, and unknown handles are dropped", async () => {
     const s = setup();
     await s.say(`Sam is ${SAM}`);
@@ -426,9 +468,19 @@ describe("outbound texts are addressed to spaces (the crew's ElfOutbound)", () =
     });
 
     const sent = await s.elf.handle(ctx("yes", OWNER, "owner"));
-    // Sam has a space; Priya has never texted, so the shared pool can't reach her yet.
+    // Sam has a space; Priya has never texted, so the shared pool can't reach them yet.
     expect(sent.outbound).toEqual([expect.objectContaining({ spaceId: "sp_sam", toHandle: SAM })]);
     expect(sent.events).toContainEqual({ type: "outbound.unreachable", payload: { toHandle: PRIYA } });
+    // The owner is told, in one line, who to talk to and about what; only Sam counts as sent.
+    expect(reply(sent)).toContain("Sent the request;");
+    expect(reply(sent)).toContain(
+      "Talk to Priya about the $30 gas share; I can't text them until they've texted Elves.",
+    );
+    // The request is still on the Ledger and in Nessie, just not marked as texted.
+    const priyaRow = (await s.store.listEntries(s.move.id)).find(
+      (e) => e.kind === "split" && e.requested && !e.notified,
+    );
+    expect(priyaRow?.amountCents).toBe(3000);
 
     const paid = await s.elf.handle(ctx("paid", SAM, "roommate"));
     expect(paid.outbound).toEqual([expect.objectContaining({ spaceId: "sp_owner", toHandle: OWNER })]);
