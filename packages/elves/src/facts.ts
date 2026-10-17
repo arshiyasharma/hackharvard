@@ -177,17 +177,23 @@ function sideDate(side: string, now: Date, edge: "start" | "end"): string | null
  */
 export function parseDateRange(text: string, now: Date): { start: string | null; end: string | null } {
   const t = text.toLowerCase();
-  const idx = t.search(RANGE_SPLIT);
-  if (idx > 0) {
-    const sep = t.slice(idx).match(RANGE_SPLIT)?.[0] ?? "";
+  // Every connector is a candidate ("want to sublet … june 1 to aug 31" has two "to"s); the first one with a
+  // date on both sides wins, then one with only an end ("until aug 31"), else the first date in the text.
+  let endOnly: string | null = null;
+  for (const m of t.matchAll(new RegExp(RANGE_SPLIT.source, "g"))) {
+    const idx = m.index ?? 0;
+    if (idx === 0) continue;
     const left = t.slice(Math.max(0, idx - 40), idx);
-    const right = t.slice(idx + sep.length, idx + sep.length + 40);
+    const right = t.slice(idx + m[0].length, idx + m[0].length + 40);
     const start = sideDate(left, now, "start");
     const end = sideDate(right, now, "end");
     if (start && end && end >= start) return { start, end };
-    // "until aug 31" with nothing before the connector is an end date, not a start.
-    if (!start && end) return { start: null, end };
-    if (start) return { start, end: null };
+    if (!start && end && endOnly == null && /\b(?:until|till|through|thru)\b/.test(m[0])) endOnly = end;
+  }
+  if (endOnly && !parseDate(t, now)) return { start: null, end: endOnly };
+  if (endOnly) {
+    const only = parseDate(t, now);
+    return only === endOnly ? { start: null, end: endOnly } : { start: only, end: endOnly };
   }
   return { start: parseDate(t, now), end: null };
 }

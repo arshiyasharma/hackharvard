@@ -255,3 +255,15 @@ Every Elf follows the same routing, reply style and approval rules, so the owner
 5. Home Elf lease reading and the move-in checklist.
 6. Hunt and Move Map.
 
+## 8. Elf connections (Home ↔ Money, Home ↔ Move-day)
+
+The Home Elf is a sublet agent in both directions. Each direction ends in a hand-off to another Elf; these are the seams to build against, recorded here so they are not lost between branches.
+
+| Direction | Home does | Hands off to | Carrier today |
+| --- | --- | --- | --- |
+| Sublet out | Collects rent, dates, area, photos; writes the post (owner pastes it); applicants text the number with the ref; the Deal Engine (`sublet_out`) screens, holds the rent floor, asks the owner on low offers, offers viewing slots | **Money Elf**: sublease agreement and deposit/escrow once an applicant is agreed | `deal.agreed` + `ledger.hold` events; Money is still a canned stub, no contract exists |
+| Hunt | Finds listings by cost, area, dates; ranks, flags scams; "reach out to N" opens `find_sublet` (and, on the outreach branch, texts the lister from the dedicated line) | **Money Elf**: verify the landlord/lister before any deposit (identity, lease authority, payment outside escrow) | listing `scamFlags` + the engine's Scam Shield (`scam.flagged`); no landlord verification exists |
+| The gap | Hotel nights between move-out and move-in (Airbnb), storage query (SpareFoot behind a flag), luggage-gap task on the move-in checklist branch | **Move-day Elf**: consumes hotel, storage and flight plans with `pickup.scheduled` when it plans the day | nothing emits a gap plan yet; flights are not searched |
+
+Verified 2026-10-17 on branch `gavin` with the fake model and the script transport: the sublet_out applicant conversation above runs end to end (join by ref → floor held → owner asked/answered → agreed → viewing slots → `ledger.hold`). Gaps seen in the same run: an applicant asking to view *before* agreeing gets the availability line again; "how do I pay the deposit?" is not answered (Money's job); flights have no recipe.
+
