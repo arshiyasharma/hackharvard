@@ -7,6 +7,7 @@ import {
   type Item,
   type Listing,
   type Move,
+  type MoveinTask,
   type Participant,
 } from "@elves/shared";
 
@@ -52,6 +53,20 @@ export function housingLines(h: HousingView): string[] {
   return lines;
 }
 
+/** The move-in week checklist, so every Elf can answer "did we set up internet?". */
+export function moveinLines(tasks: MoveinTask[], move: Pick<Move, "moveInAt" | "toAddress">): string[] {
+  if (!tasks.length) return ["- (no checklist yet)"];
+  const open = tasks.filter((t) => t.status === "open");
+  const lines = [
+    `- Move-in ${move.moveInAt ?? "?"} at ${move.toAddress ?? "?"} · ${open.length} of ${tasks.length} tasks open`,
+  ];
+  for (const t of tasks) {
+    const state = t.status === "open" ? `due ${t.dueAt}${t.remindedAt ? " (reminded)" : ""}` : t.status;
+    lines.push(`- ${t.label}: ${state}${t.notes ? ` · ${t.notes}` : ""}`);
+  }
+  return lines;
+}
+
 export function itemLine(i: Item): string {
   const stage = i.listingApproved
     ? "listed"
@@ -83,7 +98,9 @@ const MODE_LABEL: Record<Deal["mode"], string> = {
 /** One line per deal for the owner's side: state, ask, line, who is talking, what is booked. */
 export function dealLine({ deal: d, parties }: DealView): string {
   const unit = d.unit === "month" ? "/mo" : "";
-  const live = parties.filter((p) => ["talking", "agreed", "awaiting_owner", "waitlisted"].includes(p.status));
+  const live = parties.filter((p) =>
+    ["talking", "agreed", "awaiting_owner", "waitlisted"].includes(p.status),
+  );
   const asking = parties.filter((p) => p.status === "awaiting_owner");
   const bits = [
     `${d.title} (${MODE_LABEL[d.mode]}, ref ${d.code})`,
@@ -92,7 +109,8 @@ export function dealLine({ deal: d, parties }: DealView): string {
     `line ${usd(d.limitCents)}${unit}`,
   ];
   if (live.length) bits.push(`${live.length} talking`);
-  if (asking.length) bits.push(`waiting on the owner about ${asking.map((p) => usd(p.lastOfferCents)).join(", ")}`);
+  if (asking.length)
+    bits.push(`waiting on the owner about ${asking.map((p) => usd(p.lastOfferCents)).join(", ")}`);
   if (d.slot) bits.push(`booked ${d.slot.label}`);
   if (d.agreedCents != null) bits.push(`agreed ${usd(d.agreedCents)}${unit}`);
   if (d.outcome) bits.push(d.outcome);
@@ -126,6 +144,7 @@ export function renderWorkingMemory(
   participants: Participant[] = [],
   housing: HousingView | null = null,
   deals: DealView[] = [],
+  movein: MoveinTask[] = [],
 ): string {
   const people = participants.filter((p) => p.role !== "owner").map((p) => `${p.role} ${p.handle}`);
   const crew = board
@@ -144,7 +163,7 @@ export function renderWorkingMemory(
 
 ## Items (name · floor · list · status)
 ${items.length ? items.map(itemLine).join("\n") : "- (none yet)"}
-${deals.length ? `\n## Deals (state · ask · owner's line, never told to a counterparty)\n${deals.map(dealLine).join("\n")}\n` : ""}${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}
+${deals.length ? `\n## Deals (state · ask · owner's line, never told to a counterparty)\n${deals.map(dealLine).join("\n")}\n` : ""}${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}${movein.length ? `\n## Move-in week\n${moveinLines(movein, move).join("\n")}\n` : ""}
 ## Crew
 ${crew.length ? crew.join("\n") : "- everyone standing by"}`;
 }

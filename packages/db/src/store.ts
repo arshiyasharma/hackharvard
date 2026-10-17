@@ -12,7 +12,11 @@ import {
   type LeaseReading,
   type Listing,
   listingDefaults,
+  MOVEIN_TASK_KEYS,
   type Move,
+  type MoveinTask,
+  type MoveinTaskInput,
+  moveinTaskDefaults,
   newId,
   type Participant,
   type SendRecord,
@@ -23,6 +27,8 @@ import {
 import type { SQL } from "bun";
 
 type Row = Record<string, unknown>;
+
+const MOVEIN_KEY_ORDER = [...MOVEIN_TASK_KEYS];
 
 const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v));
 const str = (v: unknown): string | null => (v == null ? null : String(v));
@@ -112,6 +118,18 @@ function leaseRow(r: Row): LeaseReading {
   };
 }
 
+function moveinTaskRow(r: Row): MoveinTask {
+  return {
+    moveId: r.move_id as string,
+    key: r.key as MoveinTask["key"],
+    label: r.label as string,
+    dueAt: r.due_at as string,
+    status: (r.status as MoveinTask["status"]) ?? "open",
+    notes: str(r.notes),
+    remindedAt: r.reminded_at == null ? null : iso(r.reminded_at),
+    updatedAt: iso(r.updated_at),
+  };
+}
 function subletPostRow(r: Row): SubletPost {
   return {
     moveId: r.move_id as string,
@@ -429,6 +447,35 @@ export class PostgresStore implements Store {
         title = excluded.title, body = excluded.body, status = excluded.status, updated_at = now()
       returning *`;
     return subletPostRow(rows[0] as Row);
+  }
+
+  async listMoveinTasks(moveId: string) {
+    const rows = await this.sql`
+      select * from movein_tasks where move_id = ${moveId}
+      order by due_at, array_position(${MOVEIN_KEY_ORDER}::text[], key)`;
+    return rows.map((r: Row) => moveinTaskRow(r));
+  }
+  async upsertMoveinTask(input: MoveinTaskInput) {
+    const prev = (
+      await this.sql`select * from movein_tasks where move_id = ${input.moveId} and key = ${input.key}`
+    )[0];
+    const task = { ...moveinTaskDefaults(), ...(prev ? moveinTaskRow(prev) : {}), ...input };
+    const rows = await this.sql`
+      insert into movein_tasks (move_id, key, label, due_at, status, notes, reminded_at)
+      values (${task.moveId}, ${task.key}, ${task.label}, ${task.dueAt}, ${task.status}, ${task.notes},
+        ${task.remindedAt})
+      on conflict (move_id, key) do update set
+        label = excluded.label, due_at = excluded.due_at, status = excluded.status, notes = excluded.notes,
+        reminded_at = excluded.reminded_at, updated_at = now()
+      returning *`;
+    return moveinTaskRow(rows[0] as Row);
+  }
+  async listDueMoveinTasks(through: string) {
+    const rows = await this.sql`
+      select * from movein_tasks
+      where status = 'open' and reminded_at is null and due_at <= ${through}
+      order by due_at, array_position(${MOVEIN_KEY_ORDER}::text[], key)`;
+    return rows.map((r: Row) => moveinTaskRow(r));
   }
 
   async getSearch(moveId: string) {

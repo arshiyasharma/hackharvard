@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allElves, keywordRoute, route, spaceOwnerKey } from "@elves/elves";
+import { allElves, keywordRoute, moveinAskKey, route, spaceOwnerKey } from "@elves/elves";
 import { FakeLLM } from "@elves/llm";
 import type { InboundMessage } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
@@ -142,6 +142,34 @@ describe("route()", () => {
     expect(await route(photo(), d, opts)).toMatchObject({ elf: "home", via: "followup" });
     await fresh.saveSubletPost({ ...subletPostDefaults(move.id), status: "approved" });
     expect(await route(photo(), d, opts)).toMatchObject({ elf: "stuff", via: "photo" });
+  });
+  test("the answer to Home's move-in question, and checklist follow-ups, go back to Home", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    const opts = { firstContact: false, moveId: move.id };
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "home");
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.setCursor(moveinAskKey(move.id), "date");
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.setCursor(moveinAskKey(move.id), "address");
+    expect(await route(batchOf("12 oak st, allston"), d, opts)).toMatchObject({
+      elf: "home",
+      via: "followup",
+    });
+    await fresh.setCursor(moveinAskKey(move.id), "");
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+    });
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("got the keys"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "stuff");
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "crew_lead" });
   });
   test("a photo goes to the Stuff Elf unless it is first contact", async () => {
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({

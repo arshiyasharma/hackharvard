@@ -5,6 +5,7 @@ import type { ElfName, Role, Store } from "@elves/shared";
 import { batchText, type Elf, hasDocuments, hasPhotos } from "./contract.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
+import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
 import { parsePriceCents } from "./intake.ts";
 
 export type RouteVia =
@@ -124,6 +125,18 @@ export async function route(
     const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
     const hasPicks = !isHuntFollowUp(text) || (await deps.store.listListings(opts.moveId)).length > 0;
     if (lastElf === "home" && hasPicks) return { elf: "home", via: "followup", confidence: 0.95 };
+  }
+  // A date or address the Home Elf just asked for, or "done with internet" on its checklist, goes back to Home.
+  if (opts.moveId && deps.elves.some((e) => e.name === "home") && text.trim()) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const pending = await deps.store.getCursor(moveinAskKey(opts.moveId));
+      const onList =
+        !pending &&
+        parseMoveinFollowUp(text) != null &&
+        (await deps.store.listMoveinTasks(opts.moveId)).length > 0;
+      if (pending || onList) return { elf: "home", via: "followup", confidence: 0.95 };
+    }
   }
   // Room photos while Home is writing the owner's sublet post are for the post, not for sale.
   if (opts.moveId && hasPhotos(batch) && deps.elves.some((e) => e.name === "home")) {

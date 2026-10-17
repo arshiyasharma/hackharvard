@@ -41,6 +41,7 @@ export {
   type HousingView,
   housingLines,
   itemLine,
+  moveinLines,
   renderPublicMemory,
   renderWorkingMemory,
 } from "./working.ts";
@@ -228,7 +229,7 @@ export class MoveMemory {
   /** Everything an Elf should see before it answers, within the token budget. */
   async context(input: ContextInput): Promise<ConversationContext> {
     const cfg = this.config;
-    const [thread, recent, ranked, notes, move, items, board, participants, search, listings, deals] =
+    const [thread, recent, ranked, notes, move, items, board, participants, search, listings, deals, movein] =
       await Promise.all([
         this.backend.getThread(input.threadId),
         this.backend.recentMessages(input.threadId, cfg.lastMessages),
@@ -241,6 +242,7 @@ export class MoveMemory {
         this.store.getSearch(input.moveId),
         this.store.listListings(input.moveId),
         this.dealViews(input.moveId),
+        this.store.listMoveinTasks(input.moveId),
       ]);
     const role = input.role ?? thread?.role ?? "owner";
 
@@ -277,7 +279,7 @@ export class MoveMemory {
     const workingMemory = move
       ? clipToTokens(
           crewSide
-            ? renderWorkingMemory(move, items, board, participants, housing, deals)
+            ? renderWorkingMemory(move, items, board, participants, housing, deals, movein)
             : renderPublicMemory(items, deals),
           cfg.budget.working,
         )

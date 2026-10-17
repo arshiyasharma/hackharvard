@@ -23,7 +23,7 @@ if (pgUrl) {
       return {
         store: new PostgresStore(db),
         cleanup: async () => {
-          // listings and housing_searches cascade from moves
+          // listings, housing_searches and movein_tasks cascade from moves
           await db`delete from moves where owner_handle like ${`${run}:%`}`;
           await db`delete from events where move_id is null and trace_id = ${run}`;
           await db`delete from thread_owners where message_id like ${`${run}:%`}`;
@@ -372,6 +372,71 @@ describe.each(backends)("Store contract (%s)", (_name, open) => {
     });
     expect(second.attachmentId).toBe("att_lease2");
     expect((await store.getLeaseReading(move.id))?.reading).toEqual({ sublet: "prohibited" });
+  });
+
+  test("move-in tasks are one row per (move, key), keep status on re-upsert, and list due ones once", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner11"),
+      ownerSpaceId: handle("spc11"),
+      platform: "imessage",
+    });
+    expect(await store.listMoveinTasks(move.id)).toEqual([]);
+    const keys = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "keys",
+      label: "Keys",
+      dueAt: "2026-06-01",
+    });
+    expect(keys).toMatchObject({ status: "open", notes: null, remindedAt: null });
+    expect(keys.updatedAt).toBeTruthy();
+    await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+    });
+    await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "electric",
+      label: "Electric",
+      dueAt: "2026-05-22",
+    });
+    // checklist order: by due date, then the fixed key order
+    expect((await store.listMoveinTasks(move.id)).map((t) => t.key)).toEqual([
+      "electric",
+      "internet",
+      "keys",
+    ]);
+
+    const done = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+      status: "done",
+      notes: "Xfinity, installed",
+    });
+    expect(done).toMatchObject({ status: "done", notes: "Xfinity, installed" });
+    // a re-upsert with a new date keeps status and notes
+    const moved = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-29",
+    });
+    expect(moved).toMatchObject({ dueAt: "2026-05-29", status: "done", notes: "Xfinity, installed" });
+    expect((await store.listMoveinTasks(move.id)).length).toBe(3);
+
+    // due: open, not yet reminded, on or before the date; this move's rows only
+    const due = (await store.listDueMoveinTasks("2026-05-24")).filter((t) => t.moveId === move.id);
+    expect(due.map((t) => t.key)).toEqual(["electric"]);
+    await store.upsertMoveinTask({ ...due[0]!, remindedAt: "2026-05-20T09:00:00.000Z" });
+    expect((await store.listDueMoveinTasks("2026-05-24")).filter((t) => t.moveId === move.id)).toEqual([]);
+    expect((await store.listMoveinTasks(move.id)).find((t) => t.key === "electric")?.remindedAt).toBe(
+      "2026-05-20T09:00:00.000Z",
+    );
+    const all = (await store.listDueMoveinTasks("2026-06-01")).filter((t) => t.moveId === move.id);
+    expect(all.map((t) => t.key)).toEqual(["keys"]);
   });
 
   test("listMoves returns every move in creation order", async () => {

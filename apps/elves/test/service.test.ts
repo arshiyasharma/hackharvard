@@ -567,6 +567,41 @@ describe("Deal Engine: buyers text the listing's number", () => {
     t.stop();
   });
 
+  test("move-in reminders ride the sweep: one text per due task, from the Home Elf, once", async () => {
+    const now = new Date("2026-05-20T14:00:00Z");
+    const t = boot(null, { now: () => now });
+    await say(t, owner, "hi, moving soon");
+    const move = (await t.store.listMoves())[0]!;
+    await t.store.updateMove(move.id, { moveInAt: "2026-06-01", toAddress: "45 Harvard Ave" });
+    const list = await say(t, owner, "set up internet at the new place");
+    expect(list[0]?.text).toContain("Internet: order by May 22");
+    expect((await t.store.listMoveinTasks(move.id)).length).toBe(7);
+
+    const before = t.transport.sent.length;
+    expect(await t.service.sweep()).toBe(3);
+    const sent = t.transport.sent.slice(before);
+    expect(sent.every((s) => s.spaceId === t.transport.spaceFor(owner))).toBe(true);
+    expect(sent.map((s) => s.text.split(" is due")[0])).toEqual([
+      "Move-in reminder: Electric",
+      "Move-in reminder: Gas",
+      "Move-in reminder: Internet",
+    ]);
+    expect(await t.service.sweep()).toBe(0);
+    expect((await t.store.getBoard(move.id)).find((b) => b.elf === "home")?.lastUpdate).toBe(
+      "Move-in reminder: Internet is due May 22 (order before move-in)",
+    );
+    expect((await t.store.listEvents(move.id)).filter((e) => e.type === "movein.reminded").length).toBe(3);
+    // every Elf can see it
+    const ctx = await t.memory!.context({
+      threadId: t.transport.spaceFor(owner),
+      moveId: move.id,
+      role: "owner",
+    });
+    expect(ctx.workingMemory).toContain("## Move-in week");
+    expect(ctx.workingMemory).toContain("- Internet: due 2026-05-22 (reminded)");
+    t.stop();
+  });
+
   test("a thumbs-up on the owner's question counts as yes", async () => {
     const t = boot(null);
     const { deal } = await listChair(t);
