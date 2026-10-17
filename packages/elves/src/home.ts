@@ -1,5 +1,6 @@
 import { dedupeResults, isHardFlagged, type ListingSource, type ScamFlag, scamFlags } from "@elves/listings";
 import type { HousingSearch, Listing, ListingKind, ListingQuery, SiteResult } from "@elves/shared";
+import { openDeal } from "@elves/engine";
 import {
   batchText,
   type Elf,
@@ -18,6 +19,7 @@ import {
   type MissingRequirement,
   mergeSearch,
   missingRequirement,
+  parseBudgetCents,
   queriesFor,
   searchKey,
 } from "./home-facts.ts";
@@ -124,6 +126,8 @@ export const homeElf: Elf = {
     if (decided) return decided;
     const text = batchText(ctx.batch);
     const parent = lastMessageId(ctx.batch);
+    const subletOut = await listOwnRoom(ctx, text, parent);
+    if (subletOut) return subletOut;
     const now = ctx.now();
     const saved = await ctx.store.getSearch(ctx.move.id);
     const listings = await ctx.store.listListings(ctx.move.id);
@@ -383,6 +387,44 @@ function forwardedResults(search: HousingSearch, urls: string[]): SiteResult[] {
   }));
 }
 
+async function listOwnRoom(ctx: ElfContext, text: string, parent: string): Promise<ElfResult | null> {
+  if (!/\b(sublet|sublease)\b/i.test(text) || !/\b(my room|my place|my apartment|my lease)\b/i.test(text))
+    return null;
+  const cents = parseBudgetCents(text);
+  if (cents == null)
+    return {
+      replies: [
+        {
+          text: "What monthly rent should I list your room at? I won't post it until I have a number.",
+          parentMessageId: parent,
+        },
+      ],
+      boardPatch: { status: "waiting", currentTask: "Subletting your room", lastUpdate: "Need a rent" },
+    };
+  const deal = await openDeal(ctx.store, {
+    moveId: ctx.move.id,
+    mode: "sublet_out",
+    subjectId: null,
+    title: "room",
+    askCents: cents,
+    limitCents: cents,
+  });
+  return {
+    replies: [
+      {
+        text: `Listed your room at ${fmtPrice(cents, "month")} (ref ${deal.code}). Applicants text this number and I'll handle them. I won't go under that rent.`,
+        parentMessageId: parent,
+      },
+    ],
+    events: [{ type: "deal.opened", payload: { dealId: deal.id, mode: "sublet_out", code: deal.code, cents } }],
+    boardPatch: {
+      status: "working",
+      currentTask: `Subletting your room (ref ${deal.code})`,
+      lastUpdate: `Listed at ${fmtPrice(cents, "month")}`,
+    },
+  };
+}
+
 /** The message the owner sends. Home drafts it and does not contact the lister. */
 function draftOutreach(search: HousingSearch, listing: Listing): string {
   const when =
@@ -609,6 +651,28 @@ async function followUp(
     return reply(lines.join("\n"), {
       events: [{ type: "housing.listing_rejected", payload: { listingId: target.id, rank: fu.n } }],
     });
+  }
+  if (fu.kind === "reach") {
+    await ctx.store.upsertListing({ ...target, status: "shortlisted" });
+    const cents = search.budgetMaxCents ?? target.priceCents;
+    const deal = await openDeal(ctx.store, {
+      moveId: ctx.move.id,
+      mode: "find_sublet",
+      subjectId: null,
+      title: target.title,
+      askCents: target.priceCents,
+      limitCents: cents,
+    });
+    return reply(
+      `${draftOutreach(search, target)}\nRef ${deal.code}. When they text this number with that ref, I'll negotiate${cents != null ? ` up to ${fmtPrice(cents, "month")}` : ""}. I still won't message them myself.`,
+      {
+        events: [
+          { type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } },
+          { type: "deal.opened", payload: { dealId: deal.id, mode: "find_sublet", code: deal.code } },
+        ],
+        boardPatch: { status: "working", lastUpdate: `Sublet: ${target.title} (ref ${deal.code})` },
+      },
+    );
   }
   await ctx.store.upsertListing({ ...target, status: "shortlisted" });
   return reply(draftOutreach(search, target), {

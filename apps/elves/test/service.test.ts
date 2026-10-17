@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { moveOutInstant } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
 import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
@@ -9,6 +10,24 @@ import { createService } from "../src/service.ts";
 const quiet = createLogger("test", "error");
 const owner = "+14255269066";
 
+/** A move-out date whose Boston midnight is inside the next `hours` hours (1–24). */
+function moveOutWithin(hours: number): string {
+  for (let delta = 0; delta <= 2; delta++) {
+    const day = new Date(Date.now() + delta * 86_400_000);
+    const iso = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(day);
+    const instant = moveOutInstant(iso);
+    if (!instant) continue;
+    const left = (instant.getTime() - Date.now()) / 3_600_000;
+    if (left > 0 && left <= hours) return iso;
+  }
+  throw new Error(`no move-out inside ${hours}h`);
+}
+
 /** A fresh service; pass the same store + backend twice to simulate a restart against durable storage. */
 function boot(
   publicUrl: string | null = "https://elves.example",
@@ -17,6 +36,7 @@ function boot(
     backend?: MemoryBackend | null;
     idPrefix?: string;
     listings?: ListingSource;
+    now?: () => Date;
   } = {},
 ) {
   const transport = new ScriptTransport(undefined, undefined, durable.idPrefix);
@@ -34,6 +54,7 @@ function boot(
     debounceMs: 40,
     publicUrl,
     logger: quiet,
+    now: durable.now,
   });
   const ctrl = new AbortController();
   void service.run(ctrl.signal);
@@ -507,12 +528,35 @@ describe("Deal Engine: buyers text the listing's number", () => {
     t.stop();
   });
 
-  test("Last Call relists an unsold item free 48h before move-out, once", async () => {
+  test("Last Call drops the price 48h out, and the owner can hold it", async () => {
+    const now = new Date("2026-10-15T14:00:00Z");
+    const t = boot(null, { now: () => now });
+    const { move, deal } = await listChair(t);
+    await say(t, buyerA, `${deal.code} would you take 10`);
+    await t.store.updateMove(move.id, { moveOutAt: "2026-10-17" });
+    const before = t.transport.sent.length;
+    expect(await t.service.sweep()).toBe(2);
+    const sent = t.transport.sent.slice(before);
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("dropped to $21");
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("$21");
+    expect((await t.store.getDeal(deal.id))?.lastCallStage).toBe("dropped");
+    expect(await t.service.sweep()).toBe(0);
+    t.stop();
+
+    const held = boot(null, { now: () => now });
+    const listed = await listChair(held);
+    await say(held, owner, "keep the armchair");
+    await held.store.updateMove(listed.move.id, { moveOutAt: "2026-10-17" });
+    expect(await held.service.sweep()).toBe(0);
+    expect((await held.store.getDeal(listed.deal.id))?.lastCallOptOut).toBe(true);
+    held.stop();
+  });
+
+  test("Last Call relists an unsold item free inside 24h of move-out, once", async () => {
     const t = boot(null);
     const { move, deal } = await listChair(t);
     await say(t, buyerA, `${deal.code} would you take 10`);
-    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-    await t.store.updateMove(move.id, { moveOutAt: tomorrow });
+    await t.store.updateMove(move.id, { moveOutAt: moveOutWithin(24) });
     const before = t.transport.sent.length;
     expect(await t.service.sweep()).toBe(2);
     const sent = t.transport.sent.slice(before);
@@ -520,6 +564,58 @@ describe("Deal Engine: buyers text the listing's number", () => {
     expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("free now");
     expect((await t.store.getDeal(deal.id))?.state).toBe("relisted");
     expect(await t.service.sweep()).toBe(0);
+    t.stop();
+  });
+
+  test("a thumbs-up on the owner's question counts as yes", async () => {
+    const t = boot(null);
+    const { deal } = await listChair(t);
+    await say(t, buyerA, `${deal.code} would you take 20?`);
+    await say(t, buyerA, "20 is my final offer");
+    const ask = [...t.transport.sent]
+      .reverse()
+      .find((s) => s.spaceId === t.transport.spaceFor(owner) && s.text.includes("$20"));
+    expect(ask).toBeTruthy();
+    const out = await say(t, owner, "", {
+      reaction: { emoji: "👍", action: "add" },
+      parentMessageId: ask!.id,
+    });
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("said yes");
+    t.stop();
+  });
+
+  test("buy waits for yes, then opens a deal at the owner's ceiling", async () => {
+    const t = boot(null);
+    await listChair(t);
+    const asked = await say(t, owner, "buy this https://craigslist.org/desk for $40");
+    expect(asked[0]?.text).toContain("Say yes");
+    expect(await t.store.listDeals((await t.store.listMoves())[0]!.id)).toHaveLength(1);
+    const out = await say(t, owner, "yes");
+    expect(out[0]?.text).toContain("Ceiling set at $40");
+    const deals = await t.store.listDeals((await t.store.listMoves())[0]!.id);
+    expect(deals.some((d) => d.mode === "buy_item" && d.limitCents === 4000)).toBe(true);
+    t.stop();
+  });
+
+  test("donate waits for yes, then marks the item donated", async () => {
+    const t = boot(null);
+    const { move, deal } = await listChair(t);
+    const asked = await say(t, owner, "donate the armchair");
+    expect(asked[0]?.text).toContain("Say yes");
+    expect((await t.store.getDeal(deal.id))?.state).toBe("listed");
+    await say(t, owner, "yes");
+    expect((await t.store.getDeal(deal.id))?.state).toBe("donated");
+    expect((await t.store.listItems(move.id))[0]?.outcome).toBe("donated");
+    t.stop();
+  });
+
+  test("subletting the owner's own room opens a sublet deal", async () => {
+    const t = boot(null);
+    const { move } = await listChair(t);
+    const out = await say(t, owner, "I want to sublet my room for $1500");
+    expect(out[0]?.text).toContain("Listed your room");
+    const deals = await t.store.listDeals(move.id);
+    expect(deals.some((d) => d.mode === "sublet_out" && d.limitCents === 150000)).toBe(true);
     t.stop();
   });
 });

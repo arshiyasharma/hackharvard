@@ -1,7 +1,7 @@
 import type { Deal, DealMode, DealParty, DealState, Move, Participant, Slot, Store } from "@elves/shared";
 import { DEFAULT_TZ, isFree, moveOutInstant, offerSlots, type Window } from "./calendar.ts";
 import { readCounterparty, readOwnerDecision } from "./intent.ts";
-import { assertTransition, isOpen } from "./machine.ts";
+import { assertTransition, canTransition, isOpen } from "./machine.ts";
 import { decide, type PartyPosition, type Terms } from "./negotiate.ts";
 import { type ModePolicy, policyFor } from "./policy.ts";
 import { shield } from "./shield.ts";
@@ -20,7 +20,8 @@ export function codesIn(text: string): string[] {
   return [...text.toUpperCase().matchAll(CODE_RE)].map((m) => m[1]!);
 }
 
-const fmt = (cents: number) => `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+const fmt = (cents: number) =>
+  `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 export function price(cents: number | null, unit: "each" | "month" = "each"): string {
   if (cents == null) return "make an offer";
   if (cents === 0) return "free";
@@ -101,7 +102,9 @@ export interface Attribution {
   via: "code" | "match";
 }
 
-const STOP = new Set("the and for with from this that your have just still want like does available".split(" "));
+const STOP = new Set(
+  "the and for with from this that your have just still want like does available".split(" "),
+);
 function words(text: string): Set<string> {
   return new Set((text.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((w) => !STOP.has(w)));
 }
@@ -131,7 +134,8 @@ export async function attributeInbound(
     if (!move) continue;
     const owners = (await store.listParticipants(move.id)).filter((p) => p.role === "owner");
     if (!owners.some((o) => o.agentUserId === msg.agentId)) continue;
-    if ([...words(deal.title)].some((w) => said.has(w) || said.has(`${w}s`))) hits.push({ deal, move, via: "match" });
+    if ([...words(deal.title)].some((w) => said.has(w) || said.has(`${w}s`)))
+      hits.push({ deal, move, via: "match" });
   }
   return hits.length === 1 ? hits[0]! : null;
 }
@@ -187,9 +191,15 @@ export async function partyForText(
       return (await joinDeal(store, deal, { spaceId, ...who })).party;
     }
   }
+  const said = words(text);
   const withDeals = await Promise.all(parties.map(async (p) => ({ p, d: await store.getDeal(p.dealId) })));
   const open = withDeals.filter((x) => x.d && isOpen(x.d.state));
   const pool = open.length ? open : withDeals;
+  const named = pool.filter(
+    (x) => x.d && [...words(x.d.title)].some((w) => said.has(w) || said.has(`${w}s`)),
+  );
+  if (named.length === 1) return named[0]!.p;
+  if (named.length > 1) return null;
   pool.sort((a, b) => b.p.updatedAt.localeCompare(a.p.updatedAt));
   return pool[0]?.p ?? null;
 }
@@ -276,7 +286,11 @@ async function agree(
       text: slots.length
         ? `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} ${cap(p.meetNoun)} times: ${slotList(slots)}. Which works?`
         : `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} When could you do the ${p.meetNoun}?`,
-      facts: publicFacts(deal, p, { agreedPrice: at, slots: slots.map((s) => s.label), lead: lead.trim() || null }),
+      facts: publicFacts(deal, p, {
+        agreedPrice: at,
+        slots: slots.map((s) => s.label),
+        lead: lead.trim() || null,
+      }),
     },
     {
       to: "owner",
@@ -290,7 +304,15 @@ async function agree(
     deal,
     party,
     messages,
-    events: [{ type: "deal.agreed", payload: { dealId: deal.id, partyId: party.id, cents, slots: slots.map((s) => s.id) } }],
+    events: [
+      {
+        type: "deal.agreed",
+        payload: { dealId: deal.id, partyId: party.id, cents, slots: slots.map((s) => s.id) },
+      },
+      ...(cents > 0
+        ? [{ type: "ledger.hold", payload: { dealId: deal.id, partyId: party.id, cents } }]
+        : []),
+    ],
   };
 }
 
@@ -301,15 +323,21 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * queue: negotiating while others are still talking, else listed (relisted when it is already free). Waitlisted
  * parties hear it is available again.
  */
-async function release(store: Store, deal: Deal, leaving: DealParty): Promise<{ deal: Deal; messages: EngineMessage[] }> {
+async function release(
+  store: Store,
+  deal: Deal,
+  leaving: DealParty,
+): Promise<{ deal: Deal; messages: EngineMessage[] }> {
   const p = policyFor(deal.mode);
   const others = (await store.listDealParties(deal.id)).filter((x) => x.id !== leaving.id);
   const waiting = others.filter((x) => x.status === "waitlisted");
   const active = others.filter((x) => ["talking", "agreed", "awaiting_owner"].includes(x.status));
-  const heldByOther = deal.state === "scheduled" && deal.winnerPartyId != null && deal.winnerPartyId !== leaving.id;
+  const heldByOther =
+    deal.state === "scheduled" && deal.winnerPartyId != null && deal.winnerPartyId !== leaving.id;
   const messages: EngineMessage[] = [];
   if (heldByOther) return { deal, messages };
-  const back: DealState = active.length || waiting.length ? "negotiating" : deal.askCents === 0 ? "relisted" : "listed";
+  const back: DealState =
+    active.length || waiting.length ? "negotiating" : deal.askCents === 0 ? "relisted" : "listed";
   if (deal.state !== back) deal = await setState(store, deal, back);
   if (deal.winnerPartyId === leaving.id || deal.slot)
     deal = await store.upsertDeal({ ...deal, winnerPartyId: null, slot: null, agreedCents: null });
@@ -353,8 +381,15 @@ export async function counterpartyTurn(input: {
   if (hits.length) {
     const severe = hits.some((h) => h.severe);
     const flags = [...new Set([...party.scamFlags, ...hits.map((h) => h.flag)])];
-    party = await store.upsertDealParty({ ...party, scamFlags: flags, status: severe ? "blocked" : party.status });
-    events.push({ type: "scam.flagged", payload: { dealId: deal.id, partyId: party.id, flags: hits.map((h) => h.flag), severe } });
+    party = await store.upsertDealParty({
+      ...party,
+      scamFlags: flags,
+      status: severe ? "blocked" : party.status,
+    });
+    events.push({
+      type: "scam.flagged",
+      payload: { dealId: deal.id, partyId: party.id, flags: hits.map((h) => h.flag), severe },
+    });
     if (severe) {
       const r = await release(store, deal, party);
       deal = r.deal;
@@ -376,7 +411,10 @@ export async function counterpartyTurn(input: {
             dealId: deal.id,
             kind: "escrow_only",
             text: `All payments go through the Elves escrow link I send at the ${p.meetNoun}; no Venmo, Zelle or cash apps. Still interested at ${price(party.lastCounterCents ?? deal.askCents, p.unit)}?`,
-            facts: publicFacts(deal, p, { rule: "escrow only", price: price(party.lastCounterCents ?? deal.askCents, p.unit) }),
+            facts: publicFacts(deal, p, {
+              rule: "escrow only",
+              price: price(party.lastCounterCents ?? deal.askCents, p.unit),
+            }),
           },
       {
         to: "owner",
@@ -404,7 +442,8 @@ export async function counterpartyTurn(input: {
   }
 
   if (deal.state === "scheduled" && deal.winnerPartyId && deal.winnerPartyId !== party.id) {
-    if (party.status !== "waitlisted") party = await store.upsertDealParty({ ...party, status: "waitlisted" });
+    if (party.status !== "waitlisted")
+      party = await store.upsertDealParty({ ...party, status: "waitlisted" });
     messages.push({
       to: "counterparty",
       partyId: party.id,
@@ -428,12 +467,34 @@ export async function counterpartyTurn(input: {
 
   switch (intent.kind) {
     case "walk": {
-      party = await store.upsertDealParty({ ...party, status: "walked", offeredSlots: [], slot: null, ownerAskMessageId: null });
+      const refundCents =
+        (party.agreedCents ?? 0) > 0 && (party.status === "agreed" || party.status === "scheduled")
+          ? (party.agreedCents ?? 0)
+          : 0;
+      party = await store.upsertDealParty({
+        ...party,
+        status: "walked",
+        offeredSlots: [],
+        slot: null,
+        ownerAskMessageId: null,
+      });
+      if (refundCents > 0)
+        events.push({
+          type: "ledger.refund",
+          payload: { dealId: deal.id, partyId: party.id, cents: refundCents },
+        });
       const r = await release(store, deal, party);
       deal = r.deal;
       events.push({ type: "deal.party_walked", payload: { dealId: deal.id, partyId: party.id } });
       messages.push(
-        { to: "counterparty", partyId: party.id, dealId: deal.id, kind: "walked", text: "No problem, thanks for letting me know.", facts: {} },
+        {
+          to: "counterparty",
+          partyId: party.id,
+          dealId: deal.id,
+          kind: "walked",
+          text: "No problem, thanks for letting me know.",
+          facts: {},
+        },
         {
           to: "owner",
           dealId: deal.id,
@@ -450,12 +511,26 @@ export async function counterpartyTurn(input: {
       const cents = party.agreedCents ?? deal.agreedCents ?? 0;
       const outcome = cents > 0 ? p.outcomeSold : p.outcomeFree;
       party = await store.upsertDealParty({ ...party, status: "handed_off" });
-      deal = await setState(store, deal, "handed_off", { agreedCents: cents, outcome, winnerPartyId: party.id });
+      deal = await setState(store, deal, "handed_off", {
+        agreedCents: cents,
+        outcome,
+        winnerPartyId: party.id,
+      });
       await tagSubject(store, deal, outcome);
-      events.push({ type: "deal.handed_off", payload: { dealId: deal.id, partyId: party.id, cents, outcome } });
-      if (cents > 0) events.push({ type: "escrow.requested", payload: { dealId: deal.id, partyId: party.id, cents } });
+      events.push({
+        type: "deal.handed_off",
+        payload: { dealId: deal.id, partyId: party.id, cents, outcome },
+      });
+      if (cents > 0) {
+        events.push({ type: "escrow.requested", payload: { dealId: deal.id, partyId: party.id, cents } });
+        events.push({ type: "ledger.release", payload: { dealId: deal.id, partyId: party.id, cents } });
+      }
       for (const other of await store.listDealParties(deal.id)) {
-        if (other.id === party.id || !["talking", "agreed", "awaiting_owner", "waitlisted"].includes(other.status)) continue;
+        if (
+          other.id === party.id ||
+          !["talking", "agreed", "awaiting_owner", "waitlisted"].includes(other.status)
+        )
+          continue;
         await store.upsertDealParty({ ...other, status: "walked" });
         messages.push({
           to: "counterparty",
@@ -472,7 +547,10 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "handed_off",
-          text: cents > 0 ? `Enjoy the ${deal.title}! Payment (${price(cents)}) runs through Elves escrow.` : `Enjoy the ${deal.title}!`,
+          text:
+            cents > 0
+              ? `Enjoy the ${deal.title}! Payment (${price(cents)}) runs through Elves escrow.`
+              : `Enjoy the ${deal.title}!`,
           facts: { title: deal.title, price: price(cents) },
         },
         {
@@ -490,7 +568,12 @@ export async function counterpartyTurn(input: {
     }
 
     case "reschedule": {
-      party = await store.upsertDealParty({ ...party, status: "agreed", slot: null, noShows: party.noShows + 1 });
+      party = await store.upsertDealParty({
+        ...party,
+        status: "agreed",
+        slot: null,
+        noShows: party.noShows + 1,
+      });
       deal = await setState(store, deal, "negotiating", { winnerPartyId: null, slot: null });
       const slots = await freshSlots(store, move, clock, party.id);
       party = await store.upsertDealParty({ ...party, offeredSlots: slots });
@@ -501,7 +584,9 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "reschedule",
-          text: slots.length ? `No worries. Other times: ${slotList(slots)}. Which works?` : "No worries. When could you come instead?",
+          text: slots.length
+            ? `No worries. Other times: ${slotList(slots)}. Which works?`
+            : "No worries. When could you come instead?",
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         },
         {
@@ -525,16 +610,42 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "slot_taken",
-          text: slots.length ? `That one just got taken. How about ${slotList(slots)}?` : "That one just got taken. When else could you come?",
+          text: slots.length
+            ? `That one just got taken. How about ${slotList(slots)}?`
+            : "That one just got taken. When else could you come?",
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         });
         return done();
       }
       const cents = party.agreedCents ?? standing ?? 0;
-      party = await store.upsertDealParty({ ...party, status: "scheduled", slot: intent.slot, offeredSlots: [] });
-      deal = await setState(store, deal, "scheduled", { winnerPartyId: party.id, slot: intent.slot, agreedCents: cents });
-      events.push({ type: "deal.scheduled", payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents } });
-      const where = move.fromAddress ? ` Address: ${move.fromAddress}.` : " I'll text the address before then.";
+      party = await store.upsertDealParty({
+        ...party,
+        status: "scheduled",
+        slot: intent.slot,
+        offeredSlots: [],
+      });
+      deal = await setState(store, deal, "scheduled", {
+        winnerPartyId: party.id,
+        slot: intent.slot,
+        agreedCents: cents,
+      });
+      events.push({
+        type: "deal.scheduled",
+        payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents },
+      });
+      events.push({
+        type: "pickup.scheduled",
+        payload: {
+          dealId: deal.id,
+          partyId: party.id,
+          subjectId: deal.subjectId,
+          title: deal.title,
+          slot: intent.slot,
+        },
+      });
+      const where = move.fromAddress
+        ? ` Address: ${move.fromAddress}.`
+        : " I'll text the address before then.";
       messages.push(
         {
           to: "counterparty",
@@ -542,13 +653,17 @@ export async function counterpartyTurn(input: {
           dealId: deal.id,
           kind: "booked",
           text: `Booked: ${intent.slot.label}.${where}${cents > 0 ? ` ${price(cents, p.unit)}, paid through Elves escrow.` : ""}`,
-          facts: publicFacts(deal, p, { slot: intent.slot.label, address: move.fromAddress, agreedPrice: price(cents, p.unit) }),
+          facts: publicFacts(deal, p, {
+            slot: intent.slot.label,
+            address: move.fromAddress,
+            agreedPrice: price(cents, p.unit),
+          }),
         },
         {
           to: "owner",
           dealId: deal.id,
           kind: "booked",
-          text: `Booked: ${who(p)} picks up the ${deal.title} ${intent.slot.label} for ${price(cents, p.unit)}.`,
+          text: `Booked: ${who(p)} picks up the ${deal.title} ${intent.slot.label} for ${price(cents, p.unit)}. It comes off the truck estimate.`,
           facts: { title: deal.title, slot: intent.slot.label, agreedPrice: price(cents, p.unit) },
         },
       );
@@ -567,7 +682,15 @@ export async function counterpartyTurn(input: {
     case "offer": {
       const d = decide(p, terms(deal), position(party), intent.cents, { final: intent.final });
       if (d.kind === "accept") {
-        const r = await agree(store, move, deal, { ...party, lastOfferCents: intent.cents }, d.cents, clock, "");
+        const r = await agree(
+          store,
+          move,
+          deal,
+          { ...party, lastOfferCents: intent.cents },
+          d.cents,
+          clock,
+          "",
+        );
         return { ...r, events: [...events, ...r.events] };
       }
       if (d.kind === "counter") {
@@ -578,14 +701,20 @@ export async function counterpartyTurn(input: {
           lastCounterCents: d.cents,
           rounds: party.rounds + 1,
         });
-        events.push({ type: "deal.countered", payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, counter: d.cents } });
+        events.push({
+          type: "deal.countered",
+          payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, counter: d.cents },
+        });
         messages.push({
           to: "counterparty",
           partyId: party.id,
           dealId: deal.id,
           kind: "counter",
           text: `I can do ${price(d.cents, p.unit)}.`,
-          facts: publicFacts(deal, p, { theirOffer: price(intent.cents, p.unit), counter: price(d.cents, p.unit) }),
+          facts: publicFacts(deal, p, {
+            theirOffer: price(intent.cents, p.unit),
+            counter: price(d.cents, p.unit),
+          }),
         });
         return done();
       }
@@ -598,7 +727,10 @@ export async function counterpartyTurn(input: {
           lastCounterCents: d.hold,
           rounds: party.rounds + 1,
         });
-        events.push({ type: "deal.owner_asked", payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, hold: d.hold } });
+        events.push({
+          type: "deal.owner_asked",
+          payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, hold: d.hold },
+        });
         messages.push(holdingMessage(deal, party));
         if (changed)
           messages.push({
@@ -629,7 +761,10 @@ export async function counterpartyTurn(input: {
           dealId: deal.id,
           kind: "slots",
           text: `${cap(p.meetNoun)} times: ${slotList(party.offeredSlots)}. Which works?`,
-          facts: publicFacts(deal, p, { agreedPrice: price(party.agreedCents, p.unit), slots: party.offeredSlots.map((s) => s.label) }),
+          facts: publicFacts(deal, p, {
+            agreedPrice: price(party.agreedCents, p.unit),
+            slots: party.offeredSlots.map((s) => s.label),
+          }),
         });
       } else if (party.status === "scheduled" && party.slot) {
         messages.push({
@@ -671,22 +806,47 @@ function holdingMessage(deal: Deal, party: DealParty): EngineMessage {
   };
 }
 
+/** Close an open deal with a terminal outcome and tag its item. */
+export async function markOutcome(
+  store: Store,
+  dealId: string,
+  outcome: "donated" | "dumped",
+): Promise<Deal | null> {
+  const deal = await store.getDeal(dealId);
+  if (!deal) return null;
+  if (!isOpen(deal.state) || !canTransition(deal.state, outcome)) return deal;
+  const next = await setState(store, deal, outcome, { outcome, lastCallStage: "closed" });
+  await tagSubject(store, next, outcome);
+  return next;
+}
+
 /** Item outcome tag so the Move Report can count it. */
 async function tagSubject(store: Store, deal: Deal, outcome: NonNullable<Deal["outcome"]>) {
   if (!deal.subjectId || (deal.mode !== "sell_item" && deal.mode !== "buy_item")) return;
   const item = (await store.listItems(deal.moveId)).find((i) => i.id === deal.subjectId);
-  if (item) await store.upsertItem({ id: item.id, moveId: item.moveId, name: item.name, category: item.category, outcome });
+  if (item)
+    await store.upsertItem({
+      id: item.id,
+      moveId: item.moveId,
+      name: item.name,
+      category: item.category,
+      outcome,
+    });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // The owner answers an in-thread question
 
 /** Parties waiting on the owner, across the move. */
-export async function pendingOwnerAsks(store: Store, moveId: string): Promise<{ deal: Deal; party: DealParty }[]> {
+export async function pendingOwnerAsks(
+  store: Store,
+  moveId: string,
+): Promise<{ deal: Deal; party: DealParty }[]> {
   const out: { deal: Deal; party: DealParty }[] = [];
   for (const deal of await store.listDeals(moveId)) {
     if (!isOpen(deal.state)) continue;
-    for (const party of await store.listDealParties(deal.id)) if (party.status === "awaiting_owner") out.push({ deal, party });
+    for (const party of await store.listDealParties(deal.id))
+      if (party.status === "awaiting_owner") out.push({ deal, party });
   }
   return out;
 }
@@ -721,7 +881,9 @@ export async function ownerTurn(input: {
   let { deal, party } = target;
   const p = policyFor(deal.mode);
   const offer = party.lastOfferCents;
-  const events: EngineEvent[] = [{ type: "deal.owner_answered", payload: { dealId: deal.id, partyId: party.id, decision } }];
+  const events: EngineEvent[] = [
+    { type: "deal.owner_answered", payload: { dealId: deal.id, partyId: party.id, decision } },
+  ];
 
   if (decision.kind === "yes" && offer != null) {
     party = await store.upsertDealParty({ ...party, ownerApprovedCents: offer });
@@ -761,7 +923,10 @@ export async function ownerTurn(input: {
       lastCounterCents: P,
       ownerAskMessageId: null,
     });
-    events.push({ type: "deal.countered", payload: { dealId: deal.id, partyId: party.id, offer, counter: P, byOwner: true } });
+    events.push({
+      type: "deal.countered",
+      payload: { dealId: deal.id, partyId: party.id, offer, counter: P, byOwner: true },
+    });
     return {
       deal,
       party,
@@ -814,10 +979,104 @@ export async function ownerTurn(input: {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Last Call: anything unsold 48 hours before move-out relists free
+// Last Call: drop at T−48h, free at T−24h, donation or 311 at move-out
+
+/** Hours before move-out at which each Last Call stage becomes due. */
+export const LAST_CALL_HOURS = { drop: 48, free: 24, close: 0 } as const;
+
+/** 60% of the ask, rounded to the dollar, and never under $1. */
+export function droppedAsk(askCents: number): number {
+  return Math.max(100, Math.round((askCents * 0.6) / 100) * 100);
+}
+
+const HOLD_ALL =
+  /\b(no last call|skip last call|don'?t drop anything|do not drop anything|hold (?:all |the )?prices|not free)\b/i;
+const HOLD = /\b(keep|hold|don'?t drop|do not drop)\b/i;
+
+/**
+ * "keep the couch", "don't drop the lamp", "no last call". Null when the text is not a hold.
+ * `all` covers every open deal; otherwise `name` is the item to match.
+ */
+export function lastCallHold(text: string): { all: boolean; name: string | null } | null {
+  if (!HOLD.test(text) && !HOLD_ALL.test(text)) return null;
+  if (HOLD_ALL.test(text) && !/\bkeep\b/i.test(text)) return { all: true, name: null };
+  const m = text
+    .toLowerCase()
+    .match(/\b(?:keep|hold|don'?t drop|do not drop)(?:\s+the)?\s+([a-z][a-z0-9 ]{1,40}?)(?:[.!?]+)?\s*$/);
+  const name = m?.[1]?.replace(/\b(please|thanks|thank you)\b/g, "").trim() ?? "";
+  if (!name || /^(it|them|this|that|price|prices)$/.test(name)) return { all: true, name: null };
+  return { all: false, name };
+}
+
+/** Mark matching open deals so Last Call leaves their price alone. Null when `text` is not a hold. */
+export async function holdLastCall(store: Store, moveId: string, text: string): Promise<Deal[] | null> {
+  const intent = lastCallHold(text);
+  if (!intent) return null;
+  const open = (await store.listDeals(moveId)).filter(
+    (d) => policyFor(d.mode).lastCall && isOpen(d.state) && !d.lastCallOptOut,
+  );
+  const hits = intent.all
+    ? open
+    : open.filter((d) => {
+        const title = d.title.toLowerCase();
+        const name = intent.name!;
+        return title.includes(name) || name.includes(title);
+      });
+  const out: Deal[] = [];
+  for (const d of hits) out.push(await store.upsertDeal({ ...d, lastCallOptOut: true }));
+  return out;
+}
 
 export interface SweepMessage extends EngineMessage {
   moveId: string;
+}
+
+const ACTIVE_PARTY = ["talking", "awaiting_owner", "agreed", "waitlisted"];
+
+/** The next Last Call stage this deal is due for, or null when it should sit. */
+function dueLastCall(deal: Deal, hoursLeft: number): "drop" | "free" | "close" | null {
+  if (deal.lastCallOptOut || deal.state === "scheduled" || deal.lastCallStage === "closed") return null;
+  if (hoursLeft <= LAST_CALL_HOURS.close) return "close";
+  if (hoursLeft <= LAST_CALL_HOURS.free && deal.lastCallStage !== "free") return "free";
+  if (hoursLeft <= LAST_CALL_HOURS.drop && deal.lastCallStage === "none" && (deal.askCents ?? 0) > 0)
+    return "drop";
+  return null;
+}
+
+async function resetTalking(store: Store, deal: Deal): Promise<DealParty[]> {
+  const active: DealParty[] = [];
+  for (const party of await store.listDealParties(deal.id)) {
+    if (!ACTIVE_PARTY.includes(party.status)) continue;
+    active.push(
+      await store.upsertDealParty({
+        ...party,
+        status: "talking",
+        lastOfferCents: null,
+        lastCounterCents: null,
+        agreedCents: null,
+        ownerApprovedCents: null,
+        ownerAskMessageId: null,
+        offeredSlots: [],
+        slot: null,
+        rounds: 0,
+      }),
+    );
+  }
+  return active;
+}
+
+async function syncSubjectPrice(store: Store, deal: Deal, askCents: number, limitCents: number) {
+  if (!deal.subjectId || (deal.mode !== "sell_item" && deal.mode !== "buy_item")) return;
+  const item = (await store.listItems(deal.moveId)).find((i) => i.id === deal.subjectId);
+  if (!item) return;
+  await store.upsertItem({
+    id: item.id,
+    moveId: item.moveId,
+    name: item.name,
+    category: item.category,
+    listPriceCents: askCents,
+    floorPriceCents: limitCents,
+  });
 }
 
 export async function lastCallSweep(
@@ -830,41 +1089,128 @@ export async function lastCallSweep(
   const moves = new Map<string, Move | undefined>();
   for (const deal of await store.listOpenDeals()) {
     const p = policyFor(deal.mode);
-    if (!p.lastCall || deal.askCents === 0 || deal.state === "scheduled" || deal.state === "relisted") continue;
+    if (!p.lastCall) continue;
     if (!moves.has(deal.moveId)) moves.set(deal.moveId, await store.getMove(deal.moveId));
     const move = moves.get(deal.moveId);
     const out = moveOutInstant(move?.moveOutAt ?? null, tz);
-    if (!move || !out || clock.now.getTime() < out.getTime() - 48 * 3_600_000) continue;
+    if (!move || !out) continue;
+    const hoursLeft = (out.getTime() - clock.now.getTime()) / 3_600_000;
+    const stage = dueLastCall(deal, hoursLeft);
+    if (!stage) continue;
 
-    const relisted = await setState(store, deal, "relisted", { askCents: 0, limitCents: 0 });
-    events.push({ moveId: move.id, type: "deal.relisted", payload: { dealId: deal.id, reason: "last_call" } });
+    if (stage === "drop") {
+      const ask = droppedAsk(deal.askCents ?? 0);
+      const limit = Math.min(deal.limitCents ?? ask, ask);
+      const next = await store.upsertDeal({
+        ...deal,
+        askCents: ask,
+        limitCents: limit,
+        lastCallStage: "dropped",
+      });
+      await syncSubjectPrice(store, next, ask, limit);
+      const parties = await resetTalking(store, next);
+      events.push({
+        moveId: move.id,
+        type: "deal.price_dropped",
+        payload: { dealId: deal.id, askCents: ask, limitCents: limit, reason: "last_call" },
+      });
+      const at = price(ask, p.unit);
+      messages.push({
+        moveId: move.id,
+        to: "owner",
+        dealId: deal.id,
+        kind: "last_call_drop",
+        text: `Last Call, 48 hours out: the ${deal.title} dropped to ${at}. Reply "keep the ${deal.title}" to hold that price.`,
+        facts: { title: deal.title, price: at },
+      });
+      for (const party of parties) {
+        messages.push({
+          moveId: move.id,
+          to: "counterparty",
+          partyId: party.id,
+          dealId: next.id,
+          kind: "last_call_drop",
+          text: `Price drop: the ${deal.title} is now ${at}. Want it?`,
+          facts: publicFacts(next, p),
+        });
+      }
+      continue;
+    }
+
+    if (stage === "free") {
+      const relisted = await setState(store, deal, "relisted", {
+        askCents: 0,
+        limitCents: 0,
+        lastCallStage: "free",
+      });
+      await syncSubjectPrice(store, relisted, 0, 0);
+      const parties = await resetTalking(store, relisted);
+      events.push({
+        moveId: move.id,
+        type: "deal.relisted",
+        payload: { dealId: deal.id, reason: "last_call" },
+      });
+      events.push({
+        moveId: move.id,
+        type: "pickup.requested",
+        payload: { dealId: deal.id, title: deal.title, kinds: ["donation", "311"] },
+      });
+      messages.push({
+        moveId: move.id,
+        to: "owner",
+        dealId: deal.id,
+        kind: "last_call",
+        text: `Last Call, 24 hours out: the ${deal.title} is free now for anyone who can pick it up before move-out. I'm booking a donation or 311 pickup if nobody claims it.`,
+        facts: { title: deal.title },
+      });
+      for (const party of parties) {
+        messages.push({
+          moveId: move.id,
+          to: "counterparty",
+          partyId: party.id,
+          dealId: relisted.id,
+          kind: "last_call",
+          text: `Last Call: the ${deal.title} is free now if you can pick it up before move-out. Want it?`,
+          facts: publicFacts(relisted, p),
+        });
+      }
+      continue;
+    }
+
+    const closed = await setState(store, deal, "dumped", { lastCallStage: "closed", outcome: "dumped" });
+    await tagSubject(store, closed, "dumped");
+    events.push({ moveId: move.id, type: "deal.dumped", payload: { dealId: deal.id, reason: "last_call" } });
+    if (deal.lastCallStage !== "free")
+      events.push({
+        moveId: move.id,
+        type: "pickup.requested",
+        payload: { dealId: deal.id, title: deal.title, kinds: ["donation", "311"] },
+      });
     messages.push({
       moveId: move.id,
       to: "owner",
       dealId: deal.id,
-      kind: "last_call",
-      text: `Last Call: the ${deal.title} didn't sell, so it's free now for anyone who can pick up before move-out. If nobody claims it, it goes to donation.`,
+      kind: "last_call_close",
+      text: `Last Call: nobody claimed the ${deal.title}, so it's marked dumped and it stays off the truck.`,
       facts: { title: deal.title },
     });
     for (const party of await store.listDealParties(deal.id)) {
-      if (!["talking", "awaiting_owner", "agreed", "waitlisted"].includes(party.status)) continue;
+      if (!ACTIVE_PARTY.includes(party.status)) continue;
       await store.upsertDealParty({
         ...party,
-        status: "talking",
-        lastCounterCents: null,
-        ownerApprovedCents: null,
-        ownerAskMessageId: null,
+        status: "walked",
         offeredSlots: [],
-        rounds: 0,
+        slot: null,
+        ownerAskMessageId: null,
       });
       messages.push({
         moveId: move.id,
         to: "counterparty",
         partyId: party.id,
-        dealId: relisted.id,
-        kind: "last_call",
-        text: `Last Call: the ${deal.title} is free now if you can pick it up in the next two days. Want it?`,
-        facts: publicFacts(relisted, p),
+        dealId: closed.id,
+        kind: "last_call_close",
+        text: `The ${deal.title} is gone. Thanks for looking.`,
+        facts: { title: deal.title, gone: true },
       });
     }
   }
@@ -874,14 +1220,20 @@ export async function lastCallSweep(
 // ---------------------------------------------------------------------------------------------------------------
 // The Crew Board line
 
-export async function dealBoard(store: Store, moveId: string, mode: DealMode | DealMode[] = "sell_item"): Promise<string | null> {
+export async function dealBoard(
+  store: Store,
+  moveId: string,
+  mode: DealMode | DealMode[] = "sell_item",
+): Promise<string | null> {
   const modes = Array.isArray(mode) ? mode : [mode];
   const deals = (await store.listDeals(moveId)).filter((d) => modes.includes(d.mode));
   if (!deals.length) return null;
   const parts: string[] = [];
   for (const d of deals) {
     const parties = await store.listDealParties(d.id);
-    const active = parties.filter((x) => ["talking", "agreed", "awaiting_owner", "waitlisted"].includes(x.status)).length;
+    const active = parties.filter((x) =>
+      ["talking", "agreed", "awaiting_owner", "waitlisted"].includes(x.status),
+    ).length;
     const label =
       d.state === "scheduled" && d.slot
         ? `booked ${d.slot.label}`
@@ -889,9 +1241,11 @@ export async function dealBoard(store: Store, moveId: string, mode: DealMode | D
           ? (d.outcome ?? d.state)
           : d.state === "relisted"
             ? "free (Last Call)"
-            : active
-              ? `${active} ${policyFor(d.mode).counterpartyRole}${active === 1 ? "" : "s"}`
-              : d.state;
+            : d.lastCallStage === "dropped"
+              ? `dropped to ${price(d.askCents, policyFor(d.mode).unit)}`
+              : active
+                ? `${active} ${policyFor(d.mode).counterpartyRole}${active === 1 ? "" : "s"}`
+                : d.state;
     parts.push(`${d.title}: ${label}`);
   }
   return parts.join(" · ");

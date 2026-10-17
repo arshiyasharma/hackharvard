@@ -170,6 +170,8 @@ function dealRow(r: Row): Deal {
     agreedCents: num(r.agreed_cents),
     slot: (json(r.slot) as Slot | null) ?? null,
     outcome: (str(r.outcome) as Deal["outcome"]) ?? null,
+    lastCallStage: (str(r.last_call_stage) as Deal["lastCallStage"]) ?? "none",
+    lastCallOptOut: Boolean(r.last_call_opt_out),
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
@@ -423,7 +425,8 @@ export class PostgresStore implements Store {
   }
   async listOpenDeals() {
     return (
-      await this.sql`select * from deals where state in ('listed', 'negotiating', 'scheduled', 'relisted') order by seq`
+      await this
+        .sql`select * from deals where state in ('listed', 'negotiating', 'scheduled', 'relisted') order by seq`
     ).map(dealRow);
   }
   async upsertDeal(input: Partial<Deal> & Pick<Deal, "moveId" | "mode" | "title" | "code">) {
@@ -432,30 +435,38 @@ export class PostgresStore implements Store {
     const d: Deal = { ...dealDefaults(), ...(prev ?? {}), ...input, code: input.code.toUpperCase(), id };
     const rows = await this.sql`
       insert into deals (id, move_id, mode, subject_id, title, code, state, ask_cents, limit_cents, unit,
-        owner_thread_id, winner_party_id, agreed_cents, slot, outcome)
+        owner_thread_id, winner_party_id, agreed_cents, slot, outcome, last_call_stage, last_call_opt_out)
       values (${id}, ${d.moveId}, ${d.mode}, ${d.subjectId}, ${d.title}, ${d.code}, ${d.state}, ${d.askCents},
         ${d.limitCents}, ${d.unit}, ${d.ownerThreadId}, ${d.winnerPartyId}, ${d.agreedCents}, ${jsonb(d.slot)}::jsonb,
-        ${d.outcome})
+        ${d.outcome}, ${d.lastCallStage}, ${d.lastCallOptOut})
       on conflict (id) do update set
         move_id = excluded.move_id, mode = excluded.mode, subject_id = excluded.subject_id, title = excluded.title,
         code = excluded.code, state = excluded.state, ask_cents = excluded.ask_cents, limit_cents = excluded.limit_cents,
         unit = excluded.unit, owner_thread_id = excluded.owner_thread_id, winner_party_id = excluded.winner_party_id,
-        agreed_cents = excluded.agreed_cents, slot = excluded.slot, outcome = excluded.outcome, updated_at = now()
+        agreed_cents = excluded.agreed_cents, slot = excluded.slot, outcome = excluded.outcome,
+        last_call_stage = excluded.last_call_stage, last_call_opt_out = excluded.last_call_opt_out, updated_at = now()
       returning *`;
     return dealRow(rows[0] as Row);
   }
   async listDealParties(dealId: string) {
-    return (await this.sql`select * from deal_parties where deal_id = ${dealId} order by seq`).map(dealPartyRow);
+    return (await this.sql`select * from deal_parties where deal_id = ${dealId} order by seq`).map(
+      dealPartyRow,
+    );
   }
   async listDealPartiesBySpace(spaceId: string) {
-    return (await this.sql`select * from deal_parties where space_id = ${spaceId} order by seq`).map(dealPartyRow);
+    return (await this.sql`select * from deal_parties where space_id = ${spaceId} order by seq`).map(
+      dealPartyRow,
+    );
   }
   async upsertDealParty(
     input: Partial<DealParty> & Pick<DealParty, "dealId" | "moveId" | "spaceId" | "handle" | "role">,
   ) {
     const prevRow = input.id
       ? (await this.sql`select * from deal_parties where id = ${input.id}`)[0]
-      : (await this.sql`select * from deal_parties where deal_id = ${input.dealId} and space_id = ${input.spaceId}`)[0];
+      : (
+          await this
+            .sql`select * from deal_parties where deal_id = ${input.dealId} and space_id = ${input.spaceId}`
+        )[0];
     const prev = prevRow ? dealPartyRow(prevRow) : undefined;
     const id = prev?.id ?? input.id ?? newId("dp");
     const p: DealParty = { ...dealPartyDefaults(), ...(prev ?? {}), ...input, id };

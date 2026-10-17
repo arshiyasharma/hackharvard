@@ -5,7 +5,10 @@ import {
   codesIn,
   counterpartyTurn,
   decide,
+  droppedAsk,
+  holdLastCall,
   joinDeal,
+  lastCallHold,
   lastCallSweep,
   offerSlots,
   openDeal,
@@ -297,6 +300,11 @@ describe("a sale end to end against the store", () => {
     expect(r.deal.state).toBe("scheduled");
     expect(r.deal.slot?.label).toBe("Fri 6pm");
     expect(r.deal.winnerPartyId).toBe(party.id);
+    expect(r.events.map((e) => e.type)).toContain("pickup.scheduled");
+    expect(r.events.find((e) => e.type === "pickup.scheduled")?.payload).toMatchObject({
+      subjectId: item.id,
+      title: "couch",
+    });
 
     // A second buyer is waitlisted while the first holds the booking.
     let b2 = await buyer(store, deal.id, "b2");
@@ -308,6 +316,7 @@ describe("a sale end to end against the store", () => {
     expect(r.deal.state).toBe("handed_off");
     expect(r.deal.outcome).toBe("sold");
     expect(r.events.map((e) => e.type)).toContain("escrow.requested");
+    expect(r.events.map((e) => e.type)).toContain("ledger.release");
     expect(r.messages.find((m) => m.partyId === b2.id)?.kind).toBe("gone");
     expect((await store.listItems(move.id)).find((i) => i.id === item.id)?.outcome).toBe("sold");
   });
@@ -356,31 +365,65 @@ describe("a sale end to end against the store", () => {
     expect(r.messages).toEqual([]);
   });
 
-  test("Last Call relists unsold items free 48h before move-out, once", async () => {
-    const { store, move, deal } = await seed();
+  test("Last Call drops at 48h, goes free at 24h, then marks dumped, once each", async () => {
+    const { store, move, deal, item } = await seed();
     await store.updateMove(move.id, { moveOutAt: "2026-10-17" });
     let party = await buyer(store, deal.id, "b");
     party = (await counterpartyTurn({ store, move, party, text: "would you take 40", clock })).party!;
+    expect(party.status).toBe("talking");
     const early = await lastCallSweep(store, { now: new Date("2026-10-14T12:00:00Z") });
     expect(early.messages).toEqual([]);
-    const sweep = await lastCallSweep(store, clock);
-    expect(sweep.messages.map((m) => [m.to, m.kind])).toEqual([
+
+    // T−38h: 60% of $120, and the floor comes down with it.
+    expect(droppedAsk(12000)).toBe(7200);
+    const drop = await lastCallSweep(store, clock);
+    expect(drop.messages.map((m) => [m.to, m.kind])).toEqual([
+      ["owner", "last_call_drop"],
+      ["counterparty", "last_call_drop"],
+    ]);
+    expect(drop.messages[0]!.text).toContain("$72");
+    expect(drop.messages[1]!.text).not.toContain("floor");
+    const dropped = (await store.getDeal(deal.id))!;
+    expect(dropped.state).toBe("negotiating");
+    expect(dropped.lastCallStage).toBe("dropped");
+    expect(dropped.askCents).toBe(7200);
+    expect(dropped.limitCents).toBe(7200);
+    expect((await store.listItems(move.id)).find((i) => i.id === item.id)?.listPriceCents).toBe(7200);
+    expect((await lastCallSweep(store, clock)).messages).toEqual([]);
+
+    const free = await lastCallSweep(store, { now: new Date("2026-10-16T14:00:00Z") });
+    expect(free.messages.map((m) => [m.to, m.kind])).toEqual([
       ["owner", "last_call"],
       ["counterparty", "last_call"],
     ]);
+    expect(free.events.map((e) => e.type)).toContain("pickup.requested");
     const relisted = (await store.getDeal(deal.id))!;
     expect(relisted.state).toBe("relisted");
     expect(relisted.askCents).toBe(0);
+    expect((await lastCallSweep(store, { now: new Date("2026-10-16T14:00:00Z") })).messages).toEqual([]);
+
+    const close = await lastCallSweep(store, { now: new Date("2026-10-17T05:00:00Z") });
+    expect(close.messages.map((m) => [m.to, m.kind])).toEqual([
+      ["owner", "last_call_close"],
+      ["counterparty", "last_call_close"],
+    ]);
+    expect(close.events.map((e) => e.type)).toContain("deal.dumped");
+    const dumped = (await store.getDeal(deal.id))!;
+    expect(dumped.state).toBe("dumped");
+    expect(dumped.outcome).toBe("dumped");
+    expect((await store.listItems(move.id)).find((i) => i.id === item.id)?.outcome).toBe("dumped");
+    expect((await lastCallSweep(store, { now: new Date("2026-10-17T05:00:00Z") })).messages).toEqual([]);
+  });
+
+  test("the owner can hold a price out of Last Call", async () => {
+    expect(lastCallHold("keep the couch")).toEqual({ all: false, name: "couch" });
+    expect(lastCallHold("no last call")?.all).toBe(true);
+    expect(lastCallHold("would you take 40")).toBeNull();
+    const { store, move, deal } = await seed();
+    await store.updateMove(move.id, { moveOutAt: "2026-10-17" });
+    const held = await holdLastCall(store, move.id, "keep the couch");
+    expect(held?.map((d) => d.id)).toEqual([deal.id]);
     expect((await lastCallSweep(store, clock)).messages).toEqual([]);
-    // Free: any yes is a deal at $0.
-    const r = await counterpartyTurn({
-      store,
-      move,
-      party: (await store.listDealParties(deal.id))[0]!,
-      text: "yes please",
-      clock,
-    });
-    expect(r.party?.status).toBe("agreed");
-    expect(r.party?.agreedCents).toBe(0);
+    expect((await store.getDeal(deal.id))?.askCents).toBe(12000);
   });
 });

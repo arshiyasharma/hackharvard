@@ -15,7 +15,14 @@ import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
 import type { InboundMessage, Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
-import { createLogger, type ElfName, type Logger, type Move, type Participant, type Store } from "@elves/shared";
+import {
+  createLogger,
+  type ElfName,
+  type Logger,
+  type Move,
+  type Participant,
+  type Store,
+} from "@elves/shared";
 
 export interface ServiceDeps {
   store: Store;
@@ -97,7 +104,12 @@ export function createService(deps: ServiceDeps): Service {
       await deps.store.appendEvent({
         moveId: attributed.move.id,
         type: "deal.party_joined",
-        payload: { dealId: attributed.deal.id, partyId: party.id, via: attributed.via, role: participant.role },
+        payload: {
+          dealId: attributed.deal.id,
+          partyId: party.id,
+          via: attributed.via,
+          role: participant.role,
+        },
         traceId: null,
       });
       log.info("counterparty joined a deal", {
@@ -160,7 +172,8 @@ export function createService(deps: ServiceDeps): Service {
     const target = await deps.store.getParticipantBySpace(note.spaceId);
     const senderId =
       target?.agentUserId ??
-      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)?.agentUserId;
+      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
+        ?.agentUserId;
     if (!senderId) {
       log.warn("no sender for outbound text; skipped", { spaceId: note.spaceId, key });
       return;
@@ -188,7 +201,11 @@ export function createService(deps: ServiceDeps): Service {
         traceId,
       });
       await safeMem("remember outbound", async (m) => {
-        await m.ensureThread(note.spaceId, { moveId: move.id, role: target?.role ?? "owner", handle: target?.handle ?? null });
+        await m.ensureThread(note.spaceId, {
+          moveId: move.id,
+          role: target?.role ?? "owner",
+          handle: target?.handle ?? null,
+        });
         await m.remember({
           threadId: note.spaceId,
           moveId: move.id,
@@ -223,8 +240,8 @@ export function createService(deps: ServiceDeps): Service {
           ? move.ownerSpaceId
           : (await deps.store.listDealParties(deal.id)).find((p) => p.id === m.partyId)?.spaceId;
       if (!spaceId) continue;
-      // One Last Call text per deal and recipient, ever.
-      const key = sendKey("lastcall", `${deal.id}:${m.partyId ?? "owner"}`);
+      // One text per Last Call stage, deal and recipient. A later stage (free, then donation) still sends.
+      const key = sendKey("lastcall", `${m.kind}:${deal.id}:${m.partyId ?? "owner"}`);
       if (await deps.store.getSend(key)) continue;
       await deliverTo(
         move,
@@ -242,7 +259,11 @@ export function createService(deps: ServiceDeps): Service {
       await deps.store.patchBoard(moveId, elfName, {
         status: "working",
         currentTask: board ? `Deals: ${board}` : "Last Call",
-        lastUpdate: "Last Call: unsold items are free now",
+        lastUpdate: res.messages.some((m) => m.kind === "last_call_close")
+          ? "Last Call: booking a donation or 311 pickup"
+          : res.messages.some((m) => m.kind === "last_call")
+            ? "Last Call: unsold items are free now"
+            : "Last Call: prices dropped",
       });
     }
     return sent;

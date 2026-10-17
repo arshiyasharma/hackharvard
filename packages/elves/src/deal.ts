@@ -2,6 +2,7 @@ import {
   counterpartyTurn,
   dealBoard,
   type EngineMessage,
+  isOpen,
   ownerTurn,
   partyForText,
   policyFor,
@@ -125,13 +126,17 @@ export async function handleCounterparty(ctx: ElfContext): Promise<ElfResult> {
     agentUserId: last?.agentId ?? ctx.participant.agentUserId,
   });
   if (!party) {
+    const titles: string[] = [];
+    for (const row of await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)) {
+      const deal = await ctx.store.getDeal(row.dealId);
+      if (deal && isOpen(deal.state)) titles.push(`the ${deal.title}`);
+    }
+    const which =
+      titles.length > 1
+        ? `You have open talks on ${titles.join(" and ")}. Which one?`
+        : "Hi! Which listing are you asking about? The ref code in the post (like K7Q2) helps me find it.";
     return {
-      replies: [
-        {
-          text: "Hi! Which listing are you asking about? The ref code in the post (like K7Q2) helps me find it.",
-          parentMessageId: lastMessageId(ctx.batch),
-        },
-      ],
+      replies: [{ text: which, parentMessageId: lastMessageId(ctx.batch) }],
     };
   }
   const r = await counterpartyTurn({ store: ctx.store, move: ctx.move, party, text, clock: { now: ctx.now() } });

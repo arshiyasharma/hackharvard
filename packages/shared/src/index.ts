@@ -237,6 +237,13 @@ export interface Deal {
   slot: Slot | null;
   /** Set once the deal exits; the Move Report counts these. */
   outcome: ItemOutcome | null;
+  /**
+   * Last Call progress for modes that relist before move-out. `dropped` is the T−48h price,
+   * `free` is T−24h, `closed` is the donation or 311 booking at move-out.
+   */
+  lastCallStage: "none" | "dropped" | "free" | "closed";
+  /** The owner said to hold this one ("keep the couch"); Last Call leaves it alone. */
+  lastCallOptOut: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -280,12 +287,17 @@ export function dealDefaults(): Omit<Deal, "id" | "moveId" | "mode" | "title" | 
     agreedCents: null,
     slot: null,
     outcome: null,
+    lastCallStage: "none",
+    lastCallOptOut: false,
     createdAt: ts,
     updatedAt: ts,
   };
 }
 
-export function dealPartyDefaults(): Omit<DealParty, "id" | "dealId" | "moveId" | "spaceId" | "handle" | "role"> {
+export function dealPartyDefaults(): Omit<
+  DealParty,
+  "id" | "dealId" | "moveId" | "spaceId" | "handle" | "role"
+> {
   const ts = nowIso();
   return {
     status: "talking",

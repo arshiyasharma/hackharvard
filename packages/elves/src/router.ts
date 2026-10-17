@@ -1,4 +1,4 @@
-import { pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
+import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, Role, Store } from "@elves/shared";
@@ -87,11 +87,28 @@ export async function route(
   }
 
   const text = batchText(batch);
+  // "keep the couch" / "no last call" holds a price; the Elf that owns the deal records it.
+  if (opts.moveId && lastCallHold(text)) {
+    const open = (await deps.store.listDeals(opts.moveId)).find(
+      (d) => policyFor(d.mode).lastCall && isOpen(d.state),
+    );
+    const elf = open ? policyFor(open.mode).elf : null;
+    if (elf && deps.elves.some((e) => e.name === elf)) return { elf, via: "deal", confidence: 0.95 };
+  }
   // "yes" / "no" / "$70" while a buyer's offer waits on the owner goes to the Elf that asked.
   if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
     const pending = await pendingOwnerAsks(deps.store, opts.moveId);
     const elf = pending[0] ? policyFor(pending[0].deal.mode).elf : null;
     if (elf && deps.elves.some((e) => e.name === elf)) return { elf, via: "deal", confidence: 0.9 };
+    if (readOwnerDecision(text)?.kind === "yes") {
+      const events = await deps.store.listEvents(opts.moveId);
+      for (let i = events.length - 1; i >= 0; i--) {
+        const type = events[i]?.type;
+        if (type === "buy.opened" || type === "donate.booked") break;
+        if (type === "buy.pending" || type === "donate.pending")
+          return { elf: "stuff", via: "deal", confidence: 0.9 };
+      }
+    }
   }
   // "2" after a list of picks is a pick, not a price. "search again" and a forwarded
   // listing link stay with Home when it spoke last, even with no number to pick.
@@ -115,7 +132,8 @@ export async function route(
     plain &&
     plain.length <= 40 &&
     parsePriceCents(plain) != null &&
-    deps.elves.some((e) => e.name === "stuff")
+    deps.elves.some((e) => e.name === "stuff") &&
+    (keywordRoute(text, deps.elves)?.elf ?? "stuff") === "stuff"
   ) {
     return { elf: "stuff", via: "price", confidence: 0.9 };
   }

@@ -76,9 +76,11 @@ export function batchText(batch: Batch): string {
   return batch.messages
     .map((m) => {
       const parts: string[] = [];
-      if (m.text) parts.push(m.text);
+      if (m.text?.trim()) parts.push(m.text);
+      else if (m.reaction && m.reaction.action !== "remove" && /^(?:👍|❤|♥|✅)/.test(m.reaction.emoji))
+        parts.push("yes");
       for (const a of m.attachments) parts.push(a.mimeType?.startsWith("image/") ? "[photo]" : "[file]");
-      if (m.reaction) parts.push(`[reaction ${m.reaction.emoji}]`);
+      if (m.reaction && parts[0] !== "yes") parts.push(`[reaction ${m.reaction.emoji}]`);
       return parts.join(" ");
     })
     .filter(Boolean)

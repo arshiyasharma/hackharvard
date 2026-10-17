@@ -1,5 +1,7 @@
 /** Short replies to a list of picks: "more", "tell me about 2", "skip 1", "save 3". */
-export type FollowUp = { kind: "more" } | { kind: "detail" | "skip" | "shortlist"; n: number };
+export type FollowUp =
+  | { kind: "more" }
+  | { kind: "detail" | "skip" | "shortlist" | "reach"; n: number };
 
 const MORE = /^(?:more|next|show me more|any more|anything else|what else|others?|more options)\s*[?!.]*$/i;
 const DETAIL =
@@ -8,6 +10,8 @@ const BARE = /^#?\s*(\d{1,2})\s*[?!.]*$/;
 const SKIP = /^(?:skip|pass(?: on)?|not|nah(?: to)?|no to|remove|drop|hide)\s*#?\s*(\d{1,2})\s*[?!.]*$/i;
 const SHORTLIST =
   /^(?:shortlist|save|keep|like|star|favorite|favourite|fav|i like|love|i want|interested in)\s*#?\s*(\d{1,2})\s*[?!.]*$/i;
+const REACH =
+  /^(?:yes[, ]+)?(?:reach out(?: to)?|contact|message|text them about)\s*#?\s*(\d{1,2})\s*[?!.]*$/i;
 
 export function parseFollowUp(text: string): FollowUp | null {
   const t = text.trim();
@@ -17,6 +21,8 @@ export function parseFollowUp(text: string): FollowUp | null {
   if (skip?.[1]) return { kind: "skip", n: Number(skip[1]) };
   const save = t.match(SHORTLIST);
   if (save?.[1]) return { kind: "shortlist", n: Number(save[1]) };
+  const reach = t.match(REACH);
+  if (reach?.[1]) return { kind: "reach", n: Number(reach[1]) };
   const detail = t.match(DETAIL) ?? t.match(BARE);
   if (detail?.[1]) return { kind: "detail", n: Number(detail[1]) };
   return null;
