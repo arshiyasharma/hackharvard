@@ -15,7 +15,9 @@ export type Intent =
   | { kind: "split"; amountCents: number; what: string; shares: Share[] }
   | { kind: "deposit_paid"; amountCents: number; what: string; dueBackAt: string | null }
   | { kind: "deposit_returned"; what: string | null }
-  | { kind: "mark_paid"; person: string | null; what: string | null }
+  | { kind: "mark_paid"; person: string | null; what: string | null; amountCents: number | null }
+  /** A payment plan for someone's share: asked by the roommate, or offered by the owner (person named). */
+  | { kind: "loan"; person: string | null; what: string | null; monthlyCents: number | null }
   | { kind: "pay_person"; person: string; amountCents: number; what: string }
   | { kind: "pickup_confirmed"; item: string | null }
   | { kind: "pickup_failed"; item: string | null }
@@ -181,6 +183,26 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
   )
     return { kind: "pickup_confirmed", item: itemWord(t) };
 
+  if (
+    /\b(payment plan|installments?|pay (it |this |that |you |the rest )?(back )?(later|over time|in parts|monthly|off)|can'?t (afford|pay)|loan|iou|(a|per) month|monthly|\/mo|spread (it|this) out)\b/i.test(
+      t,
+    )
+  ) {
+    const monthly =
+      t.match(/\$\s?(\d{1,5}(?:\.\d{1,2})?)\s*(?:a|per|\/|each)\s*(?:month|mo)\b/i)?.[1] ??
+      t.match(/\b(\d{1,5})\s*(?:dollars|bucks)?\s*(?:a|per|each)\s*month\b/i)?.[1];
+    const named =
+      t.match(/\b(?:let|give|offer|put)\s+([A-Z][a-z]+)\b/)?.[1] ??
+      t.match(/\b([A-Z][a-z]+)\s+(?:can|could|will)\s+pay\b/)?.[1];
+    const person = named && !NOT_NAMES.has(named.toLowerCase()) ? cap(named) : null;
+    return {
+      kind: "loan",
+      person,
+      what: costLabel(t),
+      monthlyCents: monthly ? Math.round(Number(monthly) * 100) : null,
+    };
+  }
+
   const pay = t.match(/^\s*(?:please\s+)?(?:pay|send|venmo|zelle)\s+([A-Z][a-z]+)\s+\$/i);
   if (pay?.[1] && amounts[0] && !NOT_NAMES.has(pay[1].toLowerCase()))
     return {
@@ -192,9 +214,9 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
 
   const paid = t.match(/\b([A-Z][a-z]+)\s+(?:already\s+|just\s+)?(?:paid|venmoed|zelled|sent)\b/);
   if (paid?.[1] && !NOT_NAMES.has(paid[1].toLowerCase()) && paid[1] !== "I")
-    return { kind: "mark_paid", person: paid[1], what: costLabel(t) };
+    return { kind: "mark_paid", person: paid[1], what: costLabel(t), amountCents: amounts[0] ?? null };
   if (/^\s*(paid|sent( it)?|done|i paid|just paid|i sent( it)?)\b/i.test(t))
-    return { kind: "mark_paid", person: null, what: costLabel(t) };
+    return { kind: "mark_paid", person: null, what: costLabel(t), amountCents: amounts[0] ?? null };
 
   if (
     /\b(ledger|who owes|owe|owes|balance|how much|totals?|money (status|update)|where('?s| is) the money)\b/i.test(
@@ -239,6 +261,7 @@ const LlmIntent = z.object({
     "deposit_paid",
     "deposit_returned",
     "mark_paid",
+    "loan",
     "pay_person",
     "pickup_confirmed",
     "pickup_failed",
@@ -258,6 +281,10 @@ const LlmIntent = z.object({
   phone: z.string().nullable(),
   dueBack: z.string().nullable().describe("for deposit_paid: YYYY-MM-DD it is due back, null if not said"),
   item: z.string().nullable().describe("for pickups: the item sold"),
+  monthlyDollars: z
+    .number()
+    .nullable()
+    .describe("for loan: the monthly payment the sender wrote, null if none"),
 });
 
 const SYSTEM = `You read texts sent to the Money Elf of a moving crew and say what the sender wants.
@@ -265,7 +292,8 @@ The owner of the move is "me". Kinds:
 - split: share a cost among people (owner included unless they say otherwise)
 - deposit_paid: they paid a holding deposit (sublet, truck, storage, movers)
 - deposit_returned: a deposit came back
-- mark_paid: someone already paid what they owed
+- mark_paid: someone already paid some or all of what they owed (amountDollars = what they paid, if said)
+- loan: someone wants to pay their share over time / a payment plan (person = who, if the owner names them)
 - pay_person: the owner wants to send someone money
 - pickup_confirmed / pickup_failed: a buyer picked up a sold item, or the pickup fell through
 - add_contact: a person's phone number
@@ -316,7 +344,17 @@ export async function parseIntent(
         return { kind: "add_contact", name: cap(r.person), handle };
       }
       case "mark_paid":
-        return { kind: "mark_paid", person: r.person ? cap(r.person) : null, what: r.what };
+        return {
+          kind: "mark_paid",
+          person: r.person ? cap(r.person) : null,
+          what: r.what,
+          amountCents: cents,
+        };
+      case "loan": {
+        const monthly = r.monthlyDollars == null ? null : Math.round(r.monthlyDollars * 100);
+        if (monthly != null && !amountAppearsIn(text, monthly)) return rules;
+        return { kind: "loan", person: r.person ? cap(r.person) : null, what: r.what, monthlyCents: monthly };
+      }
       case "deposit_returned":
         return { kind: "deposit_returned", what: r.what };
       case "pickup_confirmed":

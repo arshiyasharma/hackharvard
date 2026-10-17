@@ -33,8 +33,13 @@ describe("splits / Moving Fund", () => {
     await say("yes");
     const r = await say("paid", { from: SAM, role: "roommate" });
     expect(reply(r)).toContain("Sam paid $45 for the cleaning.");
-    expect(r.outbound).toEqual([{ toHandle: OWNER, text: "Sam paid $45 toward the move." }]);
-    const move = payments.calls.find((c) => c.op === "moveMoney");
+    expect(r.outbound).toEqual([{ toHandle: OWNER, text: "Sam paid $45 into the Moving Fund." }]);
+    expect(r.boardPatch?.lastUpdate).toBe("Ledger: $90 spent, $45 in the Moving Fund");
+    const move = payments.calls.find(
+      (c) =>
+        c.op === "moveMoney" &&
+        String((c.input as { description: string }).description).includes("share_paid"),
+    );
     expect(move?.input).toMatchObject({ amountCents: 4500 });
     expect([...payments.bills.values()][0]?.status).toBe("completed");
   });
@@ -52,14 +57,16 @@ describe("splits / Moving Fund", () => {
     expect(reply(r2)).toContain("I just texted Sam the request for $33.33");
   });
 
-  test("owner can mark an off-ledger payment; no Nessie movement", async () => {
+  test("owner can mark an off-ledger payment; recorded as money arriving from outside", async () => {
     const { say, payments } = setup();
     await say("split the $60 gas with Sam");
     await say("yes");
     const before = payments.calls.filter((c) => c.op === "moveMoney").length;
     const r = await say("Sam paid me on venmo");
     expect(reply(r)).toContain("Sam paid $30 for the gas.");
-    expect(payments.calls.filter((c) => c.op === "moveMoney").length).toBe(before);
+    const moves = payments.calls.filter((c) => c.op === "moveMoney");
+    expect(moves.length).toBe(before + 1);
+    expect(moves.at(-1)?.input).toMatchObject({ fromAccountId: null, amountCents: 3000 });
     expect(eventTypes(r)).toContain("payment.received");
   });
 
@@ -235,7 +242,7 @@ describe("scam check and guardrails", () => {
     await say("split the $240 truck with Sam and Priya");
     await say("yes");
     const r = await say("how much do I owe", { from: SAM, role: "roommate" });
-    expect(reply(r)).toContain("You owe $80: truck $80.");
+    expect(reply(r)).toContain("You owe $80: truck share $80.");
     expect(reply(r)).not.toContain("Priya");
   });
 });

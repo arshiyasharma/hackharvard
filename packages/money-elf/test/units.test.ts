@@ -94,7 +94,12 @@ describe("parseRules", () => {
       item: "couch",
     });
     expect(parseRules("the desk pickup fell through", NOW)).toEqual({ kind: "pickup_failed", item: "desk" });
-    expect(parseRules("Sam paid me on venmo", NOW)).toEqual({ kind: "mark_paid", person: "Sam", what: null });
+    expect(parseRules("Sam paid me on venmo", NOW)).toEqual({
+      kind: "mark_paid",
+      person: "Sam",
+      what: null,
+      amountCents: null,
+    });
     expect(parseRules("pay Sam $40 for gas", NOW)).toEqual({
       kind: "pay_person",
       person: "Sam",

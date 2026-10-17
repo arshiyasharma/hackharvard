@@ -6,6 +6,7 @@
  * owner already paid elsewhere moves nothing, so it needs no approval.
  */
 import { fmtUsd, splitCents } from "./amounts.ts";
+import { type Books, owedTotal, type RecordTag, readBooks, tagged } from "./books.ts";
 import type { LedgerEntry, MoneyStore, PendingAction, Person } from "./ledger.ts";
 import type { Share } from "./parse.ts";
 import type { PaymentsProvider } from "./payments.ts";
@@ -98,17 +99,43 @@ export class MoneyService {
     return acct.accountId;
   }
 
+  /** The owner's Moving Fund: a Savings account on the owner's own Nessie customer. */
+  async fundAccount(move: MoneyMove): Promise<string> {
+    const existing = await this.store.getFundAccount(move.id);
+    if (existing) return existing;
+    const owner = await this.owner(move);
+    await this.account(owner);
+    const fresh = (await this.store.getPerson(owner.id)) ?? owner;
+    const acct = await this.payments.openAccount({
+      firstName: fresh.name,
+      lastName: "Moving Fund",
+      nickname: "Moving Fund",
+      type: "Savings",
+      customerId: fresh.nessieCustomerId ?? undefined,
+    });
+    await this.store.setFundAccount(move.id, acct.accountId);
+    return acct.accountId;
+  }
+
+  /** The live Ledger, read back from Nessie. */
+  async books(move: MoneyMove): Promise<Books> {
+    return readBooks(this.store, this.payments, move.id);
+  }
+
+  /** Record a movement in Nessie, tagged so the live Ledger can read it back. */
   private async movement(
     entry: LedgerEntry,
     from: string | null,
     to: string | null,
     description: string,
+    tag: RecordTag,
+    amountCents: number = entry.amountCents,
   ): Promise<LedgerEntry> {
     const r = await this.payments.moveMoney({
       fromAccountId: from,
       toAccountId: to,
-      amountCents: entry.amountCents,
-      description,
+      amountCents,
+      description: tagged(description, tag, entry.id),
       date: this.today(),
     });
     const fresh = (await this.store.getEntry(entry.id)) ?? entry;
@@ -146,7 +173,7 @@ export class MoneyService {
 
   private async requestText(move: MoneyMove, p: Person, e: LedgerEntry): Promise<string> {
     const owner = await this.owner(move);
-    return `Hi ${p.name}, it's Elves, ${owner.name === "Owner" ? "your roommate's" : `${owner.name}'s`} moving crew. Your share of the ${e.what} is ${fmtUsd(e.amountCents)}. Reply PAID here once you've sent it.`;
+    return `Hi ${p.name}, it's Elves, ${owner.name === "Owner" ? "your roommate's" : `${owner.name}'s`} moving crew. Your share of the ${e.what} is ${fmtUsd(e.amountCents)}. Reply PAID once you've sent it, or ask for a payment plan.`;
   }
 
   // ---------- splits / Moving Fund ----------
@@ -176,6 +203,7 @@ export class MoneyService {
       paidBy: owner.id,
       status: "paid",
     });
+    await this.movement(expense, await this.account(owner), null, `${cap(input.what)} (you paid)`, "expense");
     out.events.push({
       type: "ledger.entry_added",
       payload: { entryId: expense.id, kind: "expense", amountCents: input.amountCents },
@@ -269,10 +297,14 @@ export class MoneyService {
     return out;
   }
 
-  /** The person paid what they owed. Through us (they replied PAID): recorded as a Nessie movement. */
+  /**
+   * The person paid some or all of what they owe. Through us (they replied PAID): roommate account to the
+   * Moving Fund. Owner reporting it (Venmo etc.): recorded as money arriving from outside. Partial payments
+   * lower the open bill or the loan balance in Nessie.
+   */
   async markPaid(
     move: MoneyMove,
-    input: { person: Person; what: string | null; viaLedger: boolean },
+    input: { person: Person; what: string | null; viaLedger: boolean; amountCents?: number | null },
   ): Promise<OpResult> {
     const out = empty();
     const open = (await this.store.listEntries(move.id))
@@ -286,30 +318,144 @@ export class MoneyService {
       out.lines.push(`${input.person.name} doesn't owe anything on the Ledger right now.`);
       return out;
     }
-    let entry = e;
+    const remaining = e.amountCents - e.paidCents;
+    // A bare PAID on a loan is one monthly payment; otherwise it settles the rest.
+    const asked = input.amountCents ?? (e.loanId ? (e.loanMonthlyCents ?? remaining) : remaining);
+    const pay = Math.min(asked, remaining);
+    const tag: RecordTag = e.loanId ? "loan_payment" : input.viaLedger ? "share_paid" : "share_paid_outside";
+    const label = `${input.person.name}: ${e.what} ${e.loanId ? "loan payment" : "share"}`;
     if (input.viaLedger) {
+      await this.movement(e, await this.account(input.person), await this.fundAccount(move), label, tag, pay);
+    } else {
       const owner = await this.owner(move);
-      entry = await this.movement(
-        e,
-        await this.account(input.person),
-        await this.account(owner),
-        `${input.person.name}: ${e.what} share`,
+      await this.movement(e, null, await this.account(owner), `${label} (paid outside Elves)`, tag, pay);
+    }
+    const paidCents = e.paidCents + pay;
+    const left = e.amountCents - paidCents;
+    const fresh = (await this.store.getEntry(e.id)) ?? e;
+    if (e.loanId) {
+      await this.payments.updateLoan(e.loanId, {
+        amountCents: left,
+        status: left === 0 ? "paid off" : "open",
+      });
+    } else if (fresh.nessie.billId) {
+      await this.payments.updateBill(
+        fresh.nessie.billId,
+        left === 0 ? { status: "completed" } : { amountCents: left },
       );
     }
-    if (entry.nessie.billId) await this.payments.setBillStatus(entry.nessie.billId, "completed");
-    await this.store.updateEntry(e.id, { status: "paid", paidBy: input.person.id });
+    await this.store.updateEntry(e.id, {
+      paidCents,
+      status: left === 0 ? "paid" : "pending",
+      paidBy: input.person.id,
+    });
     out.events.push({
       type: "payment.received",
       payload: {
         entryId: e.id,
         personId: input.person.id,
-        amountCents: e.amountCents,
+        amountCents: pay,
+        leftCents: left,
         via: input.viaLedger ? "ledger" : "off_ledger",
+        loanId: e.loanId,
       },
     });
-    const left = open.length - 1;
+    if (left === 0) {
+      out.lines.push(
+        `${input.person.name} paid ${fmtUsd(pay)} for the ${e.what}${e.loanId ? " and the loan is paid off" : ""}.${open.length > 1 ? ` ${open.length - 1} more open for them.` : ""}`,
+      );
+    } else {
+      out.lines.push(
+        `${input.person.name} paid ${fmtUsd(pay)} toward the ${e.what}; ${fmtUsd(left)} left${e.loanId ? " on the loan" : ""}.`,
+      );
+    }
+    if (asked > remaining) out.lines.push(`That's more than they owed, so I only counted ${fmtUsd(pay)}.`);
+    return out;
+  }
+
+  // ---------- Moving Fund loans (roommate IOUs) ----------
+
+  /**
+   * Turn a roommate's open share into a Moving Fund loan with a monthly payment. The owner is the lender, so
+   * it waits for the owner's yes whether the roommate asked or the owner offered.
+   */
+  async proposeLoan(
+    move: MoneyMove,
+    input: { person: Person; what: string | null; monthlyCents: number | null },
+  ): Promise<OpResult> {
+    const out = empty();
+    const e = (await this.store.listEntries(move.id))
+      .filter(
+        (x) =>
+          x.kind === "split" &&
+          x.owedBy === input.person.id &&
+          x.status === "pending" &&
+          !x.flagged &&
+          !x.loanId,
+      )
+      .filter((x) => !input.what || x.what.toLowerCase().includes(input.what.toLowerCase()))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (!e) {
+      out.lines.push(`${input.person.name} has no open share to put on a payment plan.`);
+      return out;
+    }
+    const remaining = e.amountCents - e.paidCents;
+    const monthly = Math.min(remaining, input.monthlyCents ?? defaultMonthly(remaining));
+    const months = Math.ceil(remaining / monthly);
+    const summary = `put ${input.person.name}'s ${fmtUsd(remaining)} ${e.what} share on a Moving Fund loan at ${fmtUsd(monthly)}/month (${months} payment${months === 1 ? "" : "s"})`;
+    const pending = await this.store.addPending({
+      moveId: move.id,
+      kind: "create_loan",
+      summary,
+      entryIds: [e.id],
+      data: { monthlyCents: monthly },
+    });
+    out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } });
     out.lines.push(
-      `${input.person.name} paid ${fmtUsd(e.amountCents)} for the ${e.what}.${left ? ` ${left} more open for them.` : ""}`,
+      `${input.person.name} can pay the ${fmtUsd(remaining)} ${e.what} share at ${fmtUsd(monthly)} a month, ${months} payment${months === 1 ? "" : "s"}.`,
+    );
+    out.lines.push("Set it up as a Moving Fund loan? Reply yes.");
+    return out;
+  }
+
+  async executeLoan(move: MoneyMove, action: PendingAction): Promise<OpResult> {
+    const out = empty();
+    const e = await this.store.getEntry(action.entryIds[0] ?? "");
+    const monthly = Number(action.data?.monthlyCents ?? 0);
+    if (e?.status !== "pending" || e.loanId || e.flagged || monthly <= 0) {
+      out.lines.push("That share isn't open anymore, so I didn't set up a loan.");
+      return out;
+    }
+    const p = e.owedBy ? await this.store.getPerson(e.owedBy) : undefined;
+    if (!p) throw new Error(`split ${e.id} has no person`);
+    const owner = await this.owner(move);
+    const remaining = e.amountCents - e.paidCents;
+    const loan = await this.payments.createLoan({
+      accountId: await this.account(p),
+      amountCents: remaining,
+      monthlyCents: monthly,
+      description: `${p.name} owes ${owner.name}'s Moving Fund for the ${e.what} [elves:loan:${e.id}]`,
+    });
+    // The loan replaces the payment request.
+    if (e.nessie.billId) await this.payments.updateBill(e.nessie.billId, { status: "cancelled" });
+    await this.store.updateEntry(e.id, { loanId: loan.loanId, loanMonthlyCents: monthly });
+    out.events.push({
+      type: "loan.created",
+      payload: {
+        entryId: e.id,
+        loanId: loan.loanId,
+        amountCents: remaining,
+        monthlyCents: monthly,
+        personId: p.id,
+      },
+    });
+    if (p.handle)
+      out.outbound.push({
+        toHandle: p.handle,
+        text: `You're on a payment plan for the ${e.what}: ${fmtUsd(remaining)} at ${fmtUsd(monthly)} a month into the Moving Fund. Reply PAID each time you send a payment.`,
+      });
+    out.lines.push(
+      `Done: ${p.name}'s ${fmtUsd(remaining)} is a Moving Fund loan at ${fmtUsd(monthly)} a month.`,
     );
     return out;
   }
@@ -333,7 +479,7 @@ export class MoneyService {
       dueBackAt: input.dueBackAt,
       status: "pending",
     });
-    e = await this.movement(e, await this.account(owner), null, `Deposit: ${input.what}`);
+    e = await this.movement(e, await this.account(owner), null, `Deposit: ${input.what}`, "deposit_out");
     out.events.push({
       type: "deposit.recorded",
       payload: { entryId: e.id, amountCents: e.amountCents, dueBackAt: e.dueBackAt },
@@ -364,7 +510,7 @@ export class MoneyService {
     const e = matches[0];
     if (!e) return out;
     const owner = await this.owner(move);
-    await this.movement(e, null, await this.account(owner), `Deposit returned: ${e.what}`);
+    await this.movement(e, null, await this.account(owner), `Deposit returned: ${e.what}`, "deposit_back");
     await this.store.updateEntry(e.id, { status: "refunded", paidTo: owner.id });
     out.events.push({ type: "deposit.returned", payload: { entryId: e.id, amountCents: e.amountCents } });
     out.lines.push(`Nice, the ${fmtUsd(e.amountCents)} ${e.what} deposit is back. Marked it on the Ledger.`);
@@ -400,6 +546,7 @@ export class MoneyService {
       await this.account(buyer),
       await this.escrowAccount(move.id),
       `Escrow: ${input.item}`,
+      "escrow_in",
     );
     out.events.push({
       type: "escrow.opened",
@@ -466,14 +613,14 @@ export class MoneyService {
     const escrow = await this.escrowAccount(move.id);
     if (action.kind === "release_escrow") {
       const owner = await this.owner(move);
-      await this.movement(e, escrow, await this.account(owner), `Release: ${e.what}`);
+      await this.movement(e, escrow, await this.account(owner), `Release: ${e.what}`, "escrow_release");
       await this.store.updateEntry(e.id, { escrow: "released", status: "paid", paidTo: owner.id });
       out.events.push({ type: "escrow.released", payload: { entryId: e.id, amountCents: e.amountCents } });
       out.lines.push(`Released ${fmtUsd(e.amountCents)} for the ${e.what} to you.`);
     } else {
       const buyer = e.paidBy ? await this.store.getPerson(e.paidBy) : undefined;
       if (!buyer) throw new Error(`sale ${e.id} has no buyer`);
-      await this.movement(e, escrow, await this.account(buyer), `Refund: ${e.what}`);
+      await this.movement(e, escrow, await this.account(buyer), `Refund: ${e.what}`, "escrow_refund");
       await this.store.updateEntry(e.id, { escrow: "refunded", status: "refunded", paidTo: buyer.id });
       out.events.push({ type: "escrow.refunded", payload: { entryId: e.id, amountCents: e.amountCents } });
       if (buyer.handle)
@@ -517,7 +664,7 @@ export class MoneyService {
     });
     out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } });
     out.lines.push(
-      `Pay ${to.name} ${fmtUsd(input.amountCents)}${input.what === "payment" ? "" : ` for the ${input.what}`} from your Moving Fund?`,
+      `Pay ${to.name} ${fmtUsd(input.amountCents)}${input.what === "payment" ? "" : ` for the ${input.what}`} ?`,
     );
     out.lines.push("Reply yes to send it.");
     return out;
@@ -533,11 +680,14 @@ export class MoneyService {
     const owner = await this.owner(move);
     const to = e.paidTo ? await this.store.getPerson(e.paidTo) : undefined;
     if (!to) throw new Error(`payment ${e.id} has no recipient`);
+    // Pay from the Moving Fund when it covers the amount, otherwise from the owner's own account.
+    const fromFund = (await this.books(move)).fundCents >= e.amountCents;
     await this.movement(
       e,
-      await this.account(owner),
+      fromFund ? await this.fundAccount(move) : await this.account(owner),
       await this.account(to),
-      `${owner.name} to ${to.name}: ${e.what}`,
+      `${fromFund ? "Moving Fund" : owner.name} to ${to.name}: ${e.what}`,
+      "payment",
     );
     await this.store.updateEntry(e.id, { status: "paid" });
     out.events.push({
@@ -549,7 +699,7 @@ export class MoneyService {
         toHandle: to.handle,
         text: `${owner.name} sent you ${fmtUsd(e.amountCents)} for ${e.what} through Elves.`,
       });
-    out.lines.push(`Sent ${to.name} ${fmtUsd(e.amountCents)}.`);
+    out.lines.push(`Sent ${to.name} ${fmtUsd(e.amountCents)}${fromFund ? " from the Moving Fund" : ""}.`);
     return out;
   }
 
@@ -579,6 +729,9 @@ export class MoneyService {
         case "pay_person":
           r = await this.executePay(move, action);
           break;
+        case "create_loan":
+          r = await this.executeLoan(move, action);
+          break;
       }
     } catch (err) {
       // Put the approval back so the owner can retry; each execute step skips work already done.
@@ -587,6 +740,7 @@ export class MoneyService {
         kind: action.kind,
         summary: action.summary,
         entryIds: action.entryIds,
+        data: action.data,
       });
       throw err;
     }
@@ -612,41 +766,52 @@ export class MoneyService {
 
   // ---------- ledger ----------
 
+  /** What "ledger" answers: read live from Nessie. A roommate sees only their own balance. */
   async ledgerSummary(move: MoneyMove, forPerson?: Person): Promise<string[]> {
-    const entries = await this.store.listEntries(move.id);
+    const books = await this.books(move);
     if (forPerson) {
-      const owed = entries.filter(
-        (e) => e.kind === "split" && e.owedBy === forPerson.id && e.status === "pending",
-      );
-      return owed.length
-        ? [
-            `You owe ${fmtUsd(sum(owed))}: ${owed.map((e) => `${e.what} ${fmtUsd(e.amountCents)}`).join(", ")}.`,
-            "Reply PAID once you've sent it.",
-          ]
-        : ["You're all squared up, nothing owed."];
+      const mine = books.owes.find((o) => o.personId === forPerson.id);
+      if (!mine) return ["You're all squared up, nothing owed."];
+      const lines: string[] = [];
+      if (mine.billCents)
+        lines.push(
+          `You owe ${fmtUsd(mine.billCents)}: ${mine.bills.map((b) => `${b.nickname} ${fmtUsd(b.amountCents)}`).join(", ")}.`,
+        );
+      if (mine.loanCents)
+        lines.push(
+          `${fmtUsd(mine.loanCents)} left on your Moving Fund loan${mine.loanMonthlyCents ? `, ${fmtUsd(mine.loanMonthlyCents)} a month` : ""}.`,
+        );
+      lines.push("Reply PAID once you've sent it.");
+      return lines;
     }
+    const entries = await this.store.listEntries(move.id);
     const lines: string[] = [];
-    const owing = new Map<string, number>();
-    for (const e of entries)
-      if (e.kind === "split" && e.status === "pending" && e.owedBy)
-        owing.set(e.owedBy, (owing.get(e.owedBy) ?? 0) + e.amountCents);
-    if (owing.size) {
-      const parts: string[] = [];
-      for (const [id, cents] of owing) parts.push(`${await this.name(id)} ${fmtUsd(cents)}`);
-      lines.push(`Owed to you: ${parts.join(", ")}.`);
-    }
-    const held = entries.filter((e) => e.kind === "sale" && e.escrow === "held");
-    if (held.length)
-      lines.push(`In escrow: ${held.map((e) => `${e.what} ${fmtUsd(e.amountCents)}`).join(", ")}.`);
+    if (books.owes.length)
+      lines.push(
+        `Owed to you: ${books.owes
+          .map((o) => `${o.name} ${fmtUsd(o.billCents + o.loanCents)}${o.loanCents ? " (loan)" : ""}`)
+          .join(", ")}.`,
+      );
+    const money: string[] = [];
+    if (books.fundCents) money.push(`Moving Fund ${fmtUsd(books.fundCents)}`);
+    if (books.escrowCents) money.push(`escrow ${fmtUsd(books.escrowCents)}`);
+    if (books.salesCents) money.push(`sales ${fmtUsd(books.salesCents)}`);
+    if (money.length) lines.push(`${money.join(", ")}.`);
     const deps = entries.filter((e) => e.kind === "deposit" && e.status === "pending");
     if (deps.length)
       lines.push(
         `Deposits out: ${deps.map((e) => `${e.what} ${fmtUsd(e.amountCents)}${e.dueBackAt ? ` (due back ${e.dueBackAt})` : ""}`).join(", ")}.`,
       );
-    return lines.length
-      ? lines.slice(0, 3)
-      : ["The Ledger is empty so far. Tell me about any deposit or shared cost."];
+    if (!lines.length) return ["The Ledger is empty so far. Tell me about any deposit or shared cost."];
+    if (lines.length < 3)
+      lines.push(`Live from Nessie: ${books.records} records, ${fmtUsd(owedTotal(books))} outstanding.`);
+    return lines.slice(0, 3);
   }
+}
+
+/** Default plan: about four monthly payments, rounded up to whole dollars, at least $5. */
+export function defaultMonthly(cents: number): number {
+  return Math.min(cents, Math.max(500, Math.ceil(cents / 4 / 100) * 100));
 }
 
 function sum(es: LedgerEntry[]) {

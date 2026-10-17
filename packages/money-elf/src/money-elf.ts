@@ -4,7 +4,8 @@
  * and events for the service to apply.
  */
 import { fmtUsd } from "./amounts.ts";
-import { boardLine, ledgerTotals, type MemoryMoneyStore, type MoneyStore } from "./ledger.ts";
+import { booksLine } from "./books.ts";
+import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
 import { parseIntent } from "./parse.ts";
 import type { PaymentsProvider } from "./payments.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
@@ -30,6 +31,9 @@ export const MONEY_KEYWORDS = [
   "ledger",
   "scam",
   "money",
+  "payment plan",
+  "loan",
+  "installments",
 ];
 
 export interface MoneyElf {
@@ -118,13 +122,40 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
       r.lines.push(`Heads up: ${flags[0]?.warning}`);
       r.lines.push("Payments for this move only go through Elves on this number.");
     } else if (role === "roommate" && me && intent.kind === "mark_paid") {
-      r = merge(r, await service.markPaid(move, { person: me, what: intent.what, viaLedger: true }));
+      r = merge(
+        r,
+        await service.markPaid(move, {
+          person: me,
+          what: intent.what,
+          viaLedger: true,
+          amountCents: intent.amountCents,
+        }),
+      );
       const paid = r.events.find((e) => e.type === "payment.received");
-      if (paid)
+      if (paid) {
+        const left = Number(paid.payload.leftCents);
         r.outbound.push({
           toHandle: move.ownerHandle,
-          text: `${me.name} paid ${fmtUsd(Number(paid.payload.amountCents))} toward the move.`,
+          text: `${me.name} paid ${fmtUsd(Number(paid.payload.amountCents))} into the Moving Fund${left ? `; ${fmtUsd(left)} left` : ""}.`,
         });
+      }
+    } else if (role === "roommate" && me && intent.kind === "loan") {
+      // The roommate asks; the owner (the lender) decides.
+      const ask = await service.proposeLoan(move, {
+        person: me,
+        what: intent.what,
+        monthlyCents: intent.monthlyCents,
+      });
+      r.events.push(...ask.events);
+      if (ask.events.some((e) => e.type === "approval.requested")) {
+        r.outbound.push({
+          toHandle: move.ownerHandle,
+          text: `${me.name} asked for a payment plan. ${ask.lines.join(" ")}`,
+        });
+        r.lines.push("I asked about a payment plan for you; I'll text you as soon as it's set up.");
+      } else {
+        r.lines.push(...ask.lines);
+      }
     } else if (role === "roommate" && me) {
       r.lines.push(...(await service.ledgerSummary(move, me)));
     } else {
@@ -172,7 +203,42 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
     case "mark_paid": {
       const p = intent.person ? await service.findPerson(move.id, intent.person) : undefined;
       if (!p) r.lines.push(intent.person ? `I don't have ${intent.person} on the Ledger yet.` : "Who paid?");
-      else r = merge(r, await service.markPaid(move, { person: p, what: intent.what, viaLedger: false }));
+      else
+        r = merge(
+          r,
+          await service.markPaid(move, {
+            person: p,
+            what: intent.what,
+            viaLedger: false,
+            amountCents: intent.amountCents,
+          }),
+        );
+      break;
+    }
+    case "loan": {
+      // The owner offers a plan. Without a name, use the only roommate who still owes something.
+      const owing = (await service.store.listEntries(move.id)).filter(
+        (e) => e.kind === "split" && e.status === "pending" && !e.loanId && e.owedBy,
+      );
+      const ids = [...new Set(owing.map((e) => e.owedBy as string))];
+      const p = intent.person
+        ? await service.findPerson(move.id, intent.person)
+        : ids.length === 1
+          ? await service.store.getPerson(ids[0] as string)
+          : undefined;
+      if (!p)
+        r.lines.push(
+          intent.person ? `I don't have ${intent.person} on the Ledger yet.` : "Who's the payment plan for?",
+        );
+      else
+        r = merge(
+          r,
+          await service.proposeLoan(move, {
+            person: p,
+            what: intent.what,
+            monthlyCents: intent.monthlyCents,
+          }),
+        );
       break;
     }
     case "pay_person":
@@ -196,7 +262,7 @@ async function handle(service: MoneyService, ctx: MoneyContext): Promise<MoneyRe
       break;
     default:
       r.lines.push(
-        "Money Elf here. I track every dollar on the Ledger: deposits, shared costs and sales in escrow.",
+        "Money Elf here. I keep every dollar on the Ledger in Nessie: shared costs, the Moving Fund, deposits and escrow.",
       );
       r.lines.push(
         `Tell me something like "split the $240 truck with Sam and Priya" or "I paid a $500 sublet deposit, due back Dec 1".`,
@@ -214,16 +280,17 @@ function merge(a: OpResult, b: OpResult): OpResult {
 }
 
 async function finish(service: MoneyService, ctx: MoneyContext, r: OpResult): Promise<MoneyResult> {
-  const owner = await service.owner(ctx.move);
+  await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
   const pending = await service.latestPending(ctx.move.id);
-  const totals = ledgerTotals(entries, owner.id);
+  // The board shows the live Ledger, read back from Nessie.
+  const books = await service.books(ctx.move);
   // Spec: 2-3 short plain lines per reply.
   const lines = r.lines.filter(Boolean).slice(0, 3);
   return {
     replies: lines.length ? [{ text: lines.join("\n"), parentMessageId: lastId(ctx) }] : [],
     outbound: r.outbound,
-    events: [...r.events, { type: "ledger.totals", payload: { ...totals } }],
+    events: [...r.events, { type: "ledger.totals", payload: { ...books, owes: books.owes.length } }],
     boardPatch: {
       status: pending ? "waiting" : entries.length ? "working" : "idle",
       currentTask: pending
@@ -231,7 +298,7 @@ async function finish(service: MoneyService, ctx: MoneyContext, r: OpResult): Pr
         : entries.length
           ? "Keeping the Ledger"
           : "Standing by",
-      lastUpdate: boardLine(totals),
+      lastUpdate: booksLine(books),
     },
   };
 }

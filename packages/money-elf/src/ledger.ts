@@ -37,6 +37,11 @@ export interface LedgerEntry {
   requested: boolean;
   /** Split rows: the person has been texted the request (needs their number). */
   notified: boolean;
+  /** Split rows: how much of amountCents has been paid so far (payments can be partial). */
+  paidCents: number;
+  /** Split rows turned into a Moving Fund loan: the Nessie loan id and the agreed monthly payment. */
+  loanId: string | null;
+  loanMonthlyCents: number | null;
   /** Blocked by the scam check; never paid. */
   flagged: boolean;
   nessie: NessieRefs;
@@ -55,7 +60,12 @@ export interface Person {
   nessieAccountId: string | null;
 }
 
-export type PendingKind = "send_split_requests" | "release_escrow" | "refund_escrow" | "pay_person";
+export type PendingKind =
+  | "send_split_requests"
+  | "release_escrow"
+  | "refund_escrow"
+  | "pay_person"
+  | "create_loan";
 
 /** A money-moving action waiting for the owner's explicit yes. One yes approves exactly one of these. */
 export interface PendingAction {
@@ -64,6 +74,8 @@ export interface PendingAction {
   kind: PendingKind;
   summary: string;
   entryIds: string[];
+  /** Kind-specific terms, e.g. { monthlyCents } for a loan. */
+  data?: Record<string, number | string>;
   createdAt: string;
 }
 
@@ -88,6 +100,10 @@ export interface MoneyStore {
 
   getEscrowAccount(moveId: string): Promise<string | undefined>;
   setEscrowAccount(moveId: string, accountId: string): Promise<void>;
+
+  /** The owner's Moving Fund savings account in Nessie. */
+  getFundAccount(moveId: string): Promise<string | undefined>;
+  setFundAccount(moveId: string, accountId: string): Promise<void>;
 }
 
 function newId(prefix: string): string {
@@ -99,6 +115,7 @@ export class MemoryMoneyStore implements MoneyStore {
   people = new Map<string, Person>();
   pending = new Map<string, PendingAction>();
   escrow = new Map<string, string>();
+  fund = new Map<string, string>();
   private seq = 0;
 
   async listEntries(moveId: string) {
@@ -123,6 +140,9 @@ export class MemoryMoneyStore implements MoneyStore {
       groupId: null,
       requested: false,
       notified: false,
+      paidCents: 0,
+      loanId: null,
+      loanMonthlyCents: null,
       flagged: false,
       nessie: { withdrawalIds: [], depositIds: [], billId: null },
       createdAt: ts,
@@ -184,6 +204,13 @@ export class MemoryMoneyStore implements MoneyStore {
   async setEscrowAccount(moveId: string, accountId: string) {
     this.escrow.set(moveId, accountId);
   }
+
+  async getFundAccount(moveId: string) {
+    return this.fund.get(moveId);
+  }
+  async setFundAccount(moveId: string, accountId: string) {
+    this.fund.set(moveId, accountId);
+  }
 }
 
 export interface LedgerTotals {
@@ -220,8 +247,8 @@ export function ledgerTotals(entries: LedgerEntry[], ownerId: string | null): Le
         if (e.paidBy === ownerId) t.spentCents += e.amountCents;
         break;
       case "split":
-        if (e.status === "pending") t.owedToOwnerCents += e.amountCents;
-        if (e.status === "paid") t.collectedCents += e.amountCents;
+        if (e.status === "pending") t.owedToOwnerCents += e.amountCents - e.paidCents;
+        t.collectedCents += e.status === "paid" ? e.amountCents : e.paidCents;
         break;
       case "deposit":
         if (e.status === "pending") t.depositsOutCents += e.amountCents;

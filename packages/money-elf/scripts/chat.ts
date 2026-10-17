@@ -8,15 +8,15 @@
  */
 import { createInterface } from "node:readline";
 import {
-  boardLine,
+  booksLine,
   createMoneyElf,
   FakePayments,
   fmtUsd,
-  ledgerTotals,
   MemoryMoneyStore,
   NessiePayments,
   type PaymentsProvider,
   parseAmounts,
+  readTag,
 } from "../src/index.ts";
 import type { MoneyContext, MoneyResult, Role } from "../src/types.ts";
 
@@ -91,11 +91,13 @@ const HELP = `Commands:
   /as buyer <phone>             talk as a buyer
   /sale <item> <buyer> <$amt>   a buyer pays into escrow (what the Stuff Elf will do), e.g. /sale couch Alex $90
   /ledger                       every Ledger row
+  /books                        the live Ledger straight from Nessie, account by account
   /pending                      actions waiting for the owner's yes
   /events                       toggle showing events
   /reset                        start a fresh move
   /quit
-Try: "Sam is 617-555-0101", "split the $240 truck with Sam and Priya", "yes", "/as roommate Sam", "paid".`;
+Try: "Sam is 617-555-0101", "split the $240 truck with Sam and Priya", "yes", "/as roommate Sam",
+"can I do a payment plan, $20 a month?", "/as owner", "yes", "/as roommate Sam", "paid", "/books".`;
 
 async function command(line: string) {
   const [cmd, ...rest] = line.slice(1).trim().split(/\s+/);
@@ -152,8 +154,36 @@ async function command(line: string) {
             `${e.escrow ? `  escrow:${e.escrow}` : ""}${e.dueBackAt ? `  due back ${e.dueBackAt}` : ""}${e.flagged ? "  FLAGGED" : ""}`,
         );
       }
-      const owner = await elf.service.owner(move);
-      console.log(dim(`  ${boardLine(ledgerTotals(entries, owner.id))}`));
+      console.log(dim(`  ${booksLine(await elf.service.books(move))}`));
+      return;
+    }
+    case "books": {
+      const people = await store.listPeople(move.id);
+      const accounts: [string, string | null | undefined][] = [
+        ...people.map((p): [string, string | null] => [`${p.name} (${p.role})`, p.nessieAccountId]),
+        ["Moving Fund (savings)", await store.getFundAccount(move.id)],
+        ["Escrow", await store.getEscrowAccount(move.id)],
+      ];
+      for (const [label, id] of accounts) {
+        if (!id) continue;
+        const r = await payments.readAccount(id);
+        console.log(`  ${label}  ${dim(id)}`);
+        for (const w of r.withdrawals)
+          console.log(
+            `    - ${fmtUsd(w.amountCents).padStart(8)} out  ${readTag(w.description)?.tag ?? "?"}  ${dim(w.description.replace(/ \[elves:.*\]$/, ""))}`,
+          );
+        for (const d of r.deposits)
+          console.log(
+            `    + ${fmtUsd(d.amountCents).padStart(8)} in   ${readTag(d.description)?.tag ?? "?"}  ${dim(d.description.replace(/ \[elves:.*\]$/, ""))}`,
+          );
+        for (const b of r.bills)
+          console.log(`    bill  ${fmtUsd(b.amountCents).padStart(8)} ${b.status}  ${b.nickname}`);
+        for (const l of r.loans)
+          console.log(
+            `    loan  ${fmtUsd(l.amountCents).padStart(8)} left, ${fmtUsd(l.monthlyCents)}/mo, ${l.status}`,
+          );
+      }
+      console.log(dim(`  ${booksLine(await elf.service.books(move))}`));
       return;
     }
     case "pending": {

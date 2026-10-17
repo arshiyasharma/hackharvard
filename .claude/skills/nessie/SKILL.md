@@ -17,6 +17,14 @@ Docs: https://nessieisreal.com/docs. OpenAPI spec: https://nessieisreal.com/ness
 - Unknown fields are rejected ("extra fields not permitted"). That makes probing cheap: POST `{"<field>":"x"}`, and the error lists the missing required fields and rejects the bad ones, without creating anything.
 - There is no customer DELETE, so sandbox data piles up. Name test data clearly (for example "Smoke Owner").
 - Amounts are integers, and the team stores **cents** (decision #7).
+- Loans: `POST /accounts/{id}/loans` takes `{type, status, credit_score, monthly_payment, amount, description}`. `type` and `status` are free text. `PUT /loans/{id}` updates `amount` and `status`, so we lower `amount` to what's left after each payment.
+- `POST /customers/{id}/accounts` opens a second account (for example `type: "Savings"`) on an existing customer. That's how the Moving Fund works.
+- An empty list can come back as **404 with a message string** ("No transfers found for this account"). Treat it as `[]` (`NessiePayments.list`).
+- Purchases need a `merchant_id`, `medium` and `amount`; merchants can be created with `POST /merchants`. ATMs and branches return Capital One locations, but the `lat/lng/rad` filter seemed to be ignored (a Cambridge query returned Arlington, VA). Enterprise list endpoints timed out once.
+
+## How the Money Elf uses Nessie as its ledger
+
+Every movement's description ends in a tag, `[elves:<kind>:<ledgerEntryId>]` (decision #27). `src/books.ts` reads the owner's checking account, the Moving Fund (Savings), escrow and each person's account, then rebuilds the totals from the tagged records, open bills and open loans. Run `/books` in `scripts/chat.ts` to see it account by account.
 
 ## Probing safely
 

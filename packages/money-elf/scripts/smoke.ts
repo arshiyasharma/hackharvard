@@ -46,7 +46,10 @@ async function say(text: string, from = OWNER, role: Role = "owner") {
 await say(`Sam is ${SAM}`);
 await say("split the $240 truck with Sam");
 await say("yes");
+await say("can I do a payment plan, $40 a month?", SAM, "roommate");
+await say("yes");
 await say("paid", SAM, "roommate");
+await say("paid $80", SAM, "roommate");
 await say("I paid a $500 holding deposit on the sublet, due back Dec 1");
 const sale = await elf.service.openEscrow(move, {
   item: "couch",
@@ -59,6 +62,10 @@ await say("Alex picked up the couch");
 await say("yes");
 await say("ledger");
 
+const books = await elf.service.books(move);
+console.log(
+  `\nLive from Nessie: fund ${books.fundCents}c, escrow ${books.escrowCents}c, ${books.records} tagged records`,
+);
 const entries = await store.listEntries(move.id);
 const ids = entries.flatMap((e) => [
   ...e.nessie.withdrawalIds,

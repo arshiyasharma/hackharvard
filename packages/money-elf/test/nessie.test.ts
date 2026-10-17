@@ -73,7 +73,7 @@ describe("NessiePayments request shapes (as verified live)", () => {
       recurring_date: 17,
       payment_amount: 8000,
     });
-    await p.setBillStatus("bill1", "completed");
+    await p.updateBill("bill1", { status: "completed" });
     expect(calls[1]).toMatchObject({ method: "PUT", body: { status: "completed" } });
   });
 
