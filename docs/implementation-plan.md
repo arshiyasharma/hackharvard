@@ -1,6 +1,6 @@
 # Implementation plan
 
-> Original planning doc from 2026-10-17, kept for reference. Where it disagrees with [`SPEC.md`](../SPEC.md) (five Elves instead of ten, Claude instead of Grok, Retell instead of ElevenLabs, our own Postgres memory, Mastra Workflows for the Deal Engine), SPEC.md wins. Personal phone numbers are redacted.
+> Original planning doc from 2026-10-17, kept for reference. Where it disagrees with [`SPEC.md`](../SPEC.md) (five Elves instead of ten, Claude instead of Grok, Retell instead of ElevenLabs, our own Postgres memory, a Postgres state machine for the Deal Engine), SPEC.md wins. Personal phone numbers are redacted.
 
 This tab is the development plan: where the build stands, the ordered work queue with owners and acceptance tests, the phase breakdowns behind it, and the decisions taken. The Roommate Elf and voice-note briefings sit in the design doc's Backlog; everything else is in scope.
 

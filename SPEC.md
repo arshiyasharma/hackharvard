@@ -111,9 +111,7 @@ Every moving chore is the same loop: list → negotiate → schedule → hand of
 | T−24h | Item is relisted free, and a donation or 311 bulk pickup is booked |
 | T−0 | Anything without a pickup is tagged `dumped`, so the report stays honest |
 
-**Decision: Mastra Workflows run the Deal Engine and Last Call.** Each deal gets one durable workflow run, and each move gets one Last Call run. A run persists in Postgres, so a deal waiting on a buyer, an owner decision or a hand-off survives a redeploy. Business rules stay as pure functions in `policy.ts`, tested with fixtures. Workflow steps only dispatch events and suspend.
-
-One caveat: Mastra's default `sleep` and `sleepUntil` are in-process timers that die on restart. The 48-hour Last Call countdown needs a small cron re-driver, or the Inngest engine.
+**Decision: the Deal Engine is a state machine stored in Postgres, with a sweep for timed work. No workflow framework.** Each deal is a row with a state, so a deal waiting on a buyer, an owner decision or a hand-off survives a redeploy. Business rules are pure functions in `policy.ts`, tested with fixtures. Timed work (the Last Call stages, no-show timeouts) is found by a periodic sweep over the deals table, so nothing depends on an in-process timer.
 
 **Where it lives:** `packages/engine`, being built right now in a separate session. It is **left off this branch on purpose** because it doesn't typecheck yet. It adds deal methods to `Store` that `PostgresStore` doesn't implement yet, plus migration `0004_engine.sql`. Planned layout:
 
@@ -121,7 +119,7 @@ One caveat: Mastra's default `sleep` and `sleepUntil` are in-process timers that
 | --- | --- |
 | `policy.ts` | Negotiation band, floor, owner escalation, slot picking, hand-off rules. Pure functions, tested with fixtures |
 | `machine.ts`, `negotiate.ts`, `intent.ts`, `slots.ts`, `calendar.ts`, `shield.ts` | State transitions, buyer intent, slots, Scam Shield checks |
-| `workflows.ts` | Mastra workflows: a deal run (negotiating → scheduling → handoff) and a Last Call run (drop → free → close) |
+| `deals.ts` | The deal turns: counterparty and owner messages in, state change and messages out, Last Call sweep (drop → free → close) |
 | `engine.ts` | `DealEngine`: identifies buyers, routes events into runs, fires Last Call stages, returns effects |
 | `stores/` | Deal and Last Call tables you can query, in memory or Postgres |
 
@@ -189,7 +187,7 @@ iPhone/SMS ──► Photon 2.0 (shared iMessage pool + 740 SMS/voice line)
 | `packages/memory` | `MoveMemory`: working memory, transcript with rolling summary, facts (deduplicated, scoped by audience), notes |
 | `packages/db` | Postgres pool, migrations (`0001_store`, `0002_memory`, `0003_listings`), `PostgresStore` |
 
-**Memory decision.** We tried Mastra Memory and replaced it with our own layer on Postgres (three tables). Mastra was only acting as storage. It added about 40 tables and a heavy dependency, and it didn't solve the real gap, which was that moves and items lived in process memory. Facts are deduplicated and carry an audience flag, so owner-private facts like floor prices never reach a buyer thread. Context assembly is one parallel round of reads (about 25 ms). Fact extraction runs in the background after the reply is sent. Mastra is used only for **Workflows** (Deal Engine and Last Call). See README → Memory.
+**Memory decision.** We tried Mastra Memory and replaced it with our own layer on Postgres (three tables). Mastra was only acting as storage. It added about 40 tables and a heavy dependency, and it didn't solve the real gap, which was that moves and items lived in process memory. Facts are deduplicated and carry an audience flag, so owner-private facts like floor prices never reach a buyer thread. Context assembly is one parallel round of reads (about 25 ms). Fact extraction runs in the background after the reply is sent. See README → Memory.
 
 **Photon realities that shaped the design:**
 
@@ -217,7 +215,7 @@ iPhone/SMS ──► Photon 2.0 (shared iMessage pool + 740 SMS/voice line)
 | --- | --- | --- |
 | W1–W4 | Schema, Postgres store, live loop on the shared pool, public host | Done |
 | W5 | Crew Board page (`/board/:moveId` exists; Realtime and polish not yet) | Partial |
-| W6 | Deal Engine core on Mastra Workflows | **In progress** (separate session) |
+| W6 | Deal Engine core (state machine in Postgres) | **In progress** (separate session) |
 | W7 | Item intake from a photo | Done (Stuff Elf, Sell) |
 | W8 | Stuff Elf buyer DMs through the Deal Engine | Next, after W6 |
 | W9 | Pickup calendar and coverage | After W8 |
@@ -258,7 +256,7 @@ Every step has a seeded fallback state, so a broken step can be shown from its e
 | Ten Elves, each on its own dedicated line | **Five Elves** on one number, with sub-skills | Easier to use; dedicated lines need a Photon business plan |
 | Grok via xAI | **Claude**: `claude-haiku-5-5` fast, `claude-sonnet-5-5` smart | Grok key failed; Claude does vision too |
 | Mastra (or Supabase PostgREST) for memory and store | **Own memory + `PostgresStore` on Bun.sql** | Robust, small, and deduplicated facts with audience scoping; no 40-table dependency |
-| — | **Mastra Workflows for Deal Engine + Last Call** | Durable suspend/resume across redeploys |
+| Mastra Workflows for Deal Engine + Last Call | **State machine in Postgres + a sweep** | Survives redeploys with no new dependency; Photon's adapters assume the framework owns the whole agent |
 | ElevenLabs voice | **Retell over SIP** | Warm transfer, custom-LLM websocket, pay-as-you-go |
 | Threaded replies and reactions everywhere | Flat-send fallback on the shared pool | `409 SPACE_NOT_SENDABLE` on the shared pool |
 | App cards for mini apps | Hosted pages sent as links | 2.0 has no app-card type |
