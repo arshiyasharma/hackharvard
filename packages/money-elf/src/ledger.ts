@@ -10,6 +10,7 @@ export type EscrowState = "held" | "released" | "refunded";
 export interface NessieRefs {
   withdrawalIds: string[];
   depositIds: string[];
+  purchaseIds: string[];
   billId: string | null;
 }
 
@@ -29,6 +30,17 @@ export interface LedgerEntry {
   status: EntryStatus;
   /** Sales only: where the buyer's money is. */
   escrow: EscrowState | null;
+  /**
+   * Sales only: the hand-off signals behind an escrow release (SPEC §4). Release needs the buyer's confirmation
+   * plus either the owner's OK or Move Map convergence. ISO timestamps, null until the signal arrives.
+   */
+  buyerConfirmedAt: string | null;
+  ownerOkAt: string | null;
+  mapConvergedAt: string | null;
+  /** Sales only: when the buyer is due to pick up (ISO). A no-show 24h past this stages a refund. */
+  pickupAt: string | null;
+  /** Sales only: when the no-show sweep asked the owner about a refund, so it asks once. */
+  noShowAt: string | null;
   /** Deposits only: YYYY-MM-DD the deposit is due back. */
   dueBackAt: string | null;
   /** Split rows share the id of the expense they split. */
@@ -101,7 +113,7 @@ export interface MoneyStore {
   getEscrowAccount(moveId: string): Promise<string | undefined>;
   setEscrowAccount(moveId: string, accountId: string): Promise<void>;
 
-  /** The owner's Moving Fund savings account in Nessie. */
+  /** The owner's Moving Fund checking account in Nessie. */
   getFundAccount(moveId: string): Promise<string | undefined>;
   setFundAccount(moveId: string, accountId: string): Promise<void>;
 }
@@ -136,6 +148,11 @@ export class MemoryMoneyStore implements MoneyStore {
       paidTo: null,
       status: "pending",
       escrow: null,
+      buyerConfirmedAt: null,
+      ownerOkAt: null,
+      mapConvergedAt: null,
+      pickupAt: null,
+      noShowAt: null,
       dueBackAt: null,
       groupId: null,
       requested: false,
@@ -144,7 +161,7 @@ export class MemoryMoneyStore implements MoneyStore {
       loanId: null,
       loanMonthlyCents: null,
       flagged: false,
-      nessie: { withdrawalIds: [], depositIds: [], billId: null },
+      nessie: { withdrawalIds: [], depositIds: [], purchaseIds: [], billId: null },
       createdAt: ts,
       updatedAt: ts,
       ...input,
@@ -222,7 +239,7 @@ export interface LedgerTotals {
   collectedCents: number;
   /** Buyer money sitting in escrow. */
   inEscrowCents: number;
-  /** Sale money released to the owner. */
+  /** Sale money released from escrow into the Moving Fund. */
   salesCents: number;
   /** Deposits not yet returned. */
   depositsOutCents: number;

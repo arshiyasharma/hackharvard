@@ -1,10 +1,12 @@
 /**
- * Payments providers. Nessie (Capital One's hackathon bank API) is the simulated provider for now.
+ * Money rails (SPEC §4 `MoneyRails`): where the Money Elf records money. Nessie (Capital One's hackathon bank
+ * API) is the simulated rail for now, with an in-memory fake for tests, so Stripe Connect can be swapped in later.
  *
- * Verified live on Oct 17 2026 (see money-elf-decisions.md #9): withdrawals and deposits are stored but do
- * not change balances, and transfers cannot name a payee. So a movement from A to B is recorded as a
- * withdrawal on A plus a deposit on B. Every record carries an [elves:<tag>:<entry>] tag in its description,
- * and the live Ledger (books.ts) is rebuilt by reading those records back.
+ * Verified live on Oct 17 2026 (see money-elf-decisions.md #9): withdrawals, deposits and purchases are stored
+ * but do not change balances, and transfers cannot name a payee. So a movement from A to B is recorded as a
+ * withdrawal on A plus a deposit on B, and money paid to a vendor (truck, storage, movers) is a purchase at a
+ * merchant. Every record carries an [elves:<tag>:<entry>] tag in its description, and the live Ledger
+ * (books.ts) is rebuilt by reading those records back.
  */
 
 export type AccountType = "Checking" | "Savings";
@@ -54,17 +56,31 @@ export interface LoanRecord {
   description: string;
 }
 
+export interface PurchaseInput {
+  accountId: string;
+  /** Who was paid ("Truck", "Storage", "Movers"); one Nessie merchant per name. */
+  merchant: string;
+  amountCents: number;
+  description: string;
+  /** YYYY-MM-DD */
+  date: string;
+}
+
 export interface AccountRecords {
   withdrawals: MoneyRecord[];
   deposits: MoneyRecord[];
+  /** Money paid out of the account to a merchant. */
+  purchases: MoneyRecord[];
   bills: BillRecord[];
   loans: LoanRecord[];
 }
 
-export interface PaymentsProvider {
+export interface MoneyRails {
   readonly name: string;
   openAccount(input: OpenAccountInput): Promise<{ customerId: string; accountId: string }>;
   moveMoney(input: MoveMoneyInput): Promise<{ withdrawalId: string | null; depositId: string | null }>;
+  /** Money paid out to a vendor, recorded as a purchase at a merchant of that name. */
+  purchase(input: PurchaseInput): Promise<{ purchaseId: string }>;
   createBill(input: {
     accountId: string;
     payee: string;
@@ -88,7 +104,7 @@ export interface PaymentsProvider {
   readAccount(accountId: string): Promise<AccountRecords>;
 }
 
-export class PaymentsError extends Error {
+export class RailsError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -129,15 +145,18 @@ interface RawRecord {
   description?: string;
   nickname?: string;
   transaction_date?: string;
+  purchase_date?: string;
 }
 
-export class NessiePayments implements PaymentsProvider {
+export class NessieRails implements MoneyRails {
   readonly name = "nessie";
   private readonly base: string;
   private readonly fetchImpl: typeof fetch;
+  /** Merchant ids by name. Nessie's GET /merchants doesn't list ones we create, so they're cached per process. */
+  private readonly merchants = new Map<string, Promise<string>>();
 
   constructor(private readonly opts: NessieOptions) {
-    if (!opts.apiKey) throw new Error("NessiePayments needs an API key (NESSIE_API_KEY)");
+    if (!opts.apiKey) throw new Error("NessieRails needs an API key (NESSIE_API_KEY)");
     this.base = (opts.baseUrl ?? "https://prod-api.nessieisreal.com").replace(/\/$/, "");
     this.fetchImpl = opts.fetch ?? fetch;
   }
@@ -146,7 +165,7 @@ export class NessiePayments implements PaymentsProvider {
     const res = await this.request("POST", path, body);
     const created = (res as { objectCreated?: { _id?: string } } | null)?.objectCreated;
     if (!created?._id)
-      throw new PaymentsError(`Nessie POST ${path}: no objectCreated._id`, 200, JSON.stringify(res));
+      throw new RailsError(`Nessie POST ${path}: no objectCreated._id`, 200, JSON.stringify(res));
     return { _id: created._id };
   }
 
@@ -156,7 +175,7 @@ export class NessiePayments implements PaymentsProvider {
       const res = await this.request("GET", path);
       return Array.isArray(res) ? (res as RawRecord[]) : [];
     } catch (err) {
-      if (err instanceof PaymentsError && err.status === 404) return [];
+      if (err instanceof RailsError && err.status === 404) return [];
       throw err;
     }
   }
@@ -171,7 +190,7 @@ export class NessiePayments implements PaymentsProvider {
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 15_000),
     });
     const text = await res.text();
-    if (!res.ok) throw new PaymentsError(`Nessie ${method} ${path} failed (${res.status})`, res.status, text);
+    if (!res.ok) throw new RailsError(`Nessie ${method} ${path} failed (${res.status})`, res.status, text);
     try {
       return JSON.parse(text);
     } catch {
@@ -212,6 +231,33 @@ export class NessiePayments implements PaymentsProvider {
       : null;
     const d = input.toAccountId ? await this.post(`/accounts/${input.toAccountId}/deposits`, leg) : null;
     return { withdrawalId: w?._id ?? null, depositId: d?._id ?? null };
+  }
+
+  private merchantId(name: string): Promise<string> {
+    const key = name.slice(0, 60);
+    let id = this.merchants.get(key);
+    if (!id) {
+      id = this.post("/merchants", { name: key, category: "moving" }).then((m) => m._id);
+      // Forget a failed create so the next purchase retries it.
+      id.catch(() => this.merchants.delete(key));
+      this.merchants.set(key, id);
+    }
+    return id;
+  }
+
+  async purchase(input: PurchaseInput) {
+    assertCents(input.amountCents);
+    const p = await this.post(`/accounts/${input.accountId}/purchases`, {
+      merchant_id: await this.merchantId(input.merchant),
+      medium: "balance",
+      amount: input.amountCents,
+      // Without status and purchase_date Nessie stores the purchase, then fails to list the account's
+      // purchases (verified Oct 17 2026).
+      status: "completed",
+      purchase_date: input.date,
+      description: input.description.slice(0, 200),
+    });
+    return { purchaseId: p._id };
   }
 
   async createBill(input: {
@@ -268,9 +314,10 @@ export class NessiePayments implements PaymentsProvider {
   }
 
   async readAccount(accountId: string): Promise<AccountRecords> {
-    const [w, d, b, l] = await Promise.all([
+    const [w, d, p, b, l] = await Promise.all([
       this.list(`/accounts/${accountId}/withdrawals`),
       this.list(`/accounts/${accountId}/deposits`),
+      this.list(`/accounts/${accountId}/purchases`),
       this.list(`/accounts/${accountId}/bills`),
       this.list(`/accounts/${accountId}/loans`),
     ]);
@@ -279,11 +326,12 @@ export class NessiePayments implements PaymentsProvider {
       amountCents: Number(r.amount ?? 0),
       status: r.status ?? "",
       description: r.description ?? "",
-      date: r.transaction_date ?? "",
+      date: r.transaction_date ?? r.purchase_date ?? "",
     });
     return {
       withdrawals: w.map(money),
       deposits: d.map(money),
+      purchases: p.map(money),
       bills: b.map((r) => ({
         id: r._id ?? "",
         amountCents: Math.round(Number(r.payment_amount ?? 0)),
@@ -306,13 +354,15 @@ function assertCents(cents: number) {
     throw new Error(`amounts are positive integer cents, got ${cents}`);
 }
 
-/** In-memory provider for tests and runs without NESSIE_API_KEY. Keeps records so reads work like Nessie. */
-export class FakePayments implements PaymentsProvider {
+/** In-memory rails for tests and runs without NESSIE_API_KEY. Keeps records so reads work like Nessie. */
+export class FakeRails implements MoneyRails {
   readonly name = "fake";
   calls: { op: string; input: unknown }[] = [];
   accounts = new Map<string, AccountRecords & { type: AccountType; nickname: string }>();
   bills = new Map<string, BillRecord & { accountId: string }>();
   loans = new Map<string, LoanRecord & { accountId: string }>();
+  /** Merchant ids by name, created on first purchase like Nessie's. */
+  merchants = new Map<string, string>();
   /** Set to make the next call throw (one-shot). */
   failNext: Error | null = null;
   private n = 0;
@@ -330,7 +380,7 @@ export class FakePayments implements PaymentsProvider {
   }
   private acct(id: string) {
     const a = this.accounts.get(id);
-    if (!a) throw new PaymentsError(`unknown account ${id}`, 404, "");
+    if (!a) throw new RailsError(`unknown account ${id}`, 404, "");
     return a;
   }
 
@@ -342,6 +392,7 @@ export class FakePayments implements PaymentsProvider {
       nickname: input.nickname,
       withdrawals: [],
       deposits: [],
+      purchases: [],
       bills: [],
       loans: [],
     });
@@ -363,6 +414,21 @@ export class FakePayments implements PaymentsProvider {
       this.acct(input.fromAccountId).withdrawals.push(rec(withdrawalId));
     if (input.toAccountId && depositId) this.acct(input.toAccountId).deposits.push(rec(depositId));
     return { withdrawalId, depositId };
+  }
+  async purchase(input: PurchaseInput) {
+    this.check("purchase", input);
+    assertCents(input.amountCents);
+    const a = this.acct(input.accountId);
+    if (!this.merchants.has(input.merchant)) this.merchants.set(input.merchant, this.id("merch"));
+    const purchaseId = this.id("pur");
+    a.purchases.push({
+      id: purchaseId,
+      amountCents: input.amountCents,
+      status: "completed",
+      description: input.description,
+      date: input.date,
+    });
+    return { purchaseId };
   }
   async createBill(input: {
     accountId: string;
@@ -422,6 +488,7 @@ export class FakePayments implements PaymentsProvider {
     return {
       withdrawals: [...a.withdrawals],
       deposits: [...a.deposits],
+      purchases: [...a.purchases],
       bills: [...this.bills.values()].filter((b) => b.accountId === accountId).map(strip),
       loans: [...this.loans.values()].filter((l) => l.accountId === accountId).map(strip),
     };

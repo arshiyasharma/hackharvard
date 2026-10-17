@@ -370,3 +370,10 @@ export async function parseIntent(
     return rules;
   }
 }
+
+/** A buyer saying they have the item ("got it", "picked it up"): their half of the escrow release (SPEC §4). */
+export function buyerConfirmsPickup(text: string): boolean {
+  return /\b(got (it|them|the \w+)|picked (it |them |the \w+ )?up|received (it|them|the \w+)|have (it|them|the \w+) now|pickup (is )?(done|complete))\b/i.test(
+    text,
+  );
+}

@@ -9,10 +9,10 @@ import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
 import { renderLedgerPng } from "./ledger-card.ts";
 import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
 import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
-import { parseIntent } from "./parse.ts";
-import type { PaymentsProvider } from "./payments.ts";
+import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
+import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
-import { MoneyService, type OpResult } from "./service.ts";
+import { approvalPollFor, MoneyService, type OpResult } from "./service.ts";
 import type { MoneyContext, MoneyImage, MoneyPoll, MoneyResult } from "./types.ts";
 
 export const MONEY_DESCRIPTION =
@@ -49,12 +49,12 @@ export interface MoneyElf {
 
 export function createMoneyElf(deps: {
   store: MoneyStore | MemoryMoneyStore;
-  payments: PaymentsProvider;
+  rails: MoneyRails;
   now?: () => Date;
   /** Public URL + signing secret for live Ledger links; without it the Ledger card is sent with no link. */
   links?: LedgerLinks;
 }): MoneyElf {
-  const service = new MoneyService(deps.store, deps.payments, deps.now);
+  const service = new MoneyService(deps.store, deps.rails, deps.now);
   return {
     name: "money",
     description: MONEY_DESCRIPTION,
@@ -104,15 +104,7 @@ export async function approvalPoll(
   pendingId: string,
 ): Promise<MoneyPoll | undefined> {
   const a = (await service.store.listPending(moveId)).find((x) => x.id === pendingId);
-  if (!a) return undefined;
-  return {
-    question: `${a.summary.charAt(0).toUpperCase()}${a.summary.slice(1)}?`,
-    options: [
-      { id: `money:approve:${a.id}`, text: "Yes" },
-      { id: `money:decline:${a.id}`, text: "Not now" },
-    ],
-    selectionMode: "single",
-  };
+  return a ? approvalPollFor(a) : undefined;
 }
 
 function pendingIdsIn(events: { type: string; payload: Record<string, unknown> }[]): string[] {
@@ -216,6 +208,16 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
       }
     } else if (role === "roommate" && me) {
       r.lines.push(...(await service.ledgerSummary(move, me)));
+    } else if (role === "buyer" && me && (intent.kind === "pickup_confirmed" || buyerConfirmsPickup(text))) {
+      // The buyer's half of the escrow release; the owner is asked (or told) through outbound.
+      r = merge(
+        r,
+        await service.confirmPickup(move, {
+          via: "buyer",
+          buyer: me,
+          item: intent.kind === "pickup_confirmed" ? intent.item : null,
+        }),
+      );
     } else {
       r.lines.push(
         "Money Elf here. Payments for this move run through escrow on this number, never any other way.",

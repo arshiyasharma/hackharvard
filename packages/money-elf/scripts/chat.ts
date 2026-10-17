@@ -19,11 +19,11 @@ import {
   booksLine,
   createLedgerHandler,
   createMoneyElf,
-  FakePayments,
+  FakeRails,
   fmtUsd,
   MemoryMoneyStore,
-  NessiePayments,
-  type PaymentsProvider,
+  type MoneyRails,
+  NessieRails,
   parseAmounts,
   readTag,
 } from "../src/index.ts";
@@ -32,11 +32,11 @@ import type { MoneyContext, MoneyPoll, MoneyResult, Role } from "../src/types.ts
 const useNessie = process.argv.includes("--nessie");
 const OWNER = "+16175550100";
 
-function makePayments(): PaymentsProvider {
-  if (!useNessie) return new FakePayments();
+function makeRails(): MoneyRails {
+  if (!useNessie) return new FakeRails();
   const apiKey = process.env.NESSIE_API_KEY;
   if (!apiKey) throw new Error("--nessie needs NESSIE_API_KEY in .env");
-  return new NessiePayments({ apiKey, baseUrl: process.env.NESSIE_BASE_URL });
+  return new NessieRails({ apiKey, baseUrl: process.env.NESSIE_BASE_URL });
 }
 
 const portArg = process.argv.indexOf("--port");
@@ -46,8 +46,8 @@ const links = { publicUrl: `http://localhost:${PORT}`, secret: randomBytes(16).t
 const CARD_DIR = resolve(import.meta.dir, "../../../.data");
 
 let store = new MemoryMoneyStore();
-let payments = makePayments();
-let elf = createMoneyElf({ store, payments, links });
+let rails = makeRails();
+let elf = createMoneyElf({ store, rails, links });
 let lastPoll: MoneyPoll | null = null;
 let lastCard: string | null = null;
 
@@ -61,6 +61,7 @@ let move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
 let speaker: { role: Role; handle: string; label: string } = { role: "owner", handle: OWNER, label: "owner" };
 let showEvents = false;
 let n = 0;
+let sales = 0;
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -137,7 +138,12 @@ const HELP = `Commands:
   /as owner                     talk as the owner (default)
   /as roommate <name|phone>     talk as a roommate (save their number first: "Sam is 617-555-0101")
   /as buyer <phone>             talk as a buyer
-  /sale <item> <buyer> <$amt>   a buyer pays into escrow (what the Stuff Elf will do), e.g. /sale couch Alex $90
+  /sale <item> <buyer> <$amt> [late]
+                                a buyer pays into escrow (what the Stuff Elf will do), e.g. /sale couch Alex $90.
+                                The buyer gets a test number (shown), so "/as buyer <it>" then "got it" confirms
+                                pickup. "late" sets the pickup time 25h ago, for /sweep
+  /map <item>                   Move Map convergence for a sale (the owner-side release signal; a stub hook)
+  /sweep                        run the Deal Engine's no-show sweep (24h past pickup asks the owner to refund)
   /ledger                       every Ledger row
   /books                        the live Ledger straight from Nessie, account by account
   /pending                      actions waiting for the owner's yes
@@ -178,18 +184,43 @@ async function command(line: string) {
       return;
     }
     case "sale": {
-      const [item, buyer, amt] = rest;
+      const [item, buyer, amt, late] = rest;
       const cents = parseAmounts(amt?.startsWith("$") ? amt : `$${amt ?? ""}`)[0];
       if (!item || !buyer || !cents) {
         console.log(yellow("  usage: /sale couch Alex $90"));
         return;
       }
+      const buyerHandle = `+1617555${String(1000 + (++sales % 9000)).padStart(4, "0")}`;
       const r = await elf.service.openEscrow(move, {
         item,
         buyerName: buyer,
-        buyerHandle: null,
+        buyerHandle,
         amountCents: cents,
+        pickupAt: late === "late" ? new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() : null,
       });
+      console.log(dim(`  ${buyer} is ${buyerHandle}`));
+      print({ replies: [], outbound: r.outbound, events: r.events });
+      return;
+    }
+    case "map": {
+      const sale = (await store.listEntries(move.id)).find(
+        (e) => e.kind === "sale" && e.escrow === "held" && (!rest[0] || e.what.includes(rest[0])),
+      );
+      if (!sale) {
+        console.log(yellow("  no held sale by that name; /sale one first"));
+        return;
+      }
+      const r = await elf.service.mapConverged(move, sale.id);
+      print({
+        replies: r.lines.length ? [{ text: r.lines.join("\n") }] : [],
+        outbound: r.outbound,
+        events: r.events,
+      });
+      return;
+    }
+    case "sweep": {
+      const r = await elf.service.sweepNoShows(move);
+      if (!r.outbound.length) console.log(dim("  no no-shows"));
       print({ replies: [], outbound: r.outbound, events: r.events });
       return;
     }
@@ -211,12 +242,12 @@ async function command(line: string) {
       const people = await store.listPeople(move.id);
       const accounts: [string, string | null | undefined][] = [
         ...people.map((p): [string, string | null] => [`${p.name} (${p.role})`, p.nessieAccountId]),
-        ["Moving Fund (savings)", await store.getFundAccount(move.id)],
-        ["Escrow", await store.getEscrowAccount(move.id)],
+        ["Moving Fund (checking)", await store.getFundAccount(move.id)],
+        ["Escrow (savings)", await store.getEscrowAccount(move.id)],
       ];
       for (const [label, id] of accounts) {
         if (!id) continue;
-        const r = await payments.readAccount(id);
+        const r = await rails.readAccount(id);
         console.log(`  ${label}  ${dim(id)}`);
         for (const w of r.withdrawals)
           console.log(
@@ -225,6 +256,10 @@ async function command(line: string) {
         for (const d of r.deposits)
           console.log(
             `    + ${fmtUsd(d.amountCents).padStart(8)} in   ${readTag(d.description)?.tag ?? "?"}  ${dim(d.description.replace(/ \[elves:.*\]$/, ""))}`,
+          );
+        for (const x of r.purchases)
+          console.log(
+            `    - ${fmtUsd(x.amountCents).padStart(8)} buy  ${readTag(x.description)?.tag ?? "?"}  ${dim(x.description.replace(/ \[elves:.*\]$/, ""))}`,
           );
         for (const b of r.bills)
           console.log(`    bill  ${fmtUsd(b.amountCents).padStart(8)} ${b.status}  ${b.nickname}`);
@@ -261,8 +296,8 @@ async function command(line: string) {
       return;
     case "reset":
       store = new MemoryMoneyStore();
-      payments = makePayments();
-      elf = createMoneyElf({ store, payments, links });
+      rails = makeRails();
+      elf = createMoneyElf({ store, rails, links });
       lastPoll = null;
       move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
       speaker = { role: "owner", handle: OWNER, label: "owner" };

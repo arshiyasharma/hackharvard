@@ -88,7 +88,7 @@ describe("parseRules", () => {
       what: "truck",
     });
   });
-  test("pickups, payments, contacts, ledger", () => {
+  test("pickups, rails, contacts, ledger", () => {
     expect(parseRules("the buyer picked up the couch", NOW)).toEqual({
       kind: "pickup_confirmed",
       item: "couch",

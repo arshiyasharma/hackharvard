@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { NessiePayments, PaymentsError } from "../src/payments.ts";
+import { NessieRails, RailsError } from "../src/rails.ts";
 
 function recorder(responses: unknown[]) {
   const calls: { method: string; url: string; body: unknown }[] = [];
@@ -19,10 +19,10 @@ function recorder(responses: unknown[]) {
   return { calls, fetchImpl };
 }
 
-describe("NessiePayments request shapes (as verified live)", () => {
+describe("NessieRails request shapes (as verified live)", () => {
   test("openAccount creates a customer, then a $0 checking account", async () => {
     const { calls, fetchImpl } = recorder([]);
-    const p = new NessiePayments({ apiKey: "k3y", baseUrl: "https://nessie.test", fetch: fetchImpl });
+    const p = new NessieRails({ apiKey: "k3y", baseUrl: "https://nessie.test", fetch: fetchImpl });
     const r = await p.openAccount({ firstName: "Sam", lastName: "roommate", nickname: "Sam (roommate)" });
     expect(r).toEqual({ customerId: "id_1", accountId: "id_2" });
     expect(calls[0]?.url).toBe("https://nessie.test/customers?key=k3y");
@@ -33,7 +33,7 @@ describe("NessiePayments request shapes (as verified live)", () => {
 
   test("moveMoney is a withdrawal on the payer plus a deposit on the payee, in cents", async () => {
     const { calls, fetchImpl } = recorder([]);
-    const p = new NessiePayments({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
+    const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
     const r = await p.moveMoney({
       fromAccountId: "A",
       toAccountId: "B",
@@ -55,9 +55,37 @@ describe("NessiePayments request shapes (as verified live)", () => {
     ]);
   });
 
+  test("purchase creates the merchant once, then posts status and purchase_date so Nessie can list it", async () => {
+    const { calls, fetchImpl } = recorder([]);
+    const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
+    const input = {
+      accountId: "A",
+      merchant: "Truck",
+      amountCents: 24000,
+      description: "Truck [elves:expense:le_1]",
+      date: "2026-10-17",
+    };
+    expect(await p.purchase(input)).toEqual({ purchaseId: "id_2" });
+    await p.purchase({ ...input, amountCents: 5000 });
+    expect(calls.map((c) => c.url.split("?")[0])).toEqual([
+      "https://nessie.test/merchants",
+      "https://nessie.test/accounts/A/purchases",
+      "https://nessie.test/accounts/A/purchases",
+    ]);
+    expect(calls[0]?.body).toEqual({ name: "Truck", category: "moving" });
+    expect(calls[1]?.body).toEqual({
+      merchant_id: "id_1",
+      medium: "balance",
+      amount: 24000,
+      status: "completed",
+      purchase_date: "2026-10-17",
+      description: "Truck [elves:expense:le_1]",
+    });
+  });
+
   test("bills carry recurring_date so Nessie can read them back", async () => {
     const { calls, fetchImpl } = recorder([]);
-    const p = new NessiePayments({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
+    const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
     await p.createBill({
       accountId: "A",
       payee: "Gavin",
@@ -77,11 +105,11 @@ describe("NessiePayments request shapes (as verified live)", () => {
     expect(calls[1]).toMatchObject({ method: "PUT", body: { status: "completed" } });
   });
 
-  test("errors surface as PaymentsError and never move on silently", async () => {
+  test("errors surface as RailsError and never move on silently", async () => {
     const { fetchImpl } = recorder([{ status: 400, message: "bad" }]);
-    const p = new NessiePayments({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
+    const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });
     await expect(p.openAccount({ firstName: "a", lastName: "b", nickname: "c" })).rejects.toBeInstanceOf(
-      PaymentsError,
+      RailsError,
     );
     await expect(
       p.moveMoney({ fromAccountId: "A", toAccountId: null, amountCents: 1.5, description: "x", date: "d" }),

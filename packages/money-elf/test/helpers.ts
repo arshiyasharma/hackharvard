@@ -1,6 +1,6 @@
 import { MemoryMoneyStore } from "../src/ledger.ts";
 import { createMoneyElf } from "../src/money-elf.ts";
-import { FakePayments } from "../src/payments.ts";
+import { FakeRails } from "../src/rails.ts";
 import type { MoneyContext, MoneyLLM, MoneyResult, Role } from "../src/types.ts";
 
 export const OWNER = "+16175550100";
@@ -17,8 +17,8 @@ const quietLog = { debug() {}, info() {}, warn() {}, error() {} };
 
 export function setup() {
   const store = new MemoryMoneyStore();
-  const payments = new FakePayments();
-  const elf = createMoneyElf({ store, payments, now: () => NOW });
+  const rails = new FakeRails();
+  const elf = createMoneyElf({ store, rails, now: () => NOW });
   const move = { id: "mv_test", ownerHandle: OWNER, name: "Gavin" };
   let n = 0;
   async function say(
@@ -37,7 +37,7 @@ export function setup() {
     };
     return elf.handle(ctx);
   }
-  return { store, payments, elf, move, say };
+  return { store, rails, elf, move, say };
 }
 
 export function reply(r: MoneyResult): string {

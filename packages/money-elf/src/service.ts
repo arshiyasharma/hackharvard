@@ -9,8 +9,8 @@ import { fmtUsd, splitCents } from "./amounts.ts";
 import { type Books, owedTotal, type RecordTag, readBooks, tagged } from "./books.ts";
 import type { LedgerEntry, MoneyStore, PendingAction, Person } from "./ledger.ts";
 import type { Share } from "./parse.ts";
-import type { PaymentsProvider } from "./payments.ts";
-import type { MoneyEvent, MoneyMove, OutboundMessage, Role } from "./types.ts";
+import type { MoneyRails } from "./rails.ts";
+import type { MoneyEvent, MoneyMove, MoneyPoll, OutboundMessage, Role } from "./types.ts";
 
 export interface OpResult {
   lines: string[];
@@ -27,7 +27,7 @@ function sameName(a: string, b: string) {
 export class MoneyService {
   constructor(
     readonly store: MoneyStore,
-    readonly payments: PaymentsProvider,
+    readonly rails: MoneyRails,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -81,7 +81,7 @@ export class MoneyService {
   async account(p: Person): Promise<string> {
     if (p.nessieAccountId) return p.nessieAccountId;
     const [first, ...rest] = p.name.split(/\s+/);
-    const acct = await this.payments.openAccount({
+    const acct = await this.rails.openAccount({
       firstName: first || "Elves",
       lastName: rest.join(" ") || p.role,
       nickname: `${p.name} (${p.role})`,
@@ -94,30 +94,32 @@ export class MoneyService {
     return acct.accountId;
   }
 
+  /** The move's Escrow: a Savings account (SPEC §4) on its own "Elves Escrow" customer. */
   async escrowAccount(moveId: string): Promise<string> {
     const existing = await this.store.getEscrowAccount(moveId);
     if (existing) return existing;
-    const acct = await this.payments.openAccount({
+    const acct = await this.rails.openAccount({
       firstName: "Elves",
       lastName: "Escrow",
       nickname: `Escrow ${moveId}`,
+      type: "Savings",
     });
     await this.store.setEscrowAccount(moveId, acct.accountId);
     return acct.accountId;
   }
 
-  /** The owner's Moving Fund: a Savings account on the owner's own Nessie customer. */
+  /** The owner's Moving Fund: a second Checking account (SPEC §4) on the owner's own Nessie customer. */
   async fundAccount(move: MoneyMove): Promise<string> {
     const existing = await this.store.getFundAccount(move.id);
     if (existing) return existing;
     const owner = await this.owner(move);
     await this.account(owner);
     const fresh = (await this.store.getPerson(owner.id)) ?? owner;
-    const acct = await this.payments.openAccount({
+    const acct = await this.rails.openAccount({
       firstName: fresh.name,
       lastName: "Moving Fund",
       nickname: "Moving Fund",
-      type: "Savings",
+      type: "Checking",
       customerId: fresh.nessieCustomerId ?? undefined,
     });
     await this.store.setFundAccount(move.id, acct.accountId);
@@ -126,7 +128,7 @@ export class MoneyService {
 
   /** The live Ledger, read back from Nessie. */
   async books(move: MoneyMove): Promise<Books> {
-    return readBooks(this.store, this.payments, move.id);
+    return readBooks(this.store, this.rails, move.id);
   }
 
   /** Record a movement in Nessie, tagged so the live Ledger can read it back. */
@@ -138,7 +140,7 @@ export class MoneyService {
     tag: RecordTag,
     amountCents: number = entry.amountCents,
   ): Promise<LedgerEntry> {
-    const r = await this.payments.moveMoney({
+    const r = await this.rails.moveMoney({
       fromAccountId: from,
       toAccountId: to,
       amountCents,
@@ -152,6 +154,27 @@ export class MoneyService {
         withdrawalIds: [...fresh.nessie.withdrawalIds, ...(r.withdrawalId ? [r.withdrawalId] : [])],
         depositIds: [...fresh.nessie.depositIds, ...(r.depositId ? [r.depositId] : [])],
       },
+    });
+  }
+
+  /** Record money the owner paid a vendor (truck, storage, movers) as a Nessie purchase at that merchant. */
+  private async purchase(
+    entry: LedgerEntry,
+    from: string,
+    merchant: string,
+    description: string,
+    tag: RecordTag,
+  ): Promise<LedgerEntry> {
+    const r = await this.rails.purchase({
+      accountId: from,
+      merchant,
+      amountCents: entry.amountCents,
+      description: tagged(description, tag, entry.id),
+      date: this.today(),
+    });
+    const fresh = (await this.store.getEntry(entry.id)) ?? entry;
+    return this.store.updateEntry(entry.id, {
+      nessie: { ...fresh.nessie, purchaseIds: [...fresh.nessie.purchaseIds, r.purchaseId] },
     });
   }
 
@@ -210,7 +233,13 @@ export class MoneyService {
       paidBy: owner.id,
       status: "paid",
     });
-    await this.movement(expense, await this.account(owner), null, `${cap(input.what)} (you paid)`, "expense");
+    await this.purchase(
+      expense,
+      await this.account(owner),
+      cap(input.what),
+      `${cap(input.what)} (you paid)`,
+      "expense",
+    );
     out.events.push({
       type: "ledger.entry_added",
       payload: { entryId: expense.id, kind: "expense", amountCents: input.amountCents },
@@ -266,7 +295,7 @@ export class MoneyService {
       const p = e.owedBy ? await this.store.getPerson(e.owedBy) : undefined;
       if (!p) continue;
       const acct = await this.account(p);
-      const bill = await this.payments.createBill({
+      const bill = await this.rails.createBill({
         accountId: acct,
         payee: `${owner.name} (Elves Moving Fund)`,
         nickname: `${e.what} share`,
@@ -341,12 +370,12 @@ export class MoneyService {
     const left = e.amountCents - paidCents;
     const fresh = (await this.store.getEntry(e.id)) ?? e;
     if (e.loanId) {
-      await this.payments.updateLoan(e.loanId, {
+      await this.rails.updateLoan(e.loanId, {
         amountCents: left,
         status: left === 0 ? "paid off" : "open",
       });
     } else if (fresh.nessie.billId) {
-      await this.payments.updateBill(
+      await this.rails.updateBill(
         fresh.nessie.billId,
         left === 0 ? { status: "completed" } : { amountCents: left },
       );
@@ -437,14 +466,14 @@ export class MoneyService {
     if (!p) throw new Error(`split ${e.id} has no person`);
     const owner = await this.owner(move);
     const remaining = e.amountCents - e.paidCents;
-    const loan = await this.payments.createLoan({
+    const loan = await this.rails.createLoan({
       accountId: await this.account(p),
       amountCents: remaining,
       monthlyCents: monthly,
       description: `${p.name} owes ${owner.name}'s Moving Fund for the ${e.what} [elves:loan:${e.id}]`,
     });
     // The loan replaces the payment request.
-    if (e.nessie.billId) await this.payments.updateBill(e.nessie.billId, { status: "cancelled" });
+    if (e.nessie.billId) await this.rails.updateBill(e.nessie.billId, { status: "cancelled" });
     await this.store.updateEntry(e.id, { loanId: loan.loanId, loanMonthlyCents: monthly });
     out.events.push({
       type: "loan.created",
@@ -525,14 +554,26 @@ export class MoneyService {
   }
 
   // ---------- escrow for sales ----------
+  //
+  // SPEC §4: the buyer's price is held in the move's Escrow (Savings) account. On hand-off it moves into the
+  // Moving Fund once two signals are in, in either order: the buyer confirms pickup, plus the owner's OK (a yes
+  // or poll tap) or Move Map convergence. A no-show 24h past the pickup time, or the owner calling the sale
+  // off, refunds the buyer after the owner's yes.
 
   /**
-   * Hand-off from the Stuff Elf: the buyer paid for an item. The buyer's own action, so no owner approval;
-   * the money sits in escrow until the owner confirms pickup.
+   * Hand-off from the Stuff Elf / Deal Engine: the buyer paid for an item. The buyer's own action, so no owner
+   * approval; the money sits in escrow until the hand-off signals are in.
    */
   async openEscrow(
     move: MoneyMove,
-    input: { item: string; buyerName: string; buyerHandle: string | null; amountCents: number },
+    input: {
+      item: string;
+      buyerName: string;
+      buyerHandle: string | null;
+      amountCents: number;
+      /** When the buyer is due to pick up (ISO), for the 24h no-show rule. */
+      pickupAt?: string | null;
+    },
   ): Promise<OpResult & { entry: LedgerEntry }> {
     const out = empty();
     const buyer = await this.person(move.id, input.buyerName, "buyer", input.buyerHandle);
@@ -547,6 +588,7 @@ export class MoneyService {
       paidTo: owner.id,
       status: "pending",
       escrow: "held",
+      pickupAt: input.pickupAt ?? null,
     });
     entry = await this.movement(
       entry,
@@ -561,8 +603,13 @@ export class MoneyService {
     });
     out.outbound.push({
       toHandle: move.ownerHandle,
-      text: `${buyer.name} paid ${fmtUsd(entry.amountCents)} for the ${input.item}; it's held in escrow until you confirm pickup.`,
+      text: `${buyer.name} paid ${fmtUsd(entry.amountCents)} for the ${input.item}; it's held in escrow until ${buyer.name} confirms pickup and you OK it.`,
     });
+    if (buyer.handle)
+      out.outbound.push({
+        toHandle: buyer.handle,
+        text: `Your ${fmtUsd(entry.amountCents)} for the ${input.item} is held in escrow. Text "got it" here once you've picked it up.`,
+      });
     return { ...out, entry };
   }
 
@@ -573,6 +620,17 @@ export class MoneyService {
     return item ? held.filter((e) => e.what.toLowerCase().includes(item.toLowerCase())) : held;
   }
 
+  /** Close every open question about one entry (the sale moved on, or a newer question replaces it). */
+  private async dropPending(moveId: string, entryId: string): Promise<void> {
+    for (const a of await this.store.listPending(moveId))
+      if (a.entryIds.includes(entryId)) await this.store.removePending(a.id);
+  }
+
+  private releaseSummary(e: LedgerEntry): string {
+    return `move ${fmtUsd(e.amountCents)} from escrow to the Moving Fund for the ${e.what}`;
+  }
+
+  /** The owner says the pickup happened (release) or fell through (refund). Either waits for their yes. */
   async proposeEscrow(
     move: MoneyMove,
     kind: "release_escrow" | "refund_escrow",
@@ -592,15 +650,28 @@ export class MoneyService {
     const e = held[0];
     if (!e) return out;
     const buyer = await this.name(e.paidBy);
+    if (kind === "release_escrow" && e.ownerOkAt) {
+      out.lines.push(
+        `You already OK'd the ${e.what}. The ${fmtUsd(e.amountCents)} moves to the Moving Fund as soon as ${buyer} confirms pickup.`,
+      );
+      return out;
+    }
+    // One open question per sale: a newer release or refund question replaces the older one.
+    await this.dropPending(move.id, e.id);
     const summary =
       kind === "release_escrow"
-        ? `release ${fmtUsd(e.amountCents)} from escrow for the ${e.what}`
+        ? this.releaseSummary(e)
         : `refund ${buyer} ${fmtUsd(e.amountCents)} for the ${e.what}`;
     const pending = await this.store.addPending({ moveId: move.id, kind, summary, entryIds: [e.id] });
     out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind } });
-    if (kind === "release_escrow") {
-      out.lines.push(`${buyer} picked up the ${e.what}. ${fmtUsd(e.amountCents)} is in escrow.`);
-      out.lines.push("Release it to you? Reply yes.");
+    if (kind === "release_escrow" && e.buyerConfirmedAt) {
+      out.lines.push(`${buyer} confirmed pickup of the ${e.what}. ${fmtUsd(e.amountCents)} is in escrow.`);
+      out.lines.push("Move it to the Moving Fund? Reply yes.");
+    } else if (kind === "release_escrow") {
+      out.lines.push(
+        `${fmtUsd(e.amountCents)} for the ${e.what} is in escrow. It moves to the Moving Fund once you OK it and ${buyer} confirms pickup.`,
+      );
+      out.lines.push("OK it now? Reply yes.");
     } else {
       out.lines.push(
         `Sorry the ${e.what} pickup fell through. ${buyer}'s ${fmtUsd(e.amountCents)} is still in escrow.`,
@@ -617,27 +688,198 @@ export class MoneyService {
       out.lines.push("That sale isn't in escrow anymore, so nothing moved.");
       return out;
     }
-    const escrow = await this.escrowAccount(move.id);
+    const buyer = e.paidBy ? await this.store.getPerson(e.paidBy) : undefined;
+    if (!buyer) throw new Error(`sale ${e.id} has no buyer`);
     if (action.kind === "release_escrow") {
-      const owner = await this.owner(move);
-      await this.movement(e, escrow, await this.account(owner), `Release: ${e.what}`, "escrow_release");
-      await this.store.updateEntry(e.id, { escrow: "released", status: "paid", paidTo: owner.id });
-      out.events.push({ type: "escrow.released", payload: { entryId: e.id, amountCents: e.amountCents } });
-      out.lines.push(`Released ${fmtUsd(e.amountCents)} for the ${e.what} to you.`);
-    } else {
-      const buyer = e.paidBy ? await this.store.getPerson(e.paidBy) : undefined;
-      if (!buyer) throw new Error(`sale ${e.id} has no buyer`);
-      await this.movement(e, escrow, await this.account(buyer), `Refund: ${e.what}`, "escrow_refund");
-      await this.store.updateEntry(e.id, { escrow: "refunded", status: "refunded", paidTo: buyer.id });
-      out.events.push({ type: "escrow.refunded", payload: { entryId: e.id, amountCents: e.amountCents } });
+      // The owner's 👍 is one signal; the money moves only once the buyer has confirmed too.
+      const ok = await this.store.updateEntry(e.id, { ownerOkAt: this.now().toISOString() });
+      out.events.push({ type: "escrow.owner_ok", payload: { entryId: e.id } });
+      const released = await this.tryRelease(move, ok);
+      if (released) return mergeOps(out, released);
+      out.lines.push(
+        `OK'd. I'll move the ${fmtUsd(e.amountCents)} for the ${e.what} to the Moving Fund as soon as ${buyer.name} confirms pickup.`,
+      );
       if (buyer.handle)
         out.outbound.push({
           toHandle: buyer.handle,
-          text: `Your ${fmtUsd(e.amountCents)} for the ${e.what} has been refunded.`,
+          text: `Did you pick up the ${e.what}? Text "got it" here to confirm.`,
         });
+      return out;
+    }
+    await this.movement(
+      e,
+      await this.escrowAccount(move.id),
+      await this.account(buyer),
+      `Refund: ${e.what}`,
+      "escrow_refund",
+    );
+    await this.store.updateEntry(e.id, { escrow: "refunded", status: "refunded", paidTo: buyer.id });
+    await this.dropPending(move.id, e.id);
+    out.events.push({ type: "escrow.refunded", payload: { entryId: e.id, amountCents: e.amountCents } });
+    if (buyer.handle)
+      out.outbound.push({
+        toHandle: buyer.handle,
+        text: `Your ${fmtUsd(e.amountCents)} for the ${e.what} has been refunded.`,
+      });
+    out.lines.push(
+      `Refunded ${buyer.name} ${fmtUsd(e.amountCents)}. I'll tell the Stuff Elf the ${e.what} is available again.`,
+    );
+    return out;
+  }
+
+  /** Release a held sale into the Moving Fund if both hand-off signals are in; otherwise do nothing. */
+  private async tryRelease(move: MoneyMove, e: LedgerEntry): Promise<OpResult | null> {
+    if (e.escrow !== "held" || !e.buyerConfirmedAt || !(e.ownerOkAt || e.mapConvergedAt)) return null;
+    const out = empty();
+    await this.movement(
+      e,
+      await this.escrowAccount(move.id),
+      await this.fundAccount(move),
+      `Release to the Moving Fund: ${e.what}`,
+      "escrow_release",
+    );
+    const owner = await this.owner(move);
+    await this.store.updateEntry(e.id, { escrow: "released", status: "paid", paidTo: owner.id });
+    await this.dropPending(move.id, e.id);
+    out.events.push({
+      type: "escrow.released",
+      payload: {
+        entryId: e.id,
+        amountCents: e.amountCents,
+        signals: ["buyer_confirmed", e.ownerOkAt ? "owner_ok" : "map_converged"],
+      },
+    });
+    out.lines.push(`Moved ${fmtUsd(e.amountCents)} for the ${e.what} from escrow into the Moving Fund.`);
+    return out;
+  }
+
+  /**
+   * The buyer confirms they have the item: from their own DM ("got it"), or from the Deal Engine when it sees
+   * the confirmation (pass `entryId`). If the owner's OK or Map convergence is already in, the money moves now;
+   * otherwise the owner gets the release question with a poll. Lines are for the buyer.
+   */
+  async confirmPickup(
+    move: MoneyMove,
+    input: { via: "buyer" | "engine"; entryId?: string; buyer?: Person; item?: string | null },
+  ): Promise<OpResult> {
+    const out = empty();
+    let held = await this.heldSale(move.id, null);
+    if (input.entryId) held = held.filter((e) => e.id === input.entryId);
+    const buyerId = input.buyer?.id;
+    if (buyerId) held = held.filter((e) => e.paidBy === buyerId);
+    // Narrow by the item they named, unless that rules out everything (a buyer's wording is loose).
+    const item = input.item?.toLowerCase();
+    const named = item ? held.filter((e) => e.what.toLowerCase().includes(item)) : [];
+    if (named.length) held = named;
+    const first = held[0];
+    if (!first || held.length !== 1) {
       out.lines.push(
-        `Refunded ${buyer.name} ${fmtUsd(e.amountCents)}. I'll tell the Stuff Elf the ${e.what} is available again.`,
+        first
+          ? `Which one did you pick up: ${held.map((e) => e.what).join(" or ")}?`
+          : "I don't see a payment of yours waiting in escrow.",
       );
+      return out;
+    }
+    const e = first.buyerConfirmedAt
+      ? first
+      : await this.store.updateEntry(first.id, { buyerConfirmedAt: this.now().toISOString() });
+    out.events.push({ type: "escrow.buyer_confirmed", payload: { entryId: e.id, via: input.via } });
+    const buyer = await this.name(e.paidBy);
+    const released = await this.tryRelease(move, e);
+    if (released) {
+      out.events.push(...released.events);
+      out.outbound.push({
+        toHandle: move.ownerHandle,
+        text: `${buyer} confirmed pickup of the ${e.what}, so ${fmtUsd(e.amountCents)} moved from escrow into the Moving Fund.`,
+      });
+      out.lines.push(`Thanks, pickup of the ${e.what} is confirmed. You're all set.`);
+      return out;
+    }
+    // Still needs the owner's 👍. Reuse an open release question; a stale refund question is dropped.
+    const open = (await this.store.listPending(move.id)).find(
+      (a) => a.kind === "release_escrow" && a.entryIds.includes(e.id),
+    );
+    if (!open) await this.dropPending(move.id, e.id);
+    const pending =
+      open ??
+      (await this.store.addPending({
+        moveId: move.id,
+        kind: "release_escrow",
+        summary: this.releaseSummary(e),
+        entryIds: [e.id],
+      }));
+    if (!open)
+      out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } });
+    out.outbound.push({
+      toHandle: move.ownerHandle,
+      text: `${buyer} confirmed they picked up the ${e.what}. Move the ${fmtUsd(e.amountCents)} from escrow to the Moving Fund? Reply yes.`,
+      poll: approvalPollFor(pending),
+    });
+    out.lines.push(`Thanks, pickup of the ${e.what} is confirmed. The seller releases the payment next.`);
+    return out;
+  }
+
+  /**
+   * Move Map convergence (a stub hook until the Move Map exists): the Deal Engine calls this when the buyer's
+   * and the owner's pins meet at the hand-off. It stands in for the owner's 👍 as the second release signal.
+   */
+  async mapConverged(move: MoneyMove, entryId: string): Promise<OpResult> {
+    const out = empty();
+    const found = await this.store.getEntry(entryId);
+    if (found?.kind !== "sale" || found.escrow !== "held") {
+      out.lines.push("That sale isn't in escrow anymore.");
+      return out;
+    }
+    const e = found.mapConvergedAt
+      ? found
+      : await this.store.updateEntry(found.id, { mapConvergedAt: this.now().toISOString() });
+    out.events.push({ type: "escrow.map_converged", payload: { entryId: e.id } });
+    const released = await this.tryRelease(move, e);
+    if (!released) return out;
+    out.events.push(...released.events);
+    out.outbound.push({
+      toHandle: move.ownerHandle,
+      text: `The ${e.what} hand-off checked out on the Move Map and ${await this.name(e.paidBy)} confirmed pickup, so ${fmtUsd(e.amountCents)} moved into the Moving Fund.`,
+    });
+    return out;
+  }
+
+  /** Set or move the pickup time (the Deal Engine's one reschedule). Clears any no-show question. */
+  async setPickupTime(move: MoneyMove, entryId: string, pickupAt: string): Promise<void> {
+    const e = await this.store.getEntry(entryId);
+    if (e?.kind !== "sale" || e.escrow !== "held") return;
+    if (e.noShowAt) await this.dropPending(move.id, e.id);
+    await this.store.updateEntry(e.id, { pickupAt, noShowAt: null });
+  }
+
+  /**
+   * The 24h no-show rule, for the Deal Engine's periodic sweep. A buyer who hasn't confirmed pickup more than
+   * 24h after the pickup time gets a refund staged for the owner's yes, sent with a poll. It asks once per
+   * sale, and nothing moves here.
+   */
+  async sweepNoShows(move: MoneyMove): Promise<OpResult> {
+    const out = empty();
+    const now = this.now();
+    for (const e of await this.store.listEntries(move.id)) {
+      if (!isNoShow(e, now)) continue;
+      await this.store.updateEntry(e.id, { noShowAt: now.toISOString() });
+      await this.dropPending(move.id, e.id);
+      const buyer = await this.name(e.paidBy);
+      const pending = await this.store.addPending({
+        moveId: move.id,
+        kind: "refund_escrow",
+        summary: `refund ${buyer} ${fmtUsd(e.amountCents)} for the ${e.what} (no-show)`,
+        entryIds: [e.id],
+      });
+      out.events.push(
+        { type: "escrow.no_show", payload: { entryId: e.id, pickupAt: e.pickupAt } },
+        { type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } },
+      );
+      out.outbound.push({
+        toHandle: move.ownerHandle,
+        text: `${buyer} didn't pick up the ${e.what}, and it's been over 24 hours. Refund their ${fmtUsd(e.amountCents)} from escrow? Reply yes.`,
+        poll: approvalPollFor(pending),
+      });
     }
     return out;
   }
@@ -831,6 +1073,36 @@ export class MoneyService {
       lines.push(`Live from Nessie: ${books.records} records, ${fmtUsd(owedTotal(books))} outstanding.`);
     return lines.slice(0, 3);
   }
+}
+
+/** A no-show is a buyer who hasn't confirmed pickup this long after the pickup time (SPEC §4). */
+export const NO_SHOW_MS = 24 * 60 * 60 * 1000;
+
+/** True when a held sale's buyer is past the no-show window and the owner hasn't been asked about it yet. */
+export function isNoShow(e: LedgerEntry, now: Date): boolean {
+  if (e.kind !== "sale" || e.escrow !== "held" || !e.pickupAt || e.buyerConfirmedAt || e.noShowAt)
+    return false;
+  return now.getTime() - Date.parse(e.pickupAt) > NO_SHOW_MS;
+}
+
+/** The approval poll for one pending action. Option ids carry the action id, so a tap can't hit the wrong one. */
+export function approvalPollFor(a: PendingAction): MoneyPoll {
+  return {
+    question: `${cap(a.summary)}?`,
+    options: [
+      { id: `money:approve:${a.id}`, text: "Yes" },
+      { id: `money:decline:${a.id}`, text: "Not now" },
+    ],
+    selectionMode: "single",
+  };
+}
+
+function mergeOps(a: OpResult, b: OpResult): OpResult {
+  return {
+    lines: [...a.lines, ...b.lines],
+    events: [...a.events, ...b.events],
+    outbound: [...a.outbound, ...b.outbound],
+  };
 }
 
 /** Default plan: about four monthly payments, rounded up to whole dollars, at least $5. */

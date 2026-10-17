@@ -11,20 +11,22 @@ Docs: https://nessieisreal.com/docs. OpenAPI spec: https://nessieisreal.com/ness
 
 - Create calls return `{"code":201,"message":"...","objectCreated":{"_id":"<uuid>",...}}`. The spec says only a string comes back; it's wrong.
 - **Balances never change.** Withdrawals and deposits are stored, but `account.balance` stays put, and overdrafts are accepted. The Money Elf's Ledger is the source of truth for balances; Nessie is the audit trail.
-- **Transfers can't name a payee.** `POST /accounts/{id}/transfers` accepts only `transaction_date, status, amount, description`. A movement from A to B is a withdrawal on A plus a deposit on B (`NessiePayments.moveMoney`).
+- **Transfers can't name a payee.** (re-checked Oct 17 2026: `payee_id` and `medium` are rejected) `POST /accounts/{id}/transfers` accepts only `transaction_date, status, amount, description`. A movement from A to B is a withdrawal on A plus a deposit on B (`NessieRails.moveMoney`).
 - Withdrawal/deposit body: `{medium:"balance", amount:<int cents>, status:"completed", transaction_date:"YYYY-MM-DD", description}`. `status` is one of pending, cancelled, completed.
 - Bills: always send `recurring_date` (1–31). Without it, `GET /accounts/{id}/bills` and `GET /bills/{id}` fail validation. Update with `PUT /bills/{id} {"status":"completed"}`.
 - Unknown fields are rejected ("extra fields not permitted"). That makes probing cheap: POST `{"<field>":"x"}`, and the error lists the missing required fields and rejects the bad ones, without creating anything.
 - There is no customer DELETE, so sandbox data piles up. Name test data clearly (for example "Smoke Owner").
 - Amounts are integers, and the team stores **cents** (decision #7).
 - Loans: `POST /accounts/{id}/loans` takes `{type, status, credit_score, monthly_payment, amount, description}`. `type` and `status` are free text. `PUT /loans/{id}` updates `amount` and `status`, so we lower `amount` to what's left after each payment.
-- `POST /customers/{id}/accounts` opens a second account (for example `type: "Savings"`) on an existing customer. That's how the Moving Fund works.
-- An empty list can come back as **404 with a message string** ("No transfers found for this account"). Treat it as `[]` (`NessiePayments.list`).
-- Purchases need a `merchant_id`, `medium` and `amount`; merchants can be created with `POST /merchants`. ATMs and branches return Capital One locations, but the `lat/lng/rad` filter seemed to be ignored (a Cambridge query returned Arlington, VA). Enterprise list endpoints timed out once.
+- `POST /customers/{id}/accounts` opens a second account (for example a second `type: "Checking"`) on an existing customer. That's how the Moving Fund (a second Checking account) works; Escrow is a Savings account on its own customer.
+- An empty list can come back as **404 with a message string** ("No transfers found for this account"). Treat it as `[]` (`NessieRails.list`).
+- **Purchases** (`POST /accounts/{id}/purchases`): `{merchant_id, medium:"balance", amount, status, purchase_date, description}`. Always send `status` and `purchase_date`: without them the purchase is stored, then `GET /accounts/{id}/purchases` fails validation for that account for good. `merchant_id` isn't checked (a made-up id is accepted). Purchases don't change balances either. An empty purchase list is `200 []`, and `GET /purchases/{id}` isn't routed. The Money Elf posts truck, storage and movers this way (`NessieRails.purchase`).
+- **Merchants** (`POST /merchants`): `{name, category}`, with `category` a string; unknown fields are silently dropped here, unlike elsewhere. `GET /merchants` didn't list merchants we created, so `NessieRails` caches merchant ids by name per process.
+- ATMs and branches return Capital One locations, but the `lat/lng/rad` filter seemed to be ignored (a Cambridge query returned Arlington, VA). Enterprise list endpoints timed out once.
 
 ## How the Money Elf uses Nessie as its ledger
 
-Every movement's description ends in a tag, `[elves:<kind>:<ledgerEntryId>]` (decision #27). `src/books.ts` reads the owner's checking account, the Moving Fund (Savings), escrow and each person's account, then rebuilds the totals from the tagged records, open bills and open loans. Run `/books` in `scripts/chat.ts` to see it account by account.
+Every movement's description ends in a tag, `[elves:<kind>:<ledgerEntryId>]` (decision #27). `src/books.ts` reads the owner's checking account, the Moving Fund (a second Checking account), Escrow (Savings) and each person's account, then rebuilds the totals from the tagged records, open bills and open loans. Run `/books` in `scripts/chat.ts` to see it account by account.
 
 ## Probing safely
 
@@ -39,4 +41,4 @@ Every movement's description ends in a tag, `[elves:<kind>:<ledgerEntryId>]` (de
 ```bash
 K=$(grep -E '^NESSIE_API_KEY=' .env | cut -d= -f2- | tr -d '"'); curl -sS "https://prod-api.nessieisreal.com/accounts/<id>/withdrawals?key=$K"
 ```
-The code lives in `packages/money-elf/src/payments.ts`: `NessiePayments` for real calls, `FakePayments` for tests.
+The code lives in `packages/money-elf/src/rails.ts` behind the `MoneyRails` interface: `NessieRails` for real calls, `FakeRails` for tests.

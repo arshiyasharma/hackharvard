@@ -5,7 +5,7 @@ import { createLedgerHandler, ledgerToken, ledgerUrl } from "../src/ledger-http.
 import { ledgerPageHtml } from "../src/ledger-page.ts";
 import { buildLedgerView, type LedgerView } from "../src/ledger-view.ts";
 import { createMoneyElf } from "../src/money-elf.ts";
-import { FakePayments } from "../src/payments.ts";
+import { FakeRails } from "../src/rails.ts";
 import type { MoneyContext, Role } from "../src/types.ts";
 import { eventTypes, fakeLLM, NOW, OWNER, reply, setup } from "./helpers.ts";
 
@@ -14,8 +14,8 @@ const LINKS = { publicUrl: "https://elves.test", secret: "s3cret" };
 
 function linkedSetup() {
   const store = new MemoryMoneyStore();
-  const payments = new FakePayments();
-  const elf = createMoneyElf({ store, payments, now: () => NOW, links: LINKS });
+  const rails = new FakeRails();
+  const elf = createMoneyElf({ store, rails, now: () => NOW, links: LINKS });
   const move = { id: "mv_test", ownerHandle: OWNER, name: "Gavin" };
   let n = 0;
   const say = (
@@ -35,7 +35,7 @@ function linkedSetup() {
       log: { debug() {}, info() {}, warn() {}, error() {} },
       now: () => NOW,
     } as MoneyContext);
-  return { store, payments, elf, move, say };
+  return { store, rails, elf, move, say };
 }
 
 async function demo(s: ReturnType<typeof linkedSetup>) {
@@ -205,7 +205,7 @@ describe("approval polls", () => {
     const no = r.poll?.options[1] ?? { id: "", text: "" };
     expect(reply(await s.say(null, { vote: no }))).toContain("I won't pay Sam $40");
     expect(reply(await s.say(null, { vote: no }))).toContain("already been handled");
-    expect(s.payments.calls.filter((c) => c.op === "moveMoney")).toHaveLength(0);
+    expect(s.rails.calls.filter((c) => c.op === "moveMoney")).toHaveLength(0);
   });
 
   test("only the owner's taps count", async () => {

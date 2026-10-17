@@ -11,7 +11,7 @@ Run from the repo root. Bun must be installed (`npm i -g bun` if `bun` is missin
 2. Format, then lint: `bunx biome check --write packages/money-elf`, then `bunx biome check packages/money-elf`. The package keeps **zero** warnings, like the foundation packages.
 3. Typecheck: `bunx tsc -p tsconfig.json --noEmit`. This also checks `test/foundation-compat.ts`, which proves the Money Elf still fits the crew's `Elf` contract.
 4. Tests: `bun test packages/money-elf`, then the whole repo with `bun test`, so a Money Elf change can't break a teammate's Elf. Report the pass/fail counts, and quote any failure in full.
-5. Live check, only when payments code changed (`src/payments.ts`, `src/service.ts`) or the user asks for it: `bun run packages/money-elf/scripts/smoke.ts`. It needs `NESSIE_API_KEY` in `.env` and creates simulated customers in the team's Nessie sandbox. Before running it, tell the user it writes to Nessie. Every board line it prints must end on a non-`blocked` status.
+5. Live check, only when money-rails code changed (`src/rails.ts`, `src/service.ts`, `src/books.ts`) or the user asks for it: `bun run packages/money-elf/scripts/smoke.ts`. It needs `NESSIE_API_KEY` in `.env` and creates simulated customers in the team's Nessie sandbox. Before running it, tell the user it writes to Nessie. Every board line it prints must end on a non-`blocked` status.
 6. Visual check, when the Ledger card or page changed (`src/ledger-card.ts`, `ledger-page.ts`, `ledger-view.ts`):
    - Run a scenario through the local chat and keep stdin open, so its server stays up:
      ```bash

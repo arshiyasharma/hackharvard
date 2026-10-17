@@ -7,7 +7,7 @@
  */
 import { fmtUsd } from "./amounts.ts";
 import type { MoneyStore, Person } from "./ledger.ts";
-import type { AccountRecords, PaymentsProvider } from "./payments.ts";
+import type { AccountRecords, MoneyRails } from "./rails.ts";
 
 export type RecordTag =
   | "expense"
@@ -45,7 +45,7 @@ export interface PersonOwes {
 }
 
 export interface Books {
-  /** Balance of the Moving Fund savings account. */
+  /** Balance of the Moving Fund checking account. */
   fundCents: number;
   escrowCents: number;
   /** Shared costs and payments the owner paid out (deposits are tracked separately, in depositsOutCents). */
@@ -55,7 +55,7 @@ export interface Books {
   salesCents: number;
   depositsOutCents: number;
   owes: PersonOwes[];
-  /** Tagged movements on the owner's, Moving Fund and escrow accounts, newest first. */
+  /** Tagged movements and purchases on the owner's, Moving Fund and escrow accounts, newest first. */
   recent: Activity[];
   /** Number of tagged Nessie records the totals were built from. */
   records: number;
@@ -80,6 +80,7 @@ function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
   for (const [list, direction] of [
     [r.deposits, "in"],
     [r.withdrawals, "out"],
+    [r.purchases, "out"],
   ] as const) {
     for (const x of list) {
       const t = readTag(x.description);
@@ -107,19 +108,15 @@ function sumTagged(recs: { amountCents: number; description: string }[], tags: R
 }
 
 function countTagged(r: AccountRecords): number {
-  return [...r.withdrawals, ...r.deposits].filter((x) => readTag(x.description)).length;
+  return [...r.withdrawals, ...r.deposits, ...r.purchases].filter((x) => readTag(x.description)).length;
 }
 
-export async function readBooks(
-  store: MoneyStore,
-  payments: PaymentsProvider,
-  moveId: string,
-): Promise<Books> {
+export async function readBooks(store: MoneyStore, rails: MoneyRails, moveId: string): Promise<Books> {
   const people = await store.listPeople(moveId);
   const owner = people.find((p) => p.role === "owner");
   const fundId = await store.getFundAccount(moveId);
   const escrowId = await store.getEscrowAccount(moveId);
-  const read = (id: string | null | undefined) => (id ? payments.readAccount(id) : Promise.resolve(null));
+  const read = (id: string | null | undefined) => (id ? rails.readAccount(id) : Promise.resolve(null));
   const others = people.filter((p) => p.role !== "owner" && p.nessieAccountId);
   const [ownerRecs, fundRecs, escrowRecs, ...otherRecs] = await Promise.all([
     read(owner?.nessieAccountId),
@@ -140,18 +137,23 @@ export async function readBooks(
     records: 0,
   };
   if (ownerRecs) {
-    books.spentCents += sumTagged(ownerRecs.withdrawals, ["expense", "payment"]);
+    // Shared costs are purchases at a merchant (SPEC §4); older moves recorded them as withdrawals.
+    books.spentCents +=
+      sumTagged(ownerRecs.purchases, ["expense"]) + sumTagged(ownerRecs.withdrawals, ["expense", "payment"]);
     books.depositsOutCents +=
       sumTagged(ownerRecs.withdrawals, ["deposit_out"]) - sumTagged(ownerRecs.deposits, ["deposit_back"]);
     books.collectedCents += sumTagged(ownerRecs.deposits, ["share_paid_outside"]);
+    // Older moves released sales to the owner's own account; now they go into the Moving Fund.
     books.salesCents += sumTagged(ownerRecs.deposits, ["escrow_release"]);
     books.records += countTagged(ownerRecs);
   }
   if (fundRecs) {
     books.fundCents =
       fundRecs.deposits.reduce((a, r) => a + r.amountCents, 0) -
-      fundRecs.withdrawals.reduce((a, r) => a + r.amountCents, 0);
+      fundRecs.withdrawals.reduce((a, r) => a + r.amountCents, 0) -
+      fundRecs.purchases.reduce((a, r) => a + r.amountCents, 0);
     books.collectedCents += sumTagged(fundRecs.deposits, ["share_paid", "loan_payment"]);
+    books.salesCents += sumTagged(fundRecs.deposits, ["escrow_release"]);
     books.spentCents += sumTagged(fundRecs.withdrawals, ["payment"]);
     books.records += countTagged(fundRecs);
   }
