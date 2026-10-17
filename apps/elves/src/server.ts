@@ -9,6 +9,11 @@ export function createServer(deps: {
   service: Service;
   memory?: MoveMemory | null;
   db?: Db | null;
+  /** Retell delivery handler; the route is off (404) when unset. Gets the raw body, which the signature covers. */
+  retell?: (
+    rawBody: string,
+    signature: string | null,
+  ) => Promise<{ status: number; body: Record<string, unknown> }>;
   info: Record<string, unknown>;
 }) {
   const app = new Hono();
@@ -26,6 +31,12 @@ export function createServer(deps: {
       db,
       stats: deps.service.stats(),
     });
+  });
+  app.post("/webhooks/retell", async (c) => {
+    if (!deps.retell) return c.json({ error: "voice is not configured" }, 404);
+    const raw = await c.req.text();
+    const res = await deps.retell(raw, c.req.header("x-retell-signature") ?? null);
+    return c.json(res.body, res.status as 200);
   });
   app.get("/moves", async (c) => c.json(await deps.store.listMoves()));
   app.get("/board/:moveId", async (c) => {
