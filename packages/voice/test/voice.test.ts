@@ -143,3 +143,31 @@ describe("handleRetellWebhook", () => {
     expect(sent).toHaveLength(1);
   });
 });
+
+describe("inbound-call webhook (the phone number's setting, not the agent's)", () => {
+  test("answers 200 with string variables for a known caller, nothing for strangers or unsigned requests", async () => {
+    const { deps, store, move } = await setup();
+    await store.updateMove(move.id, { moveOutAt: "2027-08-29" });
+    const d = { ...deps, apiKey: KEY };
+    const body = JSON.stringify({
+      event: "call_inbound",
+      call_inbound: { from_number: "+14255269066", to_number: "+1740" },
+    });
+    const ok = await handleRetellWebhook(d, body, signRetell(body, KEY));
+    expect(ok.status).toBe(200);
+    const vars = (ok.body.call_inbound as { dynamic_variables: Record<string, string> }).dynamic_variables;
+    expect(vars.known_caller).toBe("yes");
+    expect(vars.known_move_out).toContain("29");
+    expect(Object.values(vars).every((v) => typeof v === "string")).toBe(true);
+
+    const stranger = JSON.stringify({ event: "call_inbound", call_inbound: { from_number: "+19999999999" } });
+    const s = await handleRetellWebhook(d, stranger, signRetell(stranger, KEY));
+    expect((s.body.call_inbound as { dynamic_variables: Record<string, string> }).dynamic_variables).toEqual({
+      known_caller: "no",
+    });
+
+    const unsigned = await handleRetellWebhook(d, body, null);
+    expect(unsigned.status).toBe(200);
+    expect(unsigned.body).toEqual({ call_inbound: { dynamic_variables: {} } });
+  });
+});
