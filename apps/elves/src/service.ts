@@ -47,6 +47,8 @@ export interface Service {
   run: (signal: AbortSignal) => Promise<void>;
   /** One Last Call pass now; returns how many texts went out. */
   sweep: () => Promise<number>;
+  /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
+  notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
   stats: () => Record<string, unknown>;
 }
 
@@ -587,11 +589,21 @@ export function createService(deps: ServiceDeps): Service {
     }
   }
 
+  async function notifyOwner(moveId: string, elf: ElfName, text: string, key: string): Promise<boolean> {
+    const move = await deps.store.getMove(moveId);
+    if (!move) return false;
+    const sk = sendKey("notify", key);
+    if (await deps.store.getSend(sk)) return false;
+    await deliverTo(move, elf, { spaceId: move.ownerSpaceId, text }, sk, null);
+    return Boolean(await deps.store.getSend(sk));
+  }
+
   return {
     pipeline,
     handleBatch,
     run,
     sweep,
+    notifyOwner,
     stats: () => ({
       ...counters,
       memory: mem?.stats() ?? { kind: "off" },

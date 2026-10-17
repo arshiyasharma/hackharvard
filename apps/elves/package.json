@@ -13,6 +13,7 @@
     "@elves/photon": "workspace:*",
     "@elves/pipeline": "workspace:*",
     "@elves/shared": "workspace:*",
+    "@elves/voice": "workspace:*",
     "hono": "^4.13.0"
   }
 }

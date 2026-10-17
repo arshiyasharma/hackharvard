@@ -2,6 +2,7 @@ import { createListings } from "@elves/listings";
 import { createLLM } from "@elves/llm";
 import { Photon2Transport, PhotonClient, ScriptTransport, type Transport } from "@elves/photon";
 import { createLogger } from "@elves/shared";
+import { handleRetellWebhook } from "@elves/voice";
 import { openMemory, openStore } from "./boot.ts";
 import { loadConfig } from "./config.ts";
 import { createServer } from "./server.ts";
@@ -44,9 +45,27 @@ const service = createService({
   publicUrl: config.publicUrl,
   logger: log,
 });
+const retellKey = process.env.RETELL_API_KEY?.trim() || null;
 const app = createServer({
   store,
   service,
+  retell: retellKey
+    ? (raw, signature) =>
+        handleRetellWebhook(
+          {
+            store,
+            llm,
+            memory,
+            apiKey: retellKey,
+            logger: createLogger("voice"),
+            sendRecap: async (moveId, text, callId) => {
+              await service.notifyOwner(moveId, "crew_lead", text, callId);
+            },
+          },
+          raw,
+          signature,
+        )
+    : undefined,
   memory,
   db: opened.db,
   info: {

@@ -23,6 +23,7 @@
         "@elves/photon": "workspace:*",
         "@elves/pipeline": "workspace:*",
         "@elves/shared": "workspace:*",
+        "@elves/voice": "workspace:*",
         "hono": "^4.13.0",
       },
     },
@@ -107,6 +108,17 @@
         "zod": "^4.1.0",
       },
     },
+    "packages/voice": {
+      "name": "@elves/voice",
+      "version": "0.1.0",
+      "dependencies": {
+        "@elves/elves": "workspace:*",
+        "@elves/llm": "workspace:*",
+        "@elves/memory": "workspace:*",
+        "@elves/shared": "workspace:*",
+        "zod": "^4.1.0",
+      },
+    },
   },
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.135.0", "", { "dependencies": { "@opentelemetry/api": "^1.4.1", "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-WWrdL57JhU5KoynpTjt9GXK6k7ud9nPw2uw/Trn+oBXh6s0KpjhAccWZm2Qxw08ARYG1UDQj5iC+JO42j1rt/g=="],
@@ -154,6 +166,8 @@
     "@elves/service": ["@elves/service@workspace:apps/elves"],
 
     "@elves/shared": ["@elves/shared@workspace:packages/shared"],
+
+    "@elves/voice": ["@elves/voice@workspace:packages/voice"],
 
     "@heif2jpeg/heif2jpeg-darwin-arm64": ["@heif2jpeg/heif2jpeg-darwin-arm64@0.1.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-HSXg4gGIb/RUwdUyRfXMopxvs8JpTLexW5+XLV3MqNZ8bMjUINv8aAigBECZ7It8dFWfcpui236S+z/LLMMFHQ=="],
 
