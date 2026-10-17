@@ -1,0 +1,16 @@
+{
+  "name": "@elves/elves",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@elves/shared": "workspace:*",
+    "@elves/photon": "workspace:*",
+    "@elves/llm": "workspace:*",
+    "@elves/pipeline": "workspace:*",
+    "zod": "^4.1.0"
+  }
+}

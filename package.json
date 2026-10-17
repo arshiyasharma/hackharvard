@@ -1,0 +1,21 @@
+{
+  "name": "elves",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun run --watch apps/elves/src/index.ts",
+    "start": "bun run apps/elves/src/index.ts",
+    "demo": "bun run scripts/demo.ts",
+    "photon": "bun run scripts/photon.ts",
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.9.0"
+  }
+}
