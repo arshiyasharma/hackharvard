@@ -152,3 +152,40 @@ export function formatDate(iso: string): string {
   const dt = new Date(Date.UTC(y ?? 2026, (m ?? 1) - 1, d ?? 1));
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
+
+const MONTH_WORD =
+  /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/;
+const RANGE_SPLIT = /\b(?:to|through|thru|until|till)\b|\s[–—-]\s|(?<=\d)[–—](?=\d)/;
+
+/** One side of a range: a full date, or a bare month ("june") taken as its first or last day. */
+function sideDate(side: string, now: Date, edge: "start" | "end"): string | null {
+  const full = parseDate(side, now);
+  if (full) return full;
+  const m = side.match(MONTH_WORD);
+  if (!m?.[1]) return null;
+  const month = MONTHS[m[1]] ?? 1;
+  let year = now.getFullYear();
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  if (first.getTime() < now.getTime() - 60 * 86400_000) year += 1;
+  const day = edge === "start" ? 1 : new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+/**
+ * "june 1 to aug 30", "june through august", "6/1 - 8/30": a start and an end. A single date gives only a
+ * start; no date gives nulls.
+ */
+export function parseDateRange(text: string, now: Date): { start: string | null; end: string | null } {
+  const t = text.toLowerCase();
+  const idx = t.search(RANGE_SPLIT);
+  if (idx > 0) {
+    const sep = t.slice(idx).match(RANGE_SPLIT)?.[0] ?? "";
+    const left = t.slice(Math.max(0, idx - 40), idx);
+    const right = t.slice(idx + sep.length, idx + sep.length + 40);
+    const start = sideDate(left, now, "start");
+    const end = sideDate(right, now, "end");
+    if (start && end && end >= start) return { start, end };
+    if (start || end) return { start: start ?? parseDate(t, now), end: start && end ? null : end };
+  }
+  return { start: parseDate(t, now), end: null };
+}

@@ -1,5 +1,16 @@
-import { allElves, type Elf, type ElfContext, route } from "@elves/elves";
+import {
+  allElves,
+  batchText,
+  type Elf,
+  type ElfContext,
+  type ElfReply,
+  EMPTY_CONVERSATION,
+  route,
+  spaceOwnerKey,
+} from "@elves/elves";
+import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
+import type { MoveMemory } from "@elves/memory";
 import type { InboundMessage, Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import { createLogger, type Logger, type Move, type Participant, type Store } from "@elves/shared";
@@ -9,6 +20,10 @@ export interface ServiceDeps {
   transport: Transport;
   llm: LLM;
   elves?: Elf[];
+  /** Conversational memory (transcript, facts, summaries); null disables it. */
+  memory?: MoveMemory | null;
+  /** Housing search source for the Home Elf; defaults to fixtures. */
+  listings?: ListingSource;
   debounceMs: number;
   publicUrl: string | null;
   logger?: Logger;
@@ -17,15 +32,19 @@ export interface ServiceDeps {
 
 export interface Service {
   pipeline: Pipeline;
-  handleBatch: (batch: Batch, ctx: { signal: AbortSignal }) => Promise<void>;
+  handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
   stats: () => Record<string, unknown>;
 }
+
+/** How often the typing indicator is refreshed while an Elf's deferred work (a search) runs. */
+const TYPING_KEEPALIVE_MS = 20_000;
 
 export function createService(deps: ServiceDeps): Service {
   const log = deps.logger ?? createLogger("service");
   const elves = deps.elves ?? allElves;
   const now = deps.now ?? (() => new Date());
+  const listings = deps.listings ?? new FakeListings();
   const counters = {
     inbound: 0,
     replies: 0,
@@ -34,6 +53,17 @@ export function createService(deps: ServiceDeps): Service {
     lastInboundAt: null as string | null,
     lastReplyAt: null as string | null,
   };
+  const mem = deps.memory ?? null;
+  /** Memory must never block a reply: log and move on. */
+  async function safeMem<T>(label: string, fn: (m: MoveMemory) => Promise<T>): Promise<T | undefined> {
+    if (!mem) return undefined;
+    try {
+      return await fn(mem);
+    } catch (err) {
+      log.warn(`memory ${label} failed`, { error: String(err) });
+      return undefined;
+    }
+  }
 
   async function resolveMove(
     msg: InboundMessage,
@@ -71,7 +101,15 @@ export function createService(deps: ServiceDeps): Service {
     return { move, participant, firstContact };
   }
 
-  async function handleBatch(batch: Batch, { signal }: { signal: AbortSignal }) {
+  function inboundText(m: InboundMessage): string {
+    const parts: string[] = [];
+    if (m.text) parts.push(m.text);
+    for (const a of m.attachments) parts.push(a.mimeType?.startsWith("image/") ? "[photo]" : "[attachment]");
+    if (m.reaction) parts.push(`[reaction ${m.reaction.emoji}]`);
+    return parts.join(" ") || "[empty]";
+  }
+
+  async function handleBatch(batch: Batch, { signal, settle }: { signal: AbortSignal; settle?: () => void }) {
     const last = batch.messages[batch.messages.length - 1];
     if (!last) return;
     const t0 = Date.now();
@@ -110,6 +148,12 @@ export function createService(deps: ServiceDeps): Service {
       }
     })();
 
+    const threadId = last.spaceId;
+    const text = batchText(batch);
+    await safeMem("ensureThread", (m) =>
+      m.ensureThread(threadId, { moveId: move.id, role: participant.role, handle: participant.handle }),
+    );
+
     const decision = await route(
       batch,
       {
@@ -118,7 +162,7 @@ export function createService(deps: ServiceDeps): Service {
         elves,
         context: `Move ${move.id}; move-out ${move.moveOutAt ?? "unknown"}`,
       },
-      { firstContact },
+      { firstContact, moveId: move.id },
     );
     const elf = elves.find((e) => e.name === decision.elf) ?? elves[0]!;
     await deps.store.appendEvent({
@@ -134,6 +178,27 @@ export function createService(deps: ServiceDeps): Service {
       traceId,
     });
 
+    // What the Elf should know, before this batch is added to the transcript.
+    const conversation =
+      (await safeMem("context", (m) =>
+        m.context({ threadId, moveId: move.id, elf: elf.name, role: participant.role, query: text }),
+      )) ?? EMPTY_CONVERSATION;
+    // The inbound messages go into the transcript while the Elf works (idempotent on message id).
+    const remembered = safeMem("remember inbound", async (m) => {
+      for (const msg of batch.messages) {
+        await m.remember({
+          threadId,
+          moveId: move.id,
+          role: "user",
+          id: msg.id,
+          text: inboundText(msg),
+          elf: elf.name,
+          createdAt: msg.receivedAt,
+          metadata: { senderHandle: msg.senderHandle, attachments: msg.attachments.map((a) => a.id) },
+        });
+      }
+    });
+
     const ctx: ElfContext = {
       store: deps.store,
       llm: deps.llm,
@@ -147,6 +212,8 @@ export function createService(deps: ServiceDeps): Service {
       firstContact,
       now,
       fetchAttachment: (id) => deps.transport.fetchAttachment(id),
+      conversation,
+      listings,
     };
     let result: Awaited<ReturnType<Elf["handle"]>>;
     try {
@@ -162,10 +229,13 @@ export function createService(deps: ServiceDeps): Service {
       };
     }
     await ack;
+    await remembered;
     if (signal.aborted) {
       log.info("batch cancelled before send; carried forward", { traceId });
       return;
     }
+    // Deferred work ahead (a search): from here on a newer text queues behind this batch instead of cancelling it.
+    if (result.later) settle?.();
 
     if (result.movePatch && Object.keys(result.movePatch).length)
       await deps.store.updateMove(move.id, result.movePatch);
@@ -178,62 +248,133 @@ export function createService(deps: ServiceDeps): Service {
         traceId,
       });
 
-    let n = 0;
-    for (const reply of result.replies) {
-      const key = sendKey("reply", last.id, n++);
-      const prior = await deps.store.getSend(key);
-      if (prior) {
-        log.debug("send already recorded; skipping", { key });
-        continue;
+    const sentTexts: string[] = [];
+    /** Send replies with keys reply:<lastId>:<n> continuing from `startN`; returns the next n. */
+    const sendReplies = async (replies: ElfReply[], startN: number): Promise<number> => {
+      let n = startN;
+      for (const reply of replies) {
+        const key = sendKey("reply", last.id, n++);
+        const prior = await deps.store.getSend(key);
+        if (prior) {
+          log.debug("send already recorded; skipping", { key });
+          continue;
+        }
+        try {
+          const sent = await deps.transport.send(
+            {
+              spaceId: last.spaceId,
+              senderId: last.agentId,
+              text: reply.text,
+              parentMessageId: reply.parentMessageId ?? undefined,
+              format: reply.format ?? "plain",
+            },
+            key,
+          );
+          await deps.store.recordSend(key, sent.id);
+          await deps.store.setThreadOwner(sent.id, elf.name);
+          counters.replies++;
+          counters.lastReplyAt = new Date().toISOString();
+          sentTexts.push(reply.text);
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "reply.sent",
+            payload: {
+              elf: elf.name,
+              messageId: sent.id,
+              parentMessageId: reply.parentMessageId ?? null,
+              text: reply.text,
+            },
+            traceId,
+          });
+          await safeMem("remember reply", (m) =>
+            m.remember({
+              threadId,
+              moveId: move.id,
+              role: "assistant",
+              id: sent.id,
+              text: reply.text,
+              elf: elf.name,
+              metadata: { parentMessageId: reply.parentMessageId ?? null, traceId },
+            }),
+          );
+        } catch (err) {
+          counters.failures++;
+          log.error("send failed", { traceId, key, error: String(err) });
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "reply.failed",
+            payload: { elf: elf.name, error: String(err) },
+            traceId,
+          });
+        }
       }
+      return n;
+    };
+
+    let n = await sendReplies(result.replies, 0);
+
+    // Slow follow-up work (a housing search) runs after the ack is out.
+    if (result.later) {
+      const keepTyping = setInterval(
+        () => void deps.transport.typing(last.spaceId, last.agentId, true).catch(() => {}),
+        TYPING_KEEPALIVE_MS,
+      );
+      let more: Awaited<ReturnType<NonNullable<typeof result.later>>>;
       try {
-        const sent = await deps.transport.send(
-          {
-            spaceId: last.spaceId,
-            senderId: last.agentId,
-            text: reply.text,
-            parentMessageId: reply.parentMessageId ?? undefined,
-            format: reply.format ?? "plain",
-          },
-          key,
-        );
-        await deps.store.recordSend(key, sent.id);
-        await deps.store.setThreadOwner(sent.id, elf.name);
-        counters.replies++;
-        counters.lastReplyAt = new Date().toISOString();
-        await deps.store.appendEvent({
-          moveId: move.id,
-          type: "reply.sent",
-          payload: {
-            elf: elf.name,
-            messageId: sent.id,
-            parentMessageId: reply.parentMessageId ?? null,
-            text: reply.text,
-          },
-          traceId,
-        });
+        more = await result.later();
       } catch (err) {
         counters.failures++;
-        log.error("send failed", { traceId, key, error: String(err) });
+        log.error("deferred step failed", { elf: elf.name, traceId, error: String(err) });
+        more = {
+          replies: [
+            {
+              text: "That took longer than it should have and fell over. Give me another nudge and I'll retry.",
+              parentMessageId: last.id,
+            },
+          ],
+          boardPatch: { status: "blocked", lastUpdate: `Error: ${String(err).slice(0, 120)}` },
+        };
+      } finally {
+        clearInterval(keepTyping);
+      }
+      if (more.boardPatch) await deps.store.patchBoard(move.id, elf.name, more.boardPatch);
+      for (const ev of more.events ?? [])
         await deps.store.appendEvent({
           moveId: move.id,
-          type: "reply.failed",
-          payload: { elf: elf.name, error: String(err) },
+          type: ev.type,
+          payload: { ...ev.payload, elf: elf.name },
           traceId,
         });
-      }
+      n = await sendReplies(more.replies, n);
     }
+
     for (const m of batch.messages) await deps.store.setThreadOwner(m.id, elf.name);
+    // The shared pool has no real threads, so "the Elf that last spoke in this space" is what follow-ups use.
+    await deps.store.setThreadOwner(spaceOwnerKey(last.spaceId), elf.name);
     try {
       await deps.transport.typing(last.spaceId, last.agentId, false);
     } catch {
       // ignore
     }
+    // Learn from the exchange in the background: facts now, a summary once the thread is long.
+    if (sentTexts.length) {
+      mem?.afterTurn({
+        threadId,
+        moveId: move.id,
+        elf: elf.name,
+        role: participant.role,
+        text,
+        reply: sentTexts.join("\n"),
+        sourceMessageId: last.id,
+      });
+    }
     log.info("batch handled", {
       traceId,
       elf: elf.name,
       via: decision.via,
-      replies: result.replies.length,
+      replies: n,
+      deferred: !!result.later,
+      contextTokens: conversation.tokens,
       ms: Date.now() - t0,
     });
   }
@@ -245,6 +386,8 @@ export function createService(deps: ServiceDeps): Service {
       transport: deps.transport.name,
       llm: deps.llm.name,
       debounceMs: deps.debounceMs,
+      memory: mem?.kind ?? "off",
+      listings: listings.name,
     });
     for await (const msg of deps.transport.inbound(signal)) {
       counters.inbound++;
@@ -261,5 +404,15 @@ export function createService(deps: ServiceDeps): Service {
     }
   }
 
-  return { pipeline, handleBatch, run, stats: () => ({ ...counters, pipeline: pipeline.stats }) };
+  return {
+    pipeline,
+    handleBatch,
+    run,
+    stats: () => ({
+      ...counters,
+      memory: mem?.stats() ?? { kind: "off" },
+      listings: listings.name,
+      pipeline: pipeline.stats,
+    }),
+  };
 }

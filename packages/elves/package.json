@@ -11,6 +11,8 @@
     "@elves/photon": "workspace:*",
     "@elves/llm": "workspace:*",
     "@elves/pipeline": "workspace:*",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@elves/memory": "workspace:*",
+    "@elves/listings": "workspace:*"
   }
 }

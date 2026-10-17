@@ -1,4 +1,6 @@
+import type { ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
+import { type ConversationContext, EMPTY_CONVERSATION, renderPreamble } from "@elves/memory";
 import type { AttachmentFile } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, ElfStatusRow, Logger, Move, Participant, Store } from "@elves/shared";
@@ -17,6 +19,18 @@ export interface ElfContext {
   firstContact: boolean;
   now: () => Date;
   fetchAttachment: (id: string) => Promise<AttachmentFile | null>;
+  /** Working memory, learned facts, summary and recent transcript (EMPTY_CONVERSATION when memory is off). */
+  conversation: ConversationContext;
+  /** Where the Home Elf searches for housing, hotels and storage. */
+  listings: ListingSource;
+}
+
+export type { ConversationContext };
+export { EMPTY_CONVERSATION };
+
+/** The memory preamble every Elf prompt starts with: working memory, learned facts, summary, transcript. */
+export function memoryPreamble(c: ConversationContext): string {
+  return renderPreamble(c);
 }
 
 export function hasPhotos(batch: Batch): boolean {
@@ -34,6 +48,11 @@ export interface ElfResult {
   boardPatch?: Partial<Pick<ElfStatusRow, "status" | "currentTask" | "lastUpdate">>;
   events?: { type: string; payload: Record<string, unknown> }[];
   movePatch?: Partial<Omit<Move, "id" | "createdAt">>;
+  /**
+   * Slow follow-up work (a web search) the service runs after `replies` are sent, then sends what it returns.
+   * The batch is settled by then, so it is never cancelled by a newer text.
+   */
+  later?: () => Promise<Pick<ElfResult, "replies" | "boardPatch" | "events">>;
 }
 
 export interface Elf {

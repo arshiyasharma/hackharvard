@@ -1,0 +1,15 @@
+{
+  "name": "@elves/listings",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@browserbasehq/sdk": "^2.22.0",
+    "@browserbasehq/stagehand": "^4.2.1",
+    "@elves/shared": "workspace:*",
+    "zod": "^4.1.0"
+  }
+}

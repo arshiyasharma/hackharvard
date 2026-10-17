@@ -9,9 +9,18 @@ export interface Batch {
   carried: number;
 }
 
+export interface HandleContext {
+  signal: AbortSignal;
+  /**
+   * Call once the batch has been answered and is now doing slow follow-up work (a search): from then on a new
+   * message no longer cancels it, it simply queues behind it.
+   */
+  settle: () => void;
+}
+
 export interface PipelineOptions {
   debounceMs: number;
-  handle: (batch: Batch, ctx: { signal: AbortSignal }) => Promise<void>;
+  handle: (batch: Batch, ctx: HandleContext) => Promise<void>;
   onError?: (error: unknown, batch: Batch) => void;
   logger?: Logger;
 }
@@ -19,7 +28,7 @@ export interface PipelineOptions {
 interface SpaceState {
   pending: InboundMessage[];
   timer: ReturnType<typeof setTimeout> | null;
-  inflight: { batch: Batch; ctrl: AbortController; done: Promise<void> } | null;
+  inflight: { batch: Batch; ctrl: AbortController; done: Promise<void>; settled: boolean } | null;
 }
 
 /**
@@ -49,7 +58,7 @@ export class Pipeline {
     const s = this.state(msg.spaceId);
     this.stats.messages++;
     s.pending.push(msg);
-    if (s.inflight && !s.inflight.ctrl.signal.aborted) {
+    if (s.inflight && !s.inflight.ctrl.signal.aborted && !s.inflight.settled) {
       // Cancel the running job; its messages ride into this batch.
       s.inflight.ctrl.abort();
       this.stats.cancelled++;
@@ -83,8 +92,14 @@ export class Pipeline {
     const batch: Batch = { spaceId, messages, traceId: crypto.randomUUID(), carried };
     const ctrl = new AbortController();
     this.stats.batches++;
-    const done = this.opts
-      .handle(batch, { signal: ctrl.signal })
+    // Registered before the handler runs, so a synchronous settle() lands on this batch.
+    const inflight = { batch, ctrl, done: Promise.resolve(), settled: false };
+    s.inflight = inflight;
+    const settle = () => {
+      inflight.settled = true;
+    };
+    inflight.done = this.opts
+      .handle(batch, { signal: ctrl.signal, settle })
       .catch((err) => {
         if (ctrl.signal.aborted) return;
         this.stats.errors++;
@@ -92,10 +107,9 @@ export class Pipeline {
         this.opts.onError?.(err, batch);
       })
       .finally(() => {
-        if (s.inflight?.batch === batch) s.inflight = null;
+        if (s.inflight === inflight) s.inflight = null;
       });
-    s.inflight = { batch, ctrl, done };
-    await done;
+    await inflight.done;
   }
 
   /** Resolve when nothing is pending or in flight (tests). */

@@ -65,6 +65,25 @@ describe("Pipeline", () => {
     expect(final?.texts).toEqual(["first", "second"]);
   });
 
+  test("a settled batch is never cancelled; the next message queues behind it", async () => {
+    const handled: string[][] = [];
+    const p = new Pipeline({
+      debounceMs: 20,
+      handle: async (b, { signal, settle }) => {
+        settle(); // the ack went out; now the slow part
+        await sleep(80);
+        handled.push(b.messages.map((m) => `${m.text}${signal.aborted ? "!" : ""}`));
+      },
+      logger: quiet,
+    });
+    p.enqueue(msg("s1", "find me a room"));
+    await sleep(50); // in flight and settled
+    p.enqueue(msg("s1", "thanks"));
+    await p.idle();
+    expect(p.stats.cancelled).toBe(0);
+    expect(handled).toEqual([["find me a room"], ["thanks"]]);
+  });
+
   test("handler errors are counted and do not stop later batches", async () => {
     let calls = 0;
     const p = new Pipeline({

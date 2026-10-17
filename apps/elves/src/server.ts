@@ -1,22 +1,32 @@
+import { type Db, pingDb } from "@elves/db";
+import type { MoveMemory } from "@elves/memory";
 import { ELF_LABELS, type Store } from "@elves/shared";
 import { Hono } from "hono";
 import type { Service } from "./service.ts";
 
-export function createServer(deps: { store: Store; service: Service; info: Record<string, unknown> }) {
+export function createServer(deps: {
+  store: Store;
+  service: Service;
+  memory?: MoveMemory | null;
+  db?: Db | null;
+  info: Record<string, unknown>;
+}) {
   const app = new Hono();
   const started = Date.now();
 
   app.get("/", (c) =>
     c.text("Elves: a moving crew you text. /health, /moves, /board/:moveId, /events/:moveId, /b/:moveId"),
   );
-  app.get("/health", (c) =>
-    c.json({
-      ok: true,
+  app.get("/health", async (c) => {
+    const db = deps.db ? await pingDb(deps.db, 2000) : null;
+    return c.json({
+      ok: db ? db.ok : true,
       uptimeS: Math.round((Date.now() - started) / 1000),
       ...deps.info,
+      db,
       stats: deps.service.stats(),
-    }),
-  );
+    });
+  });
   app.get("/moves", async (c) => c.json(await deps.store.listMoves()));
   app.get("/board/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));
@@ -25,9 +35,22 @@ export function createServer(deps: { store: Store; service: Service; info: Recor
       move,
       board: await deps.store.getBoard(move.id),
       items: await deps.store.listItems(move.id),
+      search: (await deps.store.getSearch(move.id)) ?? null,
+      listings: await deps.store.listListings(move.id),
     });
   });
   app.get("/events/:moveId", async (c) => c.json(await deps.store.listEvents(c.req.param("moveId"))));
+  /** What the crew remembers about a move: threads (with summaries), facts and Elf notes. */
+  app.get("/memory/:moveId", async (c) => {
+    if (!deps.memory) return c.json({ error: "memory is off" }, 404);
+    const moveId = c.req.param("moveId");
+    const [threads, facts, notes] = await Promise.all([
+      deps.memory.threads(moveId),
+      deps.memory.listFacts(moveId),
+      deps.memory.notes(moveId),
+    ]);
+    return c.json({ kind: deps.memory.kind, threads, facts, notes });
+  });
   app.get("/b/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));
     if (!move) return c.text("Not found", 404);

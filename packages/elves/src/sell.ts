@@ -1,5 +1,13 @@
 import type { Item } from "@elves/shared";
-import { batchText, type Elf, type ElfContext, type ElfResult, lastMessageId } from "./contract.ts";
+import {
+  batchText,
+  type Elf,
+  type ElfContext,
+  type ElfResult,
+  hasPhotos,
+  lastMessageId,
+  memoryPreamble,
+} from "./contract.ts";
 import { CATEGORY_WORDS, type Category } from "./facts.ts";
 import {
   approvePendingListings,
@@ -11,8 +19,9 @@ import {
   parsePriceCents,
   suggestListCents,
 } from "./intake.ts";
+import { BUY_SKILL, GREEN_SKILL, pickSkill, type Skill, skillReply } from "./stubs.ts";
 
-const SYSTEM = `You are the Sell Elf of Elves, a moving crew the owner texts. You turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
+const SYSTEM = `You are the Stuff Elf of Elves, a moving crew the owner texts. You handle everything the owner owns or wants: right now you turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
 
 Write the reply as a text message:
 - Plain text only, 2 to 3 short lines, no markdown, no bullet symbols, at most one emoji (usually none).
@@ -22,12 +31,10 @@ Write the reply as a text message:
 - Otherwise ask for exactly ONE thing: the lowest price they'd take (if no floor yet), otherwise whether to go ahead and list it. If a photo could not be read, ask for a clearer photo.
 - Never ask for a photo or a floor price for an item that already has one (see items).
 - Buyers reach you by texting this same number; never claim you posted anywhere.
-- Do not repeat details already confirmed earlier.`;
+- Do not repeat details already confirmed earlier (see the conversation and working memory).`;
 
-export const sellElf: Elf = {
-  name: "sell",
-  description:
-    "Selling furniture and items: photos of items, listings, prices and floor prices, dollar amounts, buyers, pickups for sold items",
+const SELL_SKILL: Skill = {
+  id: "sell",
   keywords: [
     "sell",
     "selling",
@@ -50,9 +57,23 @@ export const sellElf: Elf = {
     "photo",
     "pickup",
   ],
+  task: "Waiting on a photo",
+  reply: "",
+};
+
+export const stuffElf: Elf = {
+  name: "stuff",
+  description:
+    "The owner's stuff: selling furniture and items (photos, listings, prices and floor prices, dollar amounts, buyers, pickups), buying things (a forwarded listing link or screenshot, offers), and getting rid of the rest (donations, giving away free, 311 or bulk pickup, trash, recycling, Last Call, the Move Report)",
+  keywords: [...SELL_SKILL.keywords, ...BUY_SKILL.keywords, ...GREEN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
     const text = batchText(ctx.batch);
+    // Buying and giving away are still canned; selling (and any photo) runs the real flow below.
+    if (!hasPhotos(ctx.batch)) {
+      const { skill } = pickSkill(text, [SELL_SKILL, BUY_SKILL, GREEN_SKILL]);
+      if (skill !== SELL_SKILL) return skillReply(ctx, "stuff", skill);
+    }
     const events: ElfResult["events"] = [];
     const intake = await identifyFromPhotos(ctx);
     for (const it of intake.items) {
@@ -138,7 +159,7 @@ export const sellElf: Elf = {
       try {
         reply = await ctx.llm.draft({
           system: SYSTEM,
-          user: `Facts (JSON):\n${JSON.stringify(facts)}\n\nWrite the reply.`,
+          user: `${memoryPreamble(ctx.conversation)}\n\nFacts captured this turn (JSON):\n${JSON.stringify(facts)}\n\nOwner's latest message(s):\n"""${text}"""\n\nWrite the reply.`,
           maxTokens: 400,
         });
       } catch (err) {

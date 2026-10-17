@@ -26,6 +26,8 @@ export class ScriptTransport implements Transport {
   constructor(
     readonly agentId = "usr_agent",
     readonly agentHandle = "+16280000000",
+    /** Prefix for generated message ids, so two transports sharing a store never collide (restart tests). */
+    readonly idPrefix = "",
   ) {}
 
   spaceFor(handle: string) {
@@ -39,7 +41,7 @@ export class ScriptTransport implements Transport {
     extra: Partial<Pick<InboundMessage, "attachments" | "reaction" | "parentMessageId" | "spaceKind">> = {},
   ): InboundMessage {
     const msg: InboundMessage = {
-      id: `msg_${++this.seq}`,
+      id: `${this.idPrefix}msg_${++this.seq}`,
       spaceId: this.spaceFor(handle),
       spaceKind: extra.spaceKind ?? "direct",
       platform: "script",
@@ -75,7 +77,7 @@ export class ScriptTransport implements Transport {
   }
 
   async send(reply: OutboundReply, key: string) {
-    const id = `out_${++this.seq}`;
+    const id = `${this.idPrefix}out_${++this.seq}`;
     this.sent.push({ ...reply, id, key, at: Date.now() });
     this.sendWaiters = this.sendWaiters.filter((w) => {
       if (this.sent.length >= w.n) {
