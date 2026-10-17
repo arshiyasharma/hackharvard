@@ -361,6 +361,13 @@ export interface Store {
   /** Full replace of the owner's sublet-out listing (one per move). */
   saveSubletPost(input: Omit<SubletPost, "updatedAt">): Promise<SubletPost>;
 
+  /** The move-in week checklist, in checklist order (by due date, then key order). */
+  listMoveinTasks(moveId: string): Promise<MoveinTask[]>;
+  /** Matches by (moveId, key); a task keeps its status and notes unless the input sets them. */
+  upsertMoveinTask(input: MoveinTaskInput): Promise<MoveinTask>;
+  /** Open tasks due on or before `through` (ISO date) that have not been reminded yet, across moves. */
+  listDueMoveinTasks(through: string): Promise<MoveinTask[]>;
+
   listDeals(moveId: string): Promise<Deal[]>;
   getDeal(id: string): Promise<Deal | undefined>;
   getDealByCode(code: string): Promise<Deal | undefined>;
@@ -447,6 +454,51 @@ export function subletPostDefaults(moveId: string): Omit<SubletPost, "updatedAt"
   };
 }
 
+// ---- move-in week (Home Elf) ----
+
+export const MOVEIN_TASK_KEYS = [
+  "electric",
+  "gas",
+  "internet",
+  "renters_insurance",
+  "address_change",
+  "keys",
+  "condition_report",
+  "luggage_gap",
+] as const;
+export type MoveinTaskKey = (typeof MOVEIN_TASK_KEYS)[number];
+export type MoveinTaskStatus = "open" | "done" | "skipped";
+
+/** One line of the move-in week checklist (one row per task per move). Dates hang off the move's move-in date. */
+export interface MoveinTask {
+  moveId: string;
+  key: MoveinTaskKey;
+  /** "Internet", "Renters insurance": what the owner sees. */
+  label: string;
+  /** ISO YYYY-MM-DD the task should be done by. */
+  dueAt: string;
+  status: MoveinTaskStatus;
+  notes: string | null;
+  /** Set once the reminder sweep has texted the owner about it; each task is nudged once. */
+  remindedAt: string | null;
+  updatedAt: string;
+}
+
+export type MoveinTaskInput = Partial<MoveinTask> & Pick<MoveinTask, "moveId" | "key" | "label" | "dueAt">;
+
+/** Column defaults for a move-in task row, shared by every Store implementation. */
+export function moveinTaskDefaults(): Pick<MoveinTask, "status" | "notes" | "remindedAt"> {
+  return { status: "open", notes: null, remindedAt: null };
+}
+
+/** Checklist order: by due date, then the fixed key order, so two stores list the same way. */
+export function sortMoveinTasks(tasks: MoveinTask[]): MoveinTask[] {
+  return [...tasks].sort(
+    (a, b) =>
+      a.dueAt.localeCompare(b.dueAt) || MOVEIN_TASK_KEYS.indexOf(a.key) - MOVEIN_TASK_KEYS.indexOf(b.key),
+  );
+}
+
 /** Column defaults for a listing row, shared by every Store implementation. */
 export function listingDefaults(): Omit<Listing, "id" | "moveId" | "site" | "kind" | "url" | "title"> {
   const ts = nowIso();
@@ -482,6 +534,7 @@ export class MemoryStore implements Store {
   dealParties = new Map<string, DealParty>();
   subletPosts = new Map<string, SubletPost>();
   leases = new Map<string, LeaseReading>();
+  moveinTasks = new Map<string, MoveinTask>();
   threads = new Map<string, ElfName>();
   sends = new Map<string, SendRecord>();
   cursors = new Map<string, string>();
@@ -629,6 +682,24 @@ export class MemoryStore implements Store {
     const post: SubletPost = { ...input, updatedAt: nowIso() };
     this.subletPosts.set(input.moveId, post);
     return post;
+  }
+
+  async listMoveinTasks(moveId: string) {
+    return sortMoveinTasks([...this.moveinTasks.values()].filter((t) => t.moveId === moveId));
+  }
+  async upsertMoveinTask(input: MoveinTaskInput) {
+    const id = `${input.moveId}:${input.key}`;
+    const prev = this.moveinTasks.get(id);
+    const task: MoveinTask = { ...moveinTaskDefaults(), ...(prev ?? {}), ...input, updatedAt: nowIso() };
+    this.moveinTasks.set(id, task);
+    return task;
+  }
+  async listDueMoveinTasks(through: string) {
+    return sortMoveinTasks(
+      [...this.moveinTasks.values()].filter(
+        (t) => t.status === "open" && t.remindedAt == null && t.dueAt <= through,
+      ),
+    );
   }
 
   async getSearch(moveId: string) {

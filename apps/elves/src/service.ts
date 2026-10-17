@@ -7,6 +7,7 @@ import {
   type ElfReply,
   EMPTY_CONVERSATION,
   isAddressedOutbound,
+  moveinSweep,
   route,
   type SentInfo,
   spaceOwnerKey,
@@ -39,7 +40,7 @@ export interface ServiceDeps {
   publicUrl: string | null;
   logger?: Logger;
   now?: () => Date;
-  /** How often Last Call runs (relists anything unsold 48h before move-out); 0 turns the timer off. */
+  /** How often the sweeps run (Last Call relists, move-in week reminders); 0 turns the timer off. */
   sweepMs?: number;
 }
 
@@ -47,7 +48,7 @@ export interface Service {
   pipeline: Pipeline;
   handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
-  /** One Last Call pass now; returns how many texts went out. */
+  /** One Last Call and move-in reminder pass now; returns how many texts went out. */
   sweep: () => Promise<number>;
   stats: () => Record<string, unknown>;
 }
@@ -286,13 +287,42 @@ export function createService(deps: ServiceDeps): Service {
     }
   }
 
+  /** Move-in week: one text per checklist task as it comes due, into the owner's space from the Home Elf. */
+  async function remindMovein(): Promise<number> {
+    const { reminders } = await moveinSweep(deps.store, { now: now() });
+    let sent = 0;
+    const touched = new Map<string, string>();
+    for (const r of reminders) {
+      const move = await deps.store.getMove(r.moveId);
+      if (!move) continue;
+      const key = sendKey("movein", `${r.moveId}:${r.key}:${r.dueAt}`);
+      if (await deps.store.getSend(key)) continue;
+      await deliverTo(move, "home", { spaceId: move.ownerSpaceId, text: r.text }, key, null);
+      await deps.store.appendEvent({
+        moveId: move.id,
+        type: "movein.reminded",
+        payload: { key: r.key, dueAt: r.dueAt, elf: "home" },
+        traceId: null,
+      });
+      touched.set(move.id, r.text.split(". ")[0] ?? r.text);
+      sent++;
+    }
+    for (const [moveId, lastUpdate] of touched)
+      await deps.store.patchBoard(moveId, "home", { status: "working", lastUpdate });
+    return sent;
+  }
+
   /** Last Call: anything unsold 48h before move-out relists free; owner and interested parties hear it. */
   async function sweep(): Promise<number> {
     counters.sweeps++;
+    const reminded = await remindMovein().catch((err) => {
+      log.error("move-in reminder sweep failed", { error: String(err) });
+      return 0;
+    });
     const res = await lastCallSweep(deps.store, { now: now() });
     for (const ev of res.events)
       await deps.store.appendEvent({ moveId: ev.moveId, type: ev.type, payload: ev.payload, traceId: null });
-    let sent = 0;
+    let sent = reminded;
     const touched = new Set<string>();
     for (const m of res.messages) {
       const move = await deps.store.getMove(m.moveId);
@@ -624,7 +654,7 @@ export function createService(deps: ServiceDeps): Service {
     const sweepMs = deps.sweepMs ?? 10 * 60_000;
     if (sweepMs > 0) {
       const timer = setInterval(
-        () => void sweep().catch((err) => log.error("last call sweep failed", { error: String(err) })),
+        () => void sweep().catch((err) => log.error("sweep failed", { error: String(err) })),
         sweepMs,
       );
       signal.addEventListener("abort", () => clearInterval(timer));

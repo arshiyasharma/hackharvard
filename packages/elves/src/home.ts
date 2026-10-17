@@ -24,6 +24,7 @@ import {
 } from "./home-facts.ts";
 import { extractListingUrls, type FollowUp, parseFollowUp, wantsFreshSearch } from "./home-followups.ts";
 import { handleLease, isLeasePermissionQuestion } from "./home-lease.ts";
+import { handleMovein } from "./home-movein.ts";
 import {
   type Candidate,
   describeAsk,
@@ -131,6 +132,8 @@ export const homeElf: Elf = {
     if (subletOut) return subletOut;
     const lease = await handleLease(ctx, text, parent);
     if (lease) return lease;
+    const movein = await handleMovein(ctx, text, parent);
+    if (movein) return movein;
     // "can I sublet?" with no lease on file: only the PDF can answer that.
     if (isLeasePermissionQuestion(text) && !(await ctx.store.getLeaseReading(ctx.move.id)))
       return skillReply(ctx, "home", LEASE_SKILL);

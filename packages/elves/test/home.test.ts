@@ -298,11 +298,11 @@ describe("Home Elf: hunt", () => {
     expect(done.boardPatch?.status).toBe("blocked");
   });
 
-  test("lease and move-in questions still get the canned skill replies", async () => {
+  test("a lease question without a PDF still gets the canned ask; move-in starts the checklist", async () => {
     const w = await world();
     expect(text(await w.say("my landlord needs 30 days notice, check the lease"))).toContain(
       "Send the lease PDF",
     );
-    expect(text(await w.say("set up internet at the new place"))).toContain("utilities, internet");
+    expect(text(await w.say("set up internet at the new place"))).toContain("What day do you move in?");
   });
 });
