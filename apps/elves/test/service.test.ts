@@ -408,6 +408,7 @@ describe("housing hunt", () => {
     expect(types).toContain("outbound.sent");
 
     // The lister answers the line: no new move, the engine handles it, the owner gets a threaded summary.
+    // $1,250 is the listed rent but over the $1,200 budget, so the crew (the buyer here) counters at the budget.
     const n = transport.sent.length;
     const reply = transport.push(lister, "Yes it's still available, $1250 a month");
     expect(reply.agentId).toBe(transport.dedicatedId);
@@ -417,13 +418,40 @@ describe("housing hunt", () => {
     const after = transport.sent.slice(n);
     const back = after.find((s) => s.spaceId === listerSpace)!;
     expect(back.senderId).toBe(transport.dedicatedId);
-    expect(back.text).toContain("$1,250/mo");
+    expect(back.text).toBe("I can do $1,200/mo.");
     const summary = after.find((s) => s.spaceId === ownerSpace)!;
     expect(summary.parentMessageId).toBe(toOwner!.id);
     expect(summary.senderId).toBe(m.agentId);
-    expect(summary.text).toContain("Allston Green");
-    expect(summary.text).toContain("$1,250/mo");
+    expect(summary.text).toBe(
+      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room; I offered $1,200/mo.",
+    );
     expect((await store.getDeal(deal.id))?.state).toBe("negotiating");
+    expect((await store.listDealParties(deal.id))[0]?.agreedCents).toBeNull();
+
+    // The lister holds firm: one question to the owner, phrased for a buyer; a yes agrees and asks to see it.
+    const firm = transport.sent.length;
+    transport.push(lister, "1250 is firm");
+    await transport.settled();
+    await service.pipeline.idle();
+    const held = transport.sent.slice(firm);
+    expect(held.find((s) => s.spaceId === listerSpace)?.text).toBe(
+      "Let me check with the person I'm helping and get back to you.",
+    );
+    const question = held.find((s) => s.spaceId === ownerSpace)!;
+    expect(question.text).toBe(
+      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
+    );
+    const yes = transport.sent.length;
+    transport.push(owner, "yes", { parentMessageId: question.id });
+    await transport.settled();
+    await service.pipeline.idle();
+    const agreed = transport.sent.slice(yes);
+    expect(agreed.find((s) => s.spaceId === listerSpace)?.text).toStartWith(
+      "Good news: $1,250/mo works. When could we see it? We could do 1)",
+    );
+    expect(agreed.find((s) => s.spaceId === ownerSpace)?.text).toBe(
+      "Done: $1,250/mo for the Allston Green, shared 4BR, private room. I'm setting up the viewing.",
+    );
     expect(
       (await store.listEvents(move.id)).find(
         (e) => e.type === "message.routed" && e.payload.via === "counterparty" && e.payload.elf === "home",

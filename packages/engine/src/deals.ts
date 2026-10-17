@@ -5,6 +5,7 @@ import { assertTransition, canTransition, isOpen } from "./machine.ts";
 import { decide, type PartyPosition, type Terms } from "./negotiate.ts";
 import { type ModePolicy, policyFor } from "./policy.ts";
 import { shield } from "./shield.ts";
+import { price } from "./voice.ts";
 
 /** Letter-digit-letter-digit, no look-alikes (no I/O/0/1/B/8/S/5): "K7Q2". */
 const LETTERS = "ACDEFHJKMNPRTWXY";
@@ -18,14 +19,6 @@ export function newDealCode(rand: () => number = Math.random): string {
 
 export function codesIn(text: string): string[] {
   return [...text.toUpperCase().matchAll(CODE_RE)].map((m) => m[1]!);
-}
-
-const fmt = (cents: number) =>
-  `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
-export function price(cents: number | null, unit: "each" | "month" = "each"): string {
-  if (cents == null) return "make an offer";
-  if (cents === 0) return "free";
-  return unit === "month" ? `${fmt(cents)}/mo` : fmt(cents);
 }
 
 /** A text the engine wants sent. The Elf may redraft `text` in its own voice from `facts`. */
@@ -283,9 +276,7 @@ async function agree(
       partyId: party.id,
       dealId: deal.id,
       kind: "agreed",
-      text: slots.length
-        ? `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} ${cap(p.meetNoun)} times: ${slotList(slots)}. Which works?`
-        : `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} When could you do the ${p.meetNoun}?`,
+      text: p.voice.agreed(at, slots.length ? slotList(slots) : null, p.meetNoun, lead),
       facts: publicFacts(deal, p, {
         agreedPrice: at,
         slots: slots.map((s) => s.label),
@@ -309,9 +300,7 @@ async function agree(
         type: "deal.agreed",
         payload: { dealId: deal.id, partyId: party.id, cents, slots: slots.map((s) => s.id) },
       },
-      ...(cents > 0
-        ? [{ type: "ledger.hold", payload: { dealId: deal.id, partyId: party.id, cents } }]
-        : []),
+      ...(cents > 0 ? [{ type: "ledger.hold", payload: { dealId: deal.id, partyId: party.id, cents } }] : []),
     ],
   };
 }
@@ -410,7 +399,7 @@ export async function counterpartyTurn(input: {
             partyId: party.id,
             dealId: deal.id,
             kind: "escrow_only",
-            text: `All payments go through the Elves escrow link I send at the ${p.meetNoun}; no Venmo, Zelle or cash apps. Still interested at ${price(party.lastCounterCents ?? deal.askCents, p.unit)}?`,
+            text: p.voice.escrowOnly(price(party.lastCounterCents ?? deal.askCents, p.unit), p.meetNoun),
             facts: publicFacts(deal, p, {
               rule: "escrow only",
               price: price(party.lastCounterCents ?? deal.askCents, p.unit),
@@ -435,7 +424,7 @@ export async function counterpartyTurn(input: {
       partyId: party.id,
       dealId: deal.id,
       kind: "gone",
-      text: `Sorry, the ${deal.title} is gone.`,
+      text: p.voice.gone(deal.title),
       facts: { title: deal.title, gone: true },
     });
     return done();
@@ -499,7 +488,7 @@ export async function counterpartyTurn(input: {
           to: "owner",
           dealId: deal.id,
           kind: "walked",
-          text: `A ${who(p)} walked away from the ${deal.title}; it's back on the market.`,
+          text: p.voice.walkedOwner(who(p), deal.title),
           facts: { title: deal.title },
         },
         ...r.messages,
@@ -547,20 +536,14 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "handed_off",
-          text:
-            cents > 0
-              ? `Enjoy the ${deal.title}! Payment (${price(cents)}) runs through Elves escrow.`
-              : `Enjoy the ${deal.title}!`,
+          text: p.voice.handedOff(deal.title, cents, p.unit),
           facts: { title: deal.title, price: price(cents) },
         },
         {
           to: "owner",
           dealId: deal.id,
           kind: "handed_off",
-          text:
-            cents > 0
-              ? `Handed off: the ${deal.title} went for ${price(cents)}. Payment runs through escrow; I'll mark it paid when it clears.`
-              : `Handed off: the ${deal.title} went free to a good home.`,
+          text: p.voice.handedOffOwner(deal.title, cents, p.unit),
           facts: { title: deal.title, price: price(cents), outcome },
         },
       );
@@ -586,7 +569,7 @@ export async function counterpartyTurn(input: {
           kind: "reschedule",
           text: slots.length
             ? `No worries. Other times: ${slotList(slots)}. Which works?`
-            : "No worries. When could you come instead?",
+            : `No worries. ${p.voice.rescheduleOpen}`,
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         },
         {
@@ -612,7 +595,7 @@ export async function counterpartyTurn(input: {
           kind: "slot_taken",
           text: slots.length
             ? `That one just got taken. How about ${slotList(slots)}?`
-            : "That one just got taken. When else could you come?",
+            : `That one just got taken. ${p.voice.slotTakenOpen}`,
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         });
         return done();
@@ -643,19 +626,23 @@ export async function counterpartyTurn(input: {
           slot: intent.slot,
         },
       });
-      const where = move.fromAddress
-        ? ` Address: ${move.fromAddress}.`
-        : " I'll text the address before then.";
+      // The address is the owner's only when the counterparty comes to them; a lister never hears it.
+      const address = p.voice.comesToUs ? move.fromAddress : null;
       messages.push(
         {
           to: "counterparty",
           partyId: party.id,
           dealId: deal.id,
           kind: "booked",
-          text: `Booked: ${intent.slot.label}.${where}${cents > 0 ? ` ${price(cents, p.unit)}, paid through Elves escrow.` : ""}`,
+          text: p.voice.booked(
+            intent.slot.label,
+            address,
+            cents > 0 ? price(cents, p.unit) : null,
+            p.meetNoun,
+          ),
           facts: publicFacts(deal, p, {
             slot: intent.slot.label,
-            address: move.fromAddress,
+            address,
             agreedPrice: price(cents, p.unit),
           }),
         },
@@ -663,7 +650,7 @@ export async function counterpartyTurn(input: {
           to: "owner",
           dealId: deal.id,
           kind: "booked",
-          text: `Booked: ${who(p)} picks up the ${deal.title} ${intent.slot.label} for ${price(cents, p.unit)}. It comes off the truck estimate.`,
+          text: p.voice.bookedOwner(who(p), deal.title, intent.slot.label, price(cents, p.unit)),
           facts: { title: deal.title, slot: intent.slot.label, agreedPrice: price(cents, p.unit) },
         },
       );
@@ -672,7 +659,7 @@ export async function counterpartyTurn(input: {
 
     case "accept": {
       if (party.status === "awaiting_owner") {
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
         return done();
       }
       const r = await agree(store, move, deal, party, standing ?? 0, clock, "");
@@ -716,6 +703,18 @@ export async function counterpartyTurn(input: {
             counter: price(d.cents, p.unit),
           }),
         });
+        if (p.voice.countered)
+          messages.push({
+            to: "owner",
+            dealId: deal.id,
+            kind: "counter",
+            text: p.voice.countered(who(p), deal.title, price(intent.cents, p.unit), price(d.cents, p.unit)),
+            facts: {
+              title: deal.title,
+              theirOffer: price(intent.cents, p.unit),
+              counter: price(d.cents, p.unit),
+            },
+          });
         return done();
       }
       if (d.kind === "ask_owner") {
@@ -731,14 +730,21 @@ export async function counterpartyTurn(input: {
           type: "deal.owner_asked",
           payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, hold: d.hold },
         });
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
         if (changed)
           messages.push({
             to: "owner",
             dealId: deal.id,
             kind: "ask",
             askFor: party.id,
-            text: `A ${who(p)} offers ${price(intent.cents, p.unit)} for the ${deal.title} (your ${p.limitLabel} ${price(deal.limitCents, p.unit)}; I'm holding at ${price(d.hold, p.unit)}). Take ${price(intent.cents, p.unit)}? Reply yes, no, or a number.`,
+            text: p.voice.ask(
+              who(p),
+              deal.title,
+              price(intent.cents, p.unit),
+              p.limitLabel,
+              price(deal.limitCents, p.unit),
+              price(d.hold, p.unit),
+            ),
             facts: {
               title: deal.title,
               offer: price(intent.cents, p.unit),
@@ -772,11 +778,14 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "booked_reminder",
-          text: `You're booked for ${party.slot.label}.${move.fromAddress ? ` Address: ${move.fromAddress}.` : ""}`,
-          facts: publicFacts(deal, p, { slot: party.slot.label, address: move.fromAddress }),
+          text: p.voice.bookedReminder(party.slot.label, p.voice.comesToUs ? move.fromAddress : null),
+          facts: publicFacts(deal, p, {
+            slot: party.slot.label,
+            address: p.voice.comesToUs ? move.fromAddress : null,
+          }),
         });
       } else if (party.status === "awaiting_owner") {
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
       } else {
         const at = price(standing, p.unit);
         messages.push({
@@ -784,9 +793,7 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: first ? "greet" : "info",
-          text: first
-            ? `Hi! The ${deal.title} is available${at === "free" ? " for free" : `, ${at}`}. Want it?`
-            : `It's ${at === "free" ? "free" : at}. Want it?`,
+          text: first ? p.voice.greet(deal.title, at, standing) : p.voice.info(at, standing),
           facts: publicFacts(deal, p, { price: at, firstMessage: first }),
         });
       }
@@ -795,13 +802,13 @@ export async function counterpartyTurn(input: {
   }
 }
 
-function holdingMessage(deal: Deal, party: DealParty): EngineMessage {
+function holdingMessage(p: ModePolicy, deal: Deal, party: DealParty): EngineMessage {
   return {
     to: "counterparty",
     partyId: party.id,
     dealId: deal.id,
     kind: "checking",
-    text: "Let me check with the owner and get back to you.",
+    text: p.voice.checking,
     facts: { title: deal.title, checkingWithOwner: true },
   };
 }
@@ -887,7 +894,7 @@ export async function ownerTurn(input: {
 
   if (decision.kind === "yes" && offer != null) {
     party = await store.upsertDealParty({ ...party, ownerApprovedCents: offer });
-    const r = await agree(store, move, deal, party, offer, clock, "Good news: the owner said yes. ");
+    const r = await agree(store, move, deal, party, offer, clock, p.voice.ownerYesLead);
     // The owner already knows; replace the engine's owner summary with a direct answer.
     const messages = r.messages.filter((m) => m.to !== "owner");
     messages.push({
@@ -905,7 +912,7 @@ export async function ownerTurn(input: {
     // The owner named a number at or past the buyer's offer: that is a yes to the buyer's offer.
     if (offer != null && p.dir * P <= p.dir * offer) {
       party = await store.upsertDealParty({ ...party, ownerApprovedCents: offer });
-      const r = await agree(store, move, deal, party, offer, clock, "Good news: the owner said yes. ");
+      const r = await agree(store, move, deal, party, offer, clock, p.voice.ownerYesLead);
       const messages = r.messages.filter((m) => m.to !== "owner");
       messages.push({
         to: "owner",
@@ -937,7 +944,7 @@ export async function ownerTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "counter",
-          text: `I checked with the owner: ${price(P, p.unit)} is the best they can do.`,
+          text: p.voice.ownerCounter(price(P, p.unit)),
           facts: publicFacts(deal, p, { counter: price(P, p.unit), checkedWithOwner: true }),
         },
         {
@@ -964,14 +971,14 @@ export async function ownerTurn(input: {
         partyId: party.id,
         dealId: deal.id,
         kind: "owner_no",
-        text: `I checked with the owner and can't go that low; ${price(hold, p.unit)} is the lowest.`,
+        text: p.voice.ownerNo(price(hold, p.unit)),
         facts: publicFacts(deal, p, { lowest: price(hold, p.unit), checkedWithOwner: true }),
       },
       {
         to: "owner",
         dealId: deal.id,
         kind: "owner_no",
-        text: `Got it. I told them ${price(hold, p.unit)} is the lowest for the ${deal.title}.`,
+        text: p.voice.ownerNoSummary(price(hold, p.unit), deal.title),
         facts: { title: deal.title, holding: price(hold, p.unit) },
       },
     ],

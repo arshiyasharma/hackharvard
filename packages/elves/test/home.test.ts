@@ -153,7 +153,7 @@ describe("Home Elf: hunt", () => {
     );
     const deals = await w.store.listDeals(w.move.id);
     expect(deals).toHaveLength(1);
-    expect(deals[0]).toMatchObject({ mode: "find_sublet", askCents: 125000, limitCents: 120000 });
+    expect(deals[0]).toMatchObject({ mode: "find_sublet", askCents: 120000, limitCents: 120000 });
     expect(note.dealId).toBe(deals[0]!.id);
     expect(reach.events?.map((e) => e.type)).toEqual([
       "housing.listing_shortlisted",

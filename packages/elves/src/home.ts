@@ -641,12 +641,18 @@ async function followUp(
   if (fu.kind === "reach") {
     await ctx.store.upsertListing({ ...target, status: "shortlisted" });
     const cents = search.budgetMaxCents ?? target.priceCents;
+    // We are the buyer: open at or under the owner's line, so a lister holding at a rent above the budget is
+    // countered at the budget and then put to the owner, never accepted just because it is the listed price.
+    const askCents =
+      search.budgetMaxCents != null && target.priceCents != null
+        ? Math.min(search.budgetMaxCents, target.priceCents)
+        : (target.priceCents ?? search.budgetMaxCents);
     const deal = await openDeal(ctx.store, {
       moveId: ctx.move.id,
       mode: "find_sublet",
       subjectId: null,
       title: target.title,
-      askCents: target.priceCents,
+      askCents,
       limitCents: cents,
     });
     const events: NonNullable<ElfResult["events"]> = [
