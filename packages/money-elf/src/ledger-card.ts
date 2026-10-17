@@ -9,6 +9,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import type { LedgerView } from "./ledger-view.ts";
+import { netPhrase } from "./projection.ts";
+import { projectionChart } from "./projection-chart.ts";
 
 const W = 1080;
 const PAD = 64;
@@ -33,8 +35,12 @@ export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function clip(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+/** Shorten to n characters, breaking at a word boundary when one is near. */
+export function clip(s: string, n: number): string {
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > n * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:·-]+$/, "")}…`;
 }
 
 export function capFirst(s: string): string {
@@ -87,6 +93,38 @@ export function ledgerCardSvg(v: LedgerView): string {
   });
   y += 168 + 56;
 
+  // The projection: net cost today, where it lands once expected money comes back, and the step chart.
+  const pr = v.projection;
+  if (pr.expectedCents > 0) {
+    parts.push(text(PAD, y, "MOVE COST PROJECTION", 26, 700, C.muted));
+    y += 50;
+    parts.push(
+      text(
+        PAD,
+        y,
+        pr.projectedNetCents < 0
+          ? `${netPhrase(pr.netNowCents)} out now, ${netPhrase(pr.projectedNetCents)} by ${fmtDate(pr.settledBy ?? v.asOf.slice(0, 10))}`
+          : `${netPhrase(pr.netNowCents)} out now, ${netPhrase(pr.projectedNetCents)} net by ${fmtDate(pr.settledBy ?? v.asOf.slice(0, 10))}`,
+        34,
+        600,
+        C.ink,
+      ),
+    );
+    y += 24;
+    const chart = projectionChart(
+      pr,
+      { x: PAD + 8, y, w: W - 2 * PAD - 16, h: 280 },
+      { line: C.fund, grid: C.muted, text: C.ink, muted: C.muted, bg: C.card },
+      { size: 26, family: "Inter" },
+    );
+    parts.push(chart);
+    y += 280 + 48;
+    if (pr.hasEstimates) {
+      parts.push(text(PAD, y - 12, "Hollow dots are estimated dates.", 24, 400, C.muted));
+      y += 32;
+    }
+  }
+
   const section = (title: string) => {
     parts.push(text(PAD, y, title.toUpperCase(), 26, 700, C.muted));
     y += 24;
@@ -103,7 +141,7 @@ export function ledgerCardSvg(v: LedgerView): string {
   };
 
   if (v.pending[0]) {
-    const msg = clip(`Waiting on your OK: ${v.pending[0]}`, 64);
+    const msg = clip(`Waiting on your OK: ${v.pending[0]}`, 54);
     parts.push(
       `<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="92" rx="22" fill="${C.wait}" stroke="${C.waitLine}" stroke-width="2"/>`,
     );

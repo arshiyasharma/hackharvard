@@ -43,6 +43,11 @@ export class MoneyService {
     return this.now().toISOString().slice(0, 10);
   }
 
+  /** The service's clock (injectable for tests), so projections and records agree on "today". */
+  clock(): Date {
+    return this.now();
+  }
+
   // ---------- people and accounts ----------
 
   async owner(move: MoneyMove): Promise<Person> {

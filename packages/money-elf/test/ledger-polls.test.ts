@@ -113,6 +113,17 @@ describe("the Ledger view, card and page", () => {
     recent: [],
     pending: [],
     records: 1,
+    projection: {
+      outCents: 0,
+      backCents: 0,
+      netNowCents: 0,
+      expected: [],
+      expectedCents: 0,
+      projectedNetCents: 0,
+      settledBy: null,
+      hasEstimates: false,
+      points: [{ date: "2026-10-17", netCents: 0 }],
+    },
   };
 
   test("names are escaped in the SVG card and the HTML page", () => {

@@ -6,6 +6,8 @@
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import { capFirst, esc } from "./ledger-card.ts";
 import { type LedgerView, ledgerSummaryLine } from "./ledger-view.ts";
+import { ASSUMED_DAYS, netPhrase } from "./projection.ts";
+import { projectionChart } from "./projection-chart.ts";
 
 export function ledgerPageHtml(v: LedgerView, opts: { imageUrl: string; pageUrl: string }): string {
   const tile = (label: string, cents: number, cls: string) =>
@@ -29,6 +31,38 @@ export function ledgerPageHtml(v: LedgerView, opts: { imageUrl: string; pageUrl:
     ),
   );
   const summary = ledgerSummaryLine(v);
+  const p = v.projection;
+  const chart = projectionChart(
+    p,
+    { x: 6, y: 0, w: 508, h: 230 },
+    {
+      line: "var(--fund)",
+      grid: "var(--muted)",
+      text: "var(--ink)",
+      muted: "var(--muted)",
+      bg: "var(--card)",
+    },
+    { size: 19, family: "-apple-system, BlinkMacSystemFont, Inter, sans-serif" },
+  );
+  const projection =
+    p.outCents || p.expectedCents
+      ? `<section class="proj"><h2>Move cost projection</h2>
+<div class="kpis"><div><div class="kl">Net cost so far</div><div class="kv">${netPhrase(p.netNowCents)}</div><div class="ks">${fmtUsd(p.outCents)} out · ${fmtUsd(p.backCents)} back</div></div>
+<div><div class="kl">${p.projectedNetCents < 0 ? "Projected: you come out" : "Projected net cost"}</div><div class="kv fundc">${netPhrase(p.projectedNetCents)}</div><div class="ks">${p.settledBy ? `once ${fmtUsd(p.expectedCents)} comes back by ${esc(fmtDate(p.settledBy))}` : "nothing else expected back"}</div></div></div>
+${chart ? `<svg class="chart" viewBox="0 0 520 230" role="img" aria-label="${esc(`Net cost of the move from ${netPhrase(p.netNowCents)} today to ${netPhrase(p.projectedNetCents)} projected`)}">${chart}</svg>` : ""}
+${p.expected
+  .map((x) =>
+    row(
+      x.label,
+      `+${fmtUsd(x.cents)}`,
+      `${fmtDate(x.date)} · ${x.certainty === "scheduled" ? "scheduled" : "estimated"}`,
+      "in",
+    ),
+  )
+  .join("")}
+${p.hasEstimates ? `<div class="rs note">Estimated dates assume a requested share is paid within ${ASSUMED_DAYS.share} days, a sale clears within ${ASSUMED_DAYS.sale} days of now, and a deposit with no due-back date returns within ${ASSUMED_DAYS.deposit} days. Solid dots are scheduled; hollow dots are estimates.</div>` : ""}
+</section>`
+      : "";
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -54,12 +88,15 @@ section{border-top:1px solid var(--line);margin-top:18px;padding-top:12px}h2{fon
 .rv.owed{color:var(--owed)}.rv.in{color:var(--fund)}.rv.esc{color:var(--esc)}
 .bar{height:8px;border-radius:4px;background:var(--line);margin:0 0 8px}.bar>div{height:100%;border-radius:4px;background:var(--fund)}
 .foot{color:var(--muted);font-size:12px;margin-top:18px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 4px}.kl{font-size:12px;color:var(--muted);font-weight:600}.kv{font-size:24px;font-weight:700}.ks{font-size:12px;color:var(--muted)}.fundc{color:var(--fund)}
+.chart{width:100%;height:auto;display:block;margin:10px 0 4px}.note{margin-top:8px}
 </style></head>
 <body><main><div class="card">
 <h1>Moving Ledger</h1>
 <div class="sub">${esc(v.ownerName)} move · updated ${esc(fmtDate(v.asOf.slice(0, 10)))} · live from Nessie</div>
 <div class="tiles">${tile("Moving Fund", v.fundCents, "fund")}${tile("Owed to you", v.owedCents, "owedt")}${tile("In escrow", v.escrowCents, "esct")}</div>
 ${v.pending[0] ? `<div class="wait">Waiting on your OK: ${esc(v.pending[0])}. Reply yes in Messages, or tap the poll.</div>` : ""}
+${projection}
 ${section("Who owes you", owes)}
 ${section(
   "Held in escrow",

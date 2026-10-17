@@ -114,3 +114,11 @@ A running log of decisions made while building the Money Elf (spec section 3). N
     - The service takes a `Reach` check (`approve`, `executeSplitRequests`, `addContact`). Only reachable people count as "sent" or get `notified`, so the owner is never told a text went out when it didn't.
     - Callers without a reach check (the Deal Engine, tests) treat everyone as reachable.
     (team chose "only when it can't reach them"; wording Claude)
+50. **The Ledger grows into a "Move Money" dashboard, starting with a move cost projection** (`src/projection.ts`). It answers one question: what this move costs the owner today, and what it lands at once the expected money comes back. It sits on the live page and the PNG card, built from the Nessie books plus the dates the Ledger knows.
+    - **Net cost so far** = (shared costs + purchases + payments + deposits still out) − (roommate shares + loan payments + sales).
+    - **Projected net cost** = net cost so far − everything expected back.
+    - A step chart shows the net cost over time, since money comes back in jumps.
+    - A move that pays for itself reads "$10 ahead", not "−$10".
+    (team chose the dashboard; formulas Claude)
+51. **Every expected amount says how sure it is.** *Scheduled* means a date someone agreed to: a deposit's due-back date, a loan's monthly payments (every 30 days from today), a set pickup time. *Estimated* means no date was agreed, so it assumes a requested share lands within 7 days, a sale within 3 days and a deposit within 30 days (`ASSUMED_DAYS`). Estimates show as hollow dots, with the assumptions written out on the page, so the dashboard never presents a guess as a fact. (Claude)
+52. **Scope cut: no card or partnership recommendations on the dashboard.** Nessie has no real product catalog, so any offer would be invented under Capital One's brand, and pushing credit to students mid-move reads as an ad. The dashboard sticks to numbers backed by Nessie records. Still planned on this track, in order: an honest "recovered by your crew" number, one visible automation (a sale sweep into the Moving Fund that the owner opts into and can switch off), and a seed script for the demo. (team)

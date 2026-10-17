@@ -4,6 +4,7 @@
  */
 import { fmtUsd } from "./amounts.ts";
 import type { Activity } from "./books.ts";
+import { type Projection, projectMove } from "./projection.ts";
 import type { MoneyService } from "./service.ts";
 import type { MoneyMove } from "./types.ts";
 
@@ -32,6 +33,8 @@ export interface LedgerView {
   recent: Activity[];
   pending: string[];
   records: number;
+  /** What the move costs, what's still coming back and when (projection.ts). */
+  projection: Projection;
 }
 
 export async function buildLedgerView(service: MoneyService, move: MoneyMove): Promise<LedgerView> {
@@ -77,6 +80,7 @@ export async function buildLedgerView(service: MoneyService, move: MoneyMove): P
     recent: books.recent.slice(0, 6),
     pending: pending.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((p) => p.summary),
     records: books.records,
+    projection: projectMove({ books, entries, names: people, now: service.clock() }),
   };
 }
 

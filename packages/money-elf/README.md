@@ -16,7 +16,7 @@ Spec section 3: every dollar in a move on one Ledger, and no money moves without
 | `the desk pickup fell through` | Asks to refund the buyer; `yes` refunds and texts them. A no-show 24h past the pickup time asks the same (see the sweep below) |
 | `pay Sam $40 for gas` | Asks, then sends on `yes`, from the Moving Fund when it covers it |
 | `let Sam pay the truck at $40 a month` | Offers Sam a Moving Fund loan; `yes` opens it in Nessie |
-| `show me the ledger` / `ledger` | The Ledger card (an image) plus a signed link to the live Ledger page, both read live from Nessie |
+| `show me the ledger` / `ledger` | The Ledger card (an image) plus a signed link to the live Ledger page, both read live from Nessie. Both lead with the **move cost projection**: net cost so far, projected net cost once expected money comes back, and a chart of when (scheduled dates solid, estimates hollow) |
 | anything scam-shaped | Warns in plain words; a flagged payment is never staged or paid |
 
 Anything that needs your yes also comes with a tap-to-answer poll (Yes / Not now). The tap approves exactly that action.
