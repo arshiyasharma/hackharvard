@@ -2,16 +2,22 @@
   "name": "elves",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "bun run --watch apps/elves/src/index.ts",
     "start": "bun run apps/elves/src/index.ts",
     "demo": "bun run scripts/demo.ts",
     "photon": "bun run scripts/photon.ts",
+    "browser": "bun run scripts/browser.ts",
     "test": "bun test",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "db": "bun run scripts/db.ts",
+    "test:pg": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://postgres:elves@localhost:54329/postgres} bun test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",

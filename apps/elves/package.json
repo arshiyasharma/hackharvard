@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@elves/shared": "workspace:*",
+    "@elves/db": "workspace:*",
+    "@elves/elves": "workspace:*",
+    "@elves/engine": "workspace:*",
+    "@elves/listings": "workspace:*",
+    "@elves/llm": "workspace:*",
+    "@elves/memory": "workspace:*",
     "@elves/photon": "workspace:*",
     "@elves/pipeline": "workspace:*",
-    "@elves/llm": "workspace:*",
-    "@elves/elves": "workspace:*",
+    "@elves/shared": "workspace:*",
+    "@elves/workflows": "workspace:*",
     "hono": "^4.13.0"
   }
 }

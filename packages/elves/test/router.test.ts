@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allElves, keywordRoute, route } from "@elves/elves";
+import { allElves, keywordRoute, route, spaceOwnerKey } from "@elves/elves";
 import { FakeLLM } from "@elves/llm";
 import type { InboundMessage } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
@@ -37,36 +37,38 @@ const FIXTURES: [string, ElfName][] = [
   ["my roommate Sam can cover saturday", "crew_lead"],
   ["status?", "crew_lead"],
   ["thanks!", "crew_lead"],
-  ["I want to sell my couch", "sell"],
-  ["lowest I'd take for the desk is 60", "sell"],
-  ["here's a photo of the dresser", "sell"],
-  ["a buyer wants to come at 5", "sell"],
-  ["can you list the mattress", "sell"],
-  ["is this listing a fair price? forwarded link", "buy"],
-  ["should i get this table from marketplace", "buy"],
-  ["found a sofa on craigslist, worth it?", "buy"],
-  ["just donate the rest", "green"],
-  ["can i put the chair on the curb", "green"],
-  ["book a 311 pickup for the mattress", "green"],
-  ["give away the lamp for free", "green"],
+  ["I want to sell my couch", "stuff"],
+  ["lowest I'd take for the desk is 60", "stuff"],
+  ["here's a photo of the dresser", "stuff"],
+  ["a buyer wants to come at 5", "stuff"],
+  ["can you list the mattress", "stuff"],
+  ["is this listing a fair price? forwarded link", "stuff"],
+  ["should i get this table from marketplace", "stuff"],
+  ["found a sofa on craigslist, worth it?", "stuff"],
+  ["just donate the rest", "stuff"],
+  ["can i put the chair on the curb", "stuff"],
+  ["book a 311 pickup for the mattress", "stuff"],
+  ["give away the lamp for free", "stuff"],
   ["he wants to pay on venmo", "money"],
   ["can we split the truck cost", "money"],
   ["is the deposit in escrow", "money"],
   ["this feels like a scam", "money"],
-  ["book storage june to august", "haul"],
-  ["need a u-haul for the 1st", "haul"],
-  ["do i need a moving permit", "haul"],
-  ["hire movers for saturday", "haul"],
-  ["what's your eta", "map"],
-  ["where are you, i'm at the address", "map"],
-  ["can i sublet my room", "lease"],
-  ["my landlord needs 30 days notice", "lease"],
-  ["check this clause in the lease", "lease"],
-  ["looking for a room in allston under 1200", "hunt"],
-  ["need a place for the summer, budget 900", "hunt"],
-  ["set up internet at the new place", "movein"],
-  ["where can i leave luggage between leases", "movein"],
-  ["address change and renters insurance", "movein"],
+  ["book storage june to august", "moveday"],
+  ["need a u-haul for the 1st", "moveday"],
+  ["do i need a moving permit", "moveday"],
+  ["hire movers for saturday", "moveday"],
+  ["what's your eta", "moveday"],
+  ["where are you, i'm at the address", "moveday"],
+  ["can i sublet my room", "home"],
+  ["my landlord needs 30 days notice", "home"],
+  ["check this clause in the lease", "home"],
+  ["looking for a room in allston under 1200", "home"],
+  ["need a place for the summer, budget 900", "home"],
+  ["find me a sublet in somerville under 1500", "home"],
+  ["is there a hotel for the gap between leases", "home"],
+  ["set up internet at the new place", "home"],
+  ["where can i leave luggage between leases", "home"],
+  ["address change and renters insurance", "home"],
 ];
 
 describe("keyword routing", () => {
@@ -84,17 +86,48 @@ describe("route()", () => {
     expect(r).toMatchObject({ elf: "crew_lead", via: "first_contact" });
   });
   test("a reply in an Elf's thread goes to that Elf", async () => {
-    await store.setThreadOwner("out_sell", "sell");
-    const r = await route(batchOf("ok lower it", "out_sell"), deps, { firstContact: false });
-    expect(r).toMatchObject({ elf: "sell", via: "thread" });
+    await store.setThreadOwner("out_stuff", "stuff");
+    const r = await route(batchOf("ok lower it", "out_stuff"), deps, { firstContact: false });
+    expect(r).toMatchObject({ elf: "stuff", via: "thread" });
+  });
+  test("'2' after the Home Elf sent picks is a pick; otherwise it is a price", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    const opts = { firstContact: false, moveId: move.id };
+    expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "home");
+    // the Home Elf spoke last but has no picks yet
+    expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
+    await fresh.upsertListing({
+      moveId: move.id,
+      site: "craigslist",
+      kind: "room",
+      url: "https://boston.craigslist.org/x/1",
+      title: "Room",
+      rank: 1,
+    });
+    expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("tell me about 1"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("more"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("search again"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(
+      await route(
+        batchOf("what about https://boston.craigslist.org/gbs/roo/d/allston-garden-level-room/1.html"),
+        d,
+        opts,
+      ),
+    ).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "crew_lead");
+    expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
   });
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
-    expect(r).toMatchObject({ elf: "haul", via: "keyword" });
+    expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
   });
-  test("a photo goes to the Sell Elf unless it is first contact", async () => {
+  test("a photo goes to the Stuff Elf unless it is first contact", async () => {
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({
-      elf: "sell",
+      elf: "stuff",
       via: "photo",
     });
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: true })).toMatchObject({
@@ -102,17 +135,17 @@ describe("route()", () => {
       via: "first_contact",
     });
   });
-  test("a bare price goes to the Sell Elf", async () => {
+  test("a bare price goes to the Stuff Elf", async () => {
     expect(await route(batchOf("4 dollars"), deps, { firstContact: false })).toMatchObject({
-      elf: "sell",
+      elf: "stuff",
       via: "price",
     });
     expect(await route(batchOf("$60"), deps, { firstContact: false })).toMatchObject({
-      elf: "sell",
+      elf: "stuff",
       via: "price",
     });
     expect(await route(batchOf("lowest I'd take is 80"), deps, { firstContact: false })).toMatchObject({
-      elf: "sell",
+      elf: "stuff",
       via: "price",
     });
   });

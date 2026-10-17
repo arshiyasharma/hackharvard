@@ -1,10 +1,23 @@
+import { pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
-import type { ElfName, Store } from "@elves/shared";
+import type { ElfName, Role, Store } from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { counterpartyElf } from "./deal.ts";
+import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { parsePriceCents } from "./intake.ts";
 
-export type RouteVia = "first_contact" | "thread" | "photo" | "price" | "llm" | "keyword" | "default";
+export type RouteVia =
+  | "first_contact"
+  | "counterparty"
+  | "thread"
+  | "deal"
+  | "followup"
+  | "photo"
+  | "price"
+  | "llm"
+  | "keyword"
+  | "default";
 export interface RouteDecision {
   elf: ElfName;
   via: RouteVia;
@@ -20,30 +33,50 @@ export interface RouterDeps {
   context?: string;
 }
 
+/** Keyword hits in `text`; a multi-word keyword counts double. */
+export function keywordScore(text: string, keywords: string[]): number {
+  const t = text.toLowerCase();
+  let score = 0;
+  for (const k of keywords) {
+    const re = new RegExp(`(^|[^a-z])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i");
+    if (re.test(t)) score += k.includes(" ") ? 2 : 1;
+  }
+  return score;
+}
+
 /** Keyword scoring: the Elf with the most keyword hits wins; ties go to the earlier Elf in the list. */
 export function keywordRoute(text: string, elves: Elf[]): { elf: ElfName; score: number } | null {
-  const t = text.toLowerCase();
   let best: { elf: ElfName; score: number } | null = null;
   for (const elf of elves) {
-    let score = 0;
-    for (const k of elf.keywords) {
-      const re = new RegExp(`(^|[^a-z])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z]|$)`, "i");
-      if (re.test(t)) score += k.includes(" ") ? 2 : 1;
-    }
+    const score = keywordScore(text, elf.keywords);
     if (score > 0 && (!best || score > best.score)) best = { elf: elf.name, score };
   }
   return best;
 }
 
+/** Thread-owner key for "the Elf that last replied in this space" (the shared pool has no real threads). */
+export function spaceOwnerKey(spaceId: string): string {
+  return `space:${spaceId}`;
+}
+
+/** Roles that text in about a deal; everyone else is crew. */
+const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
+
 /**
- * Crew Lead routing: first contact in the owner chat always goes to the Crew Lead; a reply inside an Elf's
- * thread goes to that Elf; otherwise the fast model classifies, with keywords as the fallback.
+ * Crew Lead routing: a counterparty (a buyer texting about a listing) always goes to the Elf that owns their
+ * deal, never through classification; first contact in the owner chat always goes to the Crew Lead; a reply inside an Elf's
+ * thread goes to that Elf; a "more" / "tell me about 2" after the Home Elf sent picks goes back to it;
+ * otherwise the fast model classifies, with keywords as the fallback.
  */
 export async function route(
   batch: Batch,
   deps: RouterDeps,
-  opts: { firstContact: boolean },
+  opts: { firstContact: boolean; moveId?: string; role?: Role },
 ): Promise<RouteDecision> {
+  if (opts.role && COUNTERPARTY_ROLES.includes(opts.role)) {
+    const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
+    if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
+  }
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
 
   for (const m of [...batch.messages].reverse()) {
@@ -54,9 +87,26 @@ export async function route(
   }
 
   const text = batchText(batch);
-  // Photos and bare prices are the Sell Elf's job; no model call needed.
-  if (hasPhotos(batch) && deps.elves.some((e) => e.name === "sell"))
-    return { elf: "sell", via: "photo", confidence: 0.95 };
+  // "yes" / "no" / "$70" while a buyer's offer waits on the owner goes to the Elf that asked.
+  if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
+    const pending = await pendingOwnerAsks(deps.store, opts.moveId);
+    const elf = pending[0] ? policyFor(pending[0].deal.mode).elf : null;
+    if (elf && deps.elves.some((e) => e.name === elf)) return { elf, via: "deal", confidence: 0.9 };
+  }
+  // "2" after a list of picks is a pick, not a price. "search again" and a forwarded
+  // listing link stay with Home when it spoke last, even with no number to pick.
+  if (
+    opts.moveId &&
+    deps.elves.some((e) => e.name === "home") &&
+    (isHuntFollowUp(text) || isHomeContinuation(text))
+  ) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    const hasPicks = !isHuntFollowUp(text) || (await deps.store.listListings(opts.moveId)).length > 0;
+    if (lastElf === "home" && hasPicks) return { elf: "home", via: "followup", confidence: 0.95 };
+  }
+  // Photos and bare prices are the Stuff Elf's job; no model call needed.
+  if (hasPhotos(batch) && deps.elves.some((e) => e.name === "stuff"))
+    return { elf: "stuff", via: "photo", confidence: 0.95 };
   const plain = batch.messages
     .map((m) => m.text ?? "")
     .join(" ")
@@ -65,9 +115,9 @@ export async function route(
     plain &&
     plain.length <= 40 &&
     parsePriceCents(plain) != null &&
-    deps.elves.some((e) => e.name === "sell")
+    deps.elves.some((e) => e.name === "stuff")
   ) {
-    return { elf: "sell", via: "price", confidence: 0.9 };
+    return { elf: "stuff", via: "price", confidence: 0.9 };
   }
   if (!text.trim()) return { elf: "crew_lead", via: "default", confidence: 0.5 };
 

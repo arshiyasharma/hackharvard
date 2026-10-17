@@ -1,7 +1,18 @@
 import type { Item } from "@elves/shared";
-import { batchText, type Elf, type ElfContext, type ElfResult, lastMessageId } from "./contract.ts";
+import {
+  batchText,
+  type Elf,
+  type ElfContext,
+  type ElfResult,
+  hasPhotos,
+  lastMessageId,
+  memoryPreamble,
+} from "./contract.ts";
+import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { CATEGORY_WORDS, type Category } from "./facts.ts";
 import {
+  anchorDeals,
+  type ApprovedItem,
   approvePendingListings,
   describeItem,
   fmtUsd,
@@ -9,25 +20,25 @@ import {
   isApproval,
   itemStatus,
   parsePriceCents,
+  postLine,
   suggestListCents,
 } from "./intake.ts";
+import { BUY_SKILL, GREEN_SKILL, pickSkill, type Skill, skillReply } from "./stubs.ts";
 
-const SYSTEM = `You are the Sell Elf of Elves, a moving crew the owner texts. You turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
+const SYSTEM = `You are the Stuff Elf of Elves, a moving crew the owner texts. You handle everything the owner owns or wants: right now you turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
 
 Write the reply as a text message:
 - Plain text only, 2 to 3 short lines, no markdown, no bullet symbols, at most one emoji (usually none).
 - If items were just identified from a photo, say what you see (material, color, condition) and the fair range in one line.
 - If the owner gave a floor price, confirm it and the list price you'll use. If their floor is far below the range, say you'll list higher and never go under their floor unless they say so.
-- If the owner just approved (justApproved non-empty), confirm it is listed at the list price and that buyers will text this number; then ask nothing.
+- If the owner just approved (justApproved non-empty), confirm it is listed at the list price, then give the line for their marketplace post exactly as written in justApproved.postLine (it carries the ref code buyers quote); say buyers text this number and you'll handle them; then ask nothing.
 - Otherwise ask for exactly ONE thing: the lowest price they'd take (if no floor yet), otherwise whether to go ahead and list it. If a photo could not be read, ask for a clearer photo.
 - Never ask for a photo or a floor price for an item that already has one (see items).
-- Buyers reach you by texting this same number; never claim you posted anywhere.
-- Do not repeat details already confirmed earlier.`;
+- Buyers reach you by texting this same number; never claim you posted anywhere. You negotiate with them inside the owner's floor and only ask the owner when an offer is under it.
+- Do not repeat details already confirmed earlier (see the conversation and working memory).`;
 
-export const sellElf: Elf = {
-  name: "sell",
-  description:
-    "Selling furniture and items: photos of items, listings, prices and floor prices, dollar amounts, buyers, pickups for sold items",
+const SELL_SKILL: Skill = {
+  id: "sell",
   keywords: [
     "sell",
     "selling",
@@ -50,9 +61,28 @@ export const sellElf: Elf = {
     "photo",
     "pickup",
   ],
+  task: "Waiting on a photo",
+  reply: "",
+};
+
+export const stuffElf: Elf = {
+  name: "stuff",
+  description:
+    "The owner's stuff: selling furniture and items (photos, listings, prices and floor prices, dollar amounts, buyers, pickups), buying things (a forwarded listing link or screenshot, offers), and getting rid of the rest (donations, giving away free, 311 or bulk pickup, trash, recycling, Last Call, the Move Report)",
+  keywords: [...SELL_SKILL.keywords, ...BUY_SKILL.keywords, ...GREEN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
+    // Buyers (and sellers, when we buy) talk to the Deal Engine in their own space.
+    if (ctx.participant.role !== "owner") return handleCounterparty(ctx);
+    // "yes" / "no" / "$70" answering a buyer's offer under the floor.
+    const decided = await handleOwnerDecision(ctx);
+    if (decided) return decided;
     const text = batchText(ctx.batch);
+    // Buying and giving away are still canned; selling (and any photo) runs the real flow below.
+    if (!hasPhotos(ctx.batch)) {
+      const { skill } = pickSkill(text, [SELL_SKILL, BUY_SKILL, GREEN_SKILL]);
+      if (skill !== SELL_SKILL) return skillReply(ctx, "stuff", skill);
+    }
     const events: ElfResult["events"] = [];
     const intake = await identifyFromPhotos(ctx);
     for (const it of intake.items) {
@@ -95,21 +125,24 @@ export const sellElf: Elf = {
       }
     }
 
-    let justApproved: Item[] = [];
+    let justApproved: ApprovedItem[] = [];
     if (price == null && intake.items.length === 0 && isApproval(text)) {
       justApproved = await approvePendingListings(ctx);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
-          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents },
+          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents, dealId: it.dealId, code: it.dealCode },
         });
     }
+    const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
     const current = await ctx.store.listItems(ctx.move.id);
     const needsFloor = current.filter((i) => i.floorPriceCents == null && i.id !== priced?.id);
     const facts = {
       justApproved: justApproved.map((i) => ({
         name: i.name,
         listPrice: i.listPriceCents != null ? fmtUsd(i.listPriceCents) : null,
+        ref: i.dealCode,
+        postLine: postLine(i, poolNumber),
       })),
       items: itemStatus(current),
       identifiedNow: intake.items.map((i) => ({
@@ -138,27 +171,29 @@ export const sellElf: Elf = {
       try {
         reply = await ctx.llm.draft({
           system: SYSTEM,
-          user: `Facts (JSON):\n${JSON.stringify(facts)}\n\nWrite the reply.`,
+          user: `${memoryPreamble(ctx.conversation)}\n\nFacts captured this turn (JSON):\n${JSON.stringify(facts)}\n\nOwner's latest message(s):\n"""${text}"""\n\nWrite the reply.`,
           maxTokens: 400,
         });
       } catch (err) {
         ctx.log.warn("sell draft failed; using template", { error: String(err) });
-        reply = template(facts, intake.items, priced, justApproved);
+        reply = template(facts, intake.items, priced, justApproved, poolNumber);
       }
     } else {
-      reply = template(facts, intake.items, priced, justApproved);
+      reply = template(facts, intake.items, priced, justApproved, poolNumber);
     }
     if (ctx.signal.aborted) return { replies: [] };
+    // An LLM draft may paraphrase; the post line with the ref code must survive verbatim.
+    for (const a of justApproved) if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;
 
     const working = current.filter((i) => i.outcome === "listed").map((i) => i.name);
     return {
-      replies: [{ text: reply, parentMessageId: lastMessageId(ctx.batch) }],
+      replies: [{ text: reply, parentMessageId: lastMessageId(ctx.batch), onSent: anchorDeals(ctx, justApproved) }],
       events,
       boardPatch: {
         status: "working",
         currentTask: working.length ? `Listing ${working.join(", ")}` : "Waiting on a photo",
         lastUpdate: justApproved.length
-          ? `Listed ${justApproved.map((i) => i.name).join(", ")}; buyers text this number`
+          ? `Listed ${justApproved.map((i) => `${i.name} (ref ${i.dealCode})`).join(", ")}; buyers text this number`
           : priced
             ? `Floor ${fmtUsd(priced.floorPriceCents ?? 0)} on the ${priced.name}`
             : intake.items.length
@@ -188,13 +223,15 @@ function template(
   facts: { photosUnreadable: number; itemsStillNeedingAFloor: string[] },
   identified: Item[],
   priced: Item | null,
-  approved: Item[],
+  approved: ApprovedItem[],
+  poolNumber: string | null,
 ): string {
   const lines: string[] = [];
   if (approved.length) {
     lines.push(
-      `Listed: ${approved.map((i) => `${i.name} at ${fmtUsd(i.listPriceCents ?? 0)}`).join(", ")}. Buyers text this number and I'll keep you posted.`,
+      `Listed: ${approved.map((i) => `${i.name} at ${fmtUsd(i.listPriceCents ?? 0)}`).join(", ")}. Buyers text this number and I'll handle them inside your floor.`,
     );
+    for (const a of approved) lines.push(`For your post: ${postLine(a, poolNumber)}`);
     return lines.join("\n");
   }
   if (identified.length) lines.push(`I see ${identified.map(describeItem).join("; ")}.`);

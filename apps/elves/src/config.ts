@@ -2,7 +2,10 @@ export interface Config {
   port: number;
   publicUrl: string | null;
   transport: "photon2" | "script";
-  store: "memory";
+  /** auto: Postgres when a database URL is set and reachable, else in-memory. postgres: fail fast without it. */
+  store: "auto" | "postgres" | "memory";
+  databaseUrl: string | null;
+  dbPoolMax: number;
   debounceMs: number;
   photon: {
     projectId: string;
@@ -30,11 +33,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       "PHOTON_PROJECT_ID and PHOTON_API_KEY are required for the photon2 transport (or set ELVES_TRANSPORT=script)",
     );
   }
+  const storeRaw = env.ELVES_STORE ?? "auto";
+  const store: Config["store"] =
+    storeRaw === "postgres" || storeRaw === "pg" ? "postgres" : storeRaw === "memory" ? "memory" : "auto";
+  const databaseUrl = env.ELVES_DATABASE_URL || env.DATABASE_URL || null;
+  if (store === "postgres" && !databaseUrl) {
+    throw new Error("ELVES_STORE=postgres needs ELVES_DATABASE_URL or DATABASE_URL");
+  }
   return {
     port: Number(env.PORT ?? 8787),
     publicUrl,
     transport,
-    store: "memory",
+    store,
+    databaseUrl,
+    dbPoolMax: Number(env.ELVES_DB_POOL ?? 5),
     debounceMs: Number(env.ELVES_DEBOUNCE_MS ?? 1200),
     photon: {
       projectId: env.PHOTON_PROJECT_ID ?? "",
