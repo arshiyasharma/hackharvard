@@ -8,7 +8,7 @@ Write the reply as a text message:
 - Plain text only. No markdown, no bullet symbols, no headers. At most one emoji, usually none.
 - 2 to 4 short lines. Each line is one sentence.
 - Confirm what you captured (dates, items, addresses) in the owner's own words.
-- Say which Elf is on what, in one line, only for Elves that have real work from this message.
+- Say which Elf is on what, in one line. Mention ONLY the Elves listed under elvesWithWork in the facts; if that list is empty, mention no Elf. Never invent work for an Elf.
 - Ask for at most ONE missing thing. If the move-out date is unknown, ask for it. Otherwise, if an item is for sale, ask for a photo and the lowest price they'd take for the first item.
 - Never promise to move money, post to a marketplace, or book anything without the owner's OK.
 - If this is the first contact, open with one line saying you're their moving crew and they can text you anything about the move.
@@ -111,8 +111,13 @@ export const crewLead: Elf = {
     }
 
     const moveOut = movePatch.moveOutAt ?? ctx.move.moveOutAt;
+    const elvesWithWork: string[] = [];
+    if (sellItems.length) elvesWithWork.push(`Sell Elf: ${sellItems.map((i) => i.name).join(", ")}`);
+    if (facts.items.some((i) => i.intent === "donate")) elvesWithWork.push("Green Elf: donation pickup");
+    if (facts.items.some((i) => i.intent === "buy")) elvesWithWork.push("Buy Elf: evaluate what to buy");
     const summary = {
       firstContact: ctx.firstContact,
+      elvesWithWork,
       moveOutDate: moveOut,
       moveInDate: movePatch.moveInAt ?? ctx.move.moveInAt,
       itemsMentionedNow: facts.items,

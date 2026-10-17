@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { type FetchLike, normalizePhotonMessage, Photon2Transport, PhotonApiError, PhotonClient, type PhotonMessage } from "@elves/photon";
+import {
+  type FetchLike,
+  normalizePhotonMessage,
+  Photon2Transport,
+  PhotonApiError,
+  PhotonClient,
+  type PhotonMessage,
+} from "@elves/photon";
 import { createLogger } from "@elves/shared";
 
 const base = (over: Partial<PhotonMessage> = {}): PhotonMessage => ({
@@ -159,13 +166,25 @@ describe("Photon2Transport.send", () => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       bodies.push(body);
       if (body.parentMessageId) {
-        return new Response(JSON.stringify({ code: "SPACE_NOT_SENDABLE", status: 409, detail: "Replies are not supported for this Space" }), { status: 409 });
+        return new Response(
+          JSON.stringify({
+            code: "SPACE_NOT_SENDABLE",
+            status: 409,
+            detail: "Replies are not supported for this Space",
+          }),
+          { status: 409 },
+        );
       }
-      return new Response(JSON.stringify({ id: `sent_${bodies.length}`, status: "accepted" }), { status: 202 });
+      return new Response(JSON.stringify({ id: `sent_${bodies.length}`, status: "accepted" }), {
+        status: 202,
+      });
     };
     const client = new PhotonClient({ projectId: "p", apiKey: "k", fetch: fakeFetch });
     const t = new Photon2Transport({ client, logger: createLogger("t", "error") });
-    const r1 = await t.send({ spaceId: "s1", senderId: "a", text: "hi", parentMessageId: "m1" }, "reply:m1:0");
+    const r1 = await t.send(
+      { spaceId: "s1", senderId: "a", text: "hi", parentMessageId: "m1" },
+      "reply:m1:0",
+    );
     expect(r1.id).toBe("sent_2");
     expect(bodies.map((b) => b.parentMessageId)).toEqual(["m1", undefined]);
     expect(t.noThreads.has("s1")).toBe(true);

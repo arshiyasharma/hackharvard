@@ -202,7 +202,13 @@ export class Photon2Transport implements Transport {
     const threaded = !!reply.parentMessageId && !this.noThreads.has(reply.spaceId);
     const attempt = (parentMessageId: string | undefined, key: string) =>
       this.client.sendText(
-        { spaceId: reply.spaceId, senderId: reply.senderId, text: reply.text, parentMessageId, format: reply.format ?? "plain" },
+        {
+          spaceId: reply.spaceId,
+          senderId: reply.senderId,
+          text: reply.text,
+          parentMessageId,
+          format: reply.format ?? "plain",
+        },
         key,
       );
     try {
@@ -210,9 +216,17 @@ export class Photon2Transport implements Transport {
       return { id: res.id };
     } catch (err) {
       // Shared iMessage lines (and some spaces) refuse threaded replies: fall back to a flat send once.
-      if (threaded && err instanceof PhotonApiError && err.status === 409 && err.code === "SPACE_NOT_SENDABLE") {
+      if (
+        threaded &&
+        err instanceof PhotonApiError &&
+        err.status === 409 &&
+        err.code === "SPACE_NOT_SENDABLE"
+      ) {
         this.noThreads.add(reply.spaceId);
-        this.log.warn("threaded reply refused; resending flat", { spaceId: reply.spaceId, detail: err.message });
+        this.log.warn("threaded reply refused; resending flat", {
+          spaceId: reply.spaceId,
+          detail: err.message,
+        });
         const res = await attempt(undefined, `${idempotencyKey}:flat`);
         return { id: res.id };
       }
