@@ -4,7 +4,6 @@ import { type ConversationContext, EMPTY_CONVERSATION, renderPreamble } from "@e
 import type { AttachmentFile } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, ElfStatusRow, Logger, Move, Participant, Store } from "@elves/shared";
-import type { DealHooks } from "./deal-hooks.ts";
 
 export interface ElfContext {
   store: Store;
@@ -24,8 +23,6 @@ export interface ElfContext {
   conversation: ConversationContext;
   /** Where the Home Elf searches for housing, hotels and storage. */
   listings: ListingSource;
-  /** The Deal Engine's side of selling; `noDealHooks` until it is merged. */
-  deals?: DealHooks;
 }
 
 export type { ConversationContext };
@@ -44,6 +41,13 @@ export interface ElfReply {
   text: string;
   parentMessageId?: string | null;
   format?: "plain" | "markdown";
+  /** Called with the sent message id (a deal anchors its owner-chat thread on it). */
+  onSent?: (messageId: string) => Promise<void>;
+}
+
+/** A text for a space other than the one being answered: a buyer's DM, or the owner chat from a buyer's turn. */
+export interface ElfOutbound extends ElfReply {
+  spaceId: string;
 }
 
 export interface ElfResult {
@@ -51,11 +55,13 @@ export interface ElfResult {
   boardPatch?: Partial<Pick<ElfStatusRow, "status" | "currentTask" | "lastUpdate">>;
   events?: { type: string; payload: Record<string, unknown> }[];
   movePatch?: Partial<Omit<Move, "id" | "createdAt">>;
+  /** Texts for other spaces, sent after `replies`. */
+  outbound?: ElfOutbound[];
   /**
    * Slow follow-up work (a web search) the service runs after `replies` are sent, then sends what it returns.
    * The batch is settled by then, so it is never cancelled by a newer text.
    */
-  later?: () => Promise<Pick<ElfResult, "replies" | "boardPatch" | "events">>;
+  later?: () => Promise<Pick<ElfResult, "replies" | "boardPatch" | "events" | "outbound">>;
 }
 
 export interface Elf {
@@ -70,9 +76,11 @@ export function batchText(batch: Batch): string {
   return batch.messages
     .map((m) => {
       const parts: string[] = [];
-      if (m.text) parts.push(m.text);
+      if (m.text?.trim()) parts.push(m.text);
+      else if (m.reaction && m.reaction.action !== "remove" && /^(?:👍|❤|♥|✅)/.test(m.reaction.emoji))
+        parts.push("yes");
       for (const a of m.attachments) parts.push(a.mimeType?.startsWith("image/") ? "[photo]" : "[file]");
-      if (m.reaction) parts.push(`[reaction ${m.reaction.emoji}]`);
+      if (m.reaction && parts[0] !== "yes") parts.push(`[reaction ${m.reaction.emoji}]`);
       return parts.join(" ");
     })
     .filter(Boolean)

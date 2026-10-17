@@ -9,12 +9,13 @@ import {
 } from "./contract.ts";
 import { DEFAULT_WEIGHT_LB, ExtractedFacts, extractFactsHeuristic, formatDate } from "./facts.ts";
 import {
+  anchorDeals,
   approvePendingListings,
   describeItem,
   identifyFromPhotos,
   isApproval,
   itemStatus,
-  openDeals,
+  postLine,
 } from "./intake.ts";
 
 const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts. Four specialist Elves work under you: Stuff (selling, buying, donating), Money (payments, escrow, splits), Move-day (trucks, storage, the Move Map) and Home (lease, finding a place, move-in week). You run the owner's group chat.
@@ -101,16 +102,10 @@ export const crewLead: Elf = {
     let justApproved: Awaited<ReturnType<typeof approvePendingListings>> = [];
     if (intake.items.length === 0 && isApproval(text)) {
       justApproved = await approvePendingListings(ctx, text);
-      const codes = await openDeals(ctx, justApproved);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
-          payload: {
-            itemId: it.id,
-            name: it.name,
-            listPriceCents: it.listPriceCents,
-            code: codes[it.id] ?? null,
-          },
+          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents, dealId: it.dealId, code: it.dealCode },
         });
     }
     if (facts.moveOutDate && facts.moveOutDate !== ctx.move.moveOutAt) {
@@ -206,7 +201,11 @@ export const crewLead: Elf = {
     }
     if (ctx.signal.aborted) return { replies: [] };
 
-    const replies: ElfResult["replies"] = [{ text: reply, parentMessageId: lastMessageId(ctx.batch) }];
+    const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
+    for (const a of justApproved) if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;
+    const replies: ElfResult["replies"] = [
+      { text: reply, parentMessageId: lastMessageId(ctx.batch), onSent: anchorDeals(ctx, justApproved) },
+    ];
     if (ctx.publicUrl && !ctx.move.boardLinkSent && !ctx.firstContact) {
       replies.push({ text: `Crew Board (live): ${ctx.publicUrl}/b/${ctx.move.id}`, parentMessageId: null });
       movePatch.boardLinkSent = true;

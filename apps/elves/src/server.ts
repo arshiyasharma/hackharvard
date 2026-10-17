@@ -11,16 +11,12 @@ export function createServer(deps: {
   memory?: MoveMemory | null;
   db?: Db | null;
   info: Record<string, unknown>;
-  /** Bearer token for /ops routes; unset disables them. */
-  opsToken?: string | null;
 }) {
   const app = new Hono();
   const started = Date.now();
 
   app.get("/", (c) =>
-    c.text(
-      "Elves: a moving crew you text. /health, /moves, /board/:moveId, /events/:moveId, /report/:moveId, /b/:moveId",
-    ),
+    c.text("Elves: a moving crew you text. /health, /moves, /board/:moveId, /events/:moveId, /b/:moveId"),
   );
   app.get("/health", async (c) => {
     const db = deps.db ? await pingDb(deps.db, 2000) : null;
@@ -42,6 +38,18 @@ export function createServer(deps: {
       items: await deps.store.listItems(move.id),
       search: (await deps.store.getSearch(move.id)) ?? null,
       listings: await deps.store.listListings(move.id),
+      // Never the owner's line or who is talking: the board link gets shared with roommates.
+      deals: (await deps.store.listDeals(move.id)).map((d) => ({
+        id: d.id,
+        mode: d.mode,
+        title: d.title,
+        code: d.code,
+        state: d.state,
+        askCents: d.askCents,
+        agreedCents: d.agreedCents,
+        slot: d.slot?.label ?? null,
+        outcome: d.outcome,
+      })),
     });
   });
   app.get("/events/:moveId", async (c) => c.json(await deps.store.listEvents(c.req.param("moveId"))));
@@ -56,21 +64,11 @@ export function createServer(deps: {
     ]);
     return c.json({ kind: deps.memory.kind, threads, facts, notes });
   });
-  /** The Move Report, rebuilt from items and the event log on every request. */
+  /** The Move Report, rebuilt from items and deals on every request. */
   app.get("/report/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));
     if (!move) return c.json({ error: "not found" }, 404);
-    return c.json(moveReport(await deps.store.listItems(move.id), await deps.store.listEvents(move.id)));
-  });
-  /** Operator: run Last Call now, optionally as of another time (demo: ?at=2026-10-19T23:00:00Z). */
-  app.post("/ops/last-call", async (c) => {
-    if (!deps.opsToken) return c.json({ error: "ops routes are off; set ELVES_OPS_TOKEN" }, 404);
-    if (c.req.header("authorization") !== `Bearer ${deps.opsToken}`)
-      return c.json({ error: "unauthorized" }, 401);
-    const at = c.req.query("at");
-    const when = at ? new Date(at) : undefined;
-    if (when && Number.isNaN(when.getTime())) return c.json({ error: `bad at: ${at}` }, 400);
-    return c.json(await deps.service.tickLastCall({ moveId: c.req.query("moveId"), at: when }));
+    return c.json(moveReport(await deps.store.listItems(move.id), await deps.store.listDeals(move.id)));
   });
   app.get("/b/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));
@@ -95,12 +93,14 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:var(--muted);margin-bottom:14px;font
 .items{margin-top:16px;color:var(--muted);font-size:13px}
 </style></head><body>
 <h1>Crew Board</h1><div class="sub" id="sub">Loading…</div>
-<div id="rows"></div><div class="items" id="items"></div>
+<div id="rows"></div><div class="items" id="deals"></div><div class="items" id="items"></div>
 <script>
 const L=${labels};const id=${JSON.stringify(moveId)};
 async function tick(){try{const r=await fetch('/board/'+id);if(!r.ok)return;const d=await r.json();
 document.getElementById('sub').textContent=(d.move.moveOutAt?'Move-out '+d.move.moveOutAt:'Move-out date not set')+' · '+d.board.filter(b=>b.status==='working').length+' Elves working';
 document.getElementById('rows').innerHTML=d.board.map(b=>'<div class="row"><div class="dot '+b.status+'"></div><div><div class="name">'+L[b.elf]+' <span class="last">· '+b.status+'</span></div><div class="task">'+(b.currentTask||'')+'</div>'+(b.lastUpdate?'<div class="last">'+b.lastUpdate+'</div>':'')+'</div></div>').join('');
+const $=x=>x==null?'':(x===0?'free':'$'+(x/100).toFixed(x%100?2:0));
+document.getElementById('deals').textContent=(d.deals||[]).length?('Deals: '+d.deals.map(x=>x.title+' · '+x.state.replace('_',' ')+(x.slot?' '+x.slot:'')+(x.agreedCents!=null?' · '+$(x.agreedCents):(x.askCents!=null?' · asking '+$(x.askCents):''))).join(' | ')):'';
 document.getElementById('items').textContent=d.items.length?('Items: '+d.items.map(i=>i.name+' ('+i.outcome+', ~'+i.weightLb+' lb)').join(', ')):'';
 }catch(e){}}
 tick();setInterval(tick,3000);

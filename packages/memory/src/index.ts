@@ -29,18 +29,19 @@ import {
   type MessageRow,
   type RankedFact,
 } from "./types.ts";
-import { renderWorkingMemory } from "./working.ts";
+import { type DealView, renderPublicMemory, renderWorkingMemory } from "./working.ts";
 
 export { InMemoryBackend } from "./backends/inmemory.ts";
 export { PostgresBackend } from "./backends/postgres.ts";
 export { type ExtractedFact, FactExtraction, heuristicFacts } from "./consolidate.ts";
 export * from "./types.ts";
 export {
+  type DealView,
+  dealLine,
   type HousingView,
   housingLines,
   itemLine,
-  publicItemLine,
-  renderPublicWorkingMemory,
+  renderPublicMemory,
   renderWorkingMemory,
 } from "./working.ts";
 
@@ -227,7 +228,7 @@ export class MoveMemory {
   /** Everything an Elf should see before it answers, within the token budget. */
   async context(input: ContextInput): Promise<ConversationContext> {
     const cfg = this.config;
-    const [thread, recent, ranked, notes, move, items, board, participants, search, listings] =
+    const [thread, recent, ranked, notes, move, items, board, participants, search, listings, deals] =
       await Promise.all([
         this.backend.getThread(input.threadId),
         this.backend.recentMessages(input.threadId, cfg.lastMessages),
@@ -239,6 +240,7 @@ export class MoveMemory {
         this.store.listParticipants(input.moveId),
         this.store.getSearch(input.moveId),
         this.store.listListings(input.moveId),
+        this.dealViews(input.moveId),
       ]);
     const role = input.role ?? thread?.role ?? "owner";
 
@@ -270,14 +272,17 @@ export class MoveMemory {
 
     const summary = thread?.summary ? clipToTokens(thread.summary, cfg.budget.summary) : null;
     const housing = search || listings.length ? { search: search ?? null, listings } : null;
+    // Owner and crew threads see the whole move; a counterparty thread sees only what is publicly listed.
+    const crewSide = role === "owner" || role === "roommate";
     const workingMemory = move
       ? clipToTokens(
-          renderWorkingMemory(move, items, board, participants, housing, isOwner ? "owner" : "public"),
+          crewSide
+            ? renderWorkingMemory(move, items, board, participants, housing, deals)
+            : renderPublicMemory(items, deals),
           cfg.budget.working,
         )
       : null;
-    // An Elf's notes are its private scratchpad for the move (may hold floors, budgets): owner threads only.
-    const noteMap = isOwner && notes.length ? Object.fromEntries(notes.map((n) => [n.key, n.value])) : null;
+    const noteMap = notes.length ? Object.fromEntries(notes.map((n) => [n.key, n.value])) : null;
     const ctx: ConversationContext = {
       transcript,
       summary,
@@ -290,6 +295,11 @@ export class MoveMemory {
     };
     ctx.tokens = estimateTokens(renderPreamble(ctx));
     return ctx;
+  }
+
+  private async dealViews(moveId: string): Promise<DealView[]> {
+    const deals = await this.store.listDeals(moveId);
+    return Promise.all(deals.map(async (deal) => ({ deal, parties: await this.store.listDealParties(deal.id) })));
   }
 
   private speaker(m: MessageRow, threadRole: string): string {

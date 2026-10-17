@@ -122,17 +122,24 @@ describe.each(backends)("MoveMemory (%s)", (_name, open) => {
     expect(ctx.workingMemory).toContain("Move-out date: 2026-11-01");
     expect(ctx.workingMemory).toContain("couch · floor $80 · list $120 · awaiting approval");
     expect(ctx.workingMemory).toContain("Stuff Elf (working): Listing couch");
-    // a buyer thread of the same move sees listed items at their public price, and never the floor
-    const items = await o.store.listItems(move.id);
-    await o.store.upsertItem({ ...items[0]!, listingApproved: true, title: "Gray couch" });
+    // a buyer thread of the same move sees only what is publicly listed: never the floor, the owner or the crew
     await m.ensureThread(`${run}:buyer-${move.id}`, { moveId: move.id, role: "buyer" });
-    const buyer =
-      (await m.context({ threadId: `${run}:buyer-${move.id}`, moveId: move.id })).workingMemory ?? "";
-    expect(buyer).toContain("Gray couch · $120 · available");
-    expect(buyer).not.toContain("$80");
-    expect(buyer).not.toContain("floor");
-    expect(buyer).not.toContain(move.ownerHandle);
-    expect(buyer).not.toContain("Move-out");
+    const buyerView = (await m.context({ threadId: `${run}:buyer-${move.id}`, moveId: move.id })).workingMemory;
+    expect(buyerView).toContain("nothing listed right now");
+    expect(buyerView).not.toContain("$80");
+    expect(buyerView).not.toContain("Move-out");
+    await o.store.upsertDeal({
+      moveId: move.id,
+      mode: "sell_item",
+      subjectId: null,
+      title: "couch",
+      code: `C${String(Date.now()).slice(-1)}T${Math.floor(Math.random() * 10)}`,
+      askCents: 12000,
+      limitCents: 8000,
+    });
+    const listed = (await m.context({ threadId: `${run}:buyer-${move.id}`, moveId: move.id })).workingMemory;
+    expect(listed).toContain("couch · asking $120");
+    expect(listed).not.toContain("$80");
   });
 
   test("facts: extracted after a turn, deduplicated, ranked by relevance, scoped by audience", async () => {

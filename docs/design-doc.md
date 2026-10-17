@@ -1,6 +1,6 @@
 # Elves — Product Design Doc (HackHarvard 2026)
 
-> Original planning doc from 2026-10-17, kept for reference. Where it disagrees with [`SPEC.md`](../SPEC.md) (five Elves instead of ten, Claude instead of Grok, Retell instead of ElevenLabs, our own Postgres memory, Mastra Workflows for the Deal Engine), SPEC.md wins. Personal phone numbers are redacted.
+> Original planning doc from 2026-10-17, kept for reference. Where it disagrees with [`SPEC.md`](../SPEC.md) (five Elves instead of ten, Claude instead of Grok, Retell instead of ElevenLabs, our own Postgres memory, a Postgres state machine for the Deal Engine), SPEC.md wins. Personal phone numbers are redacted.
 
 Oct 17, 2026 · @Gavin Zhou
 

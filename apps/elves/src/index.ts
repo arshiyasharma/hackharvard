@@ -49,7 +49,6 @@ const app = createServer({
   service,
   memory,
   db: opened.db,
-  opsToken: process.env.ELVES_OPS_TOKEN || null,
   info: {
     transport: transport.name,
     inbound: config.transport === "photon2" ? config.photon.inbound : "n/a",

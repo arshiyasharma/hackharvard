@@ -1,11 +1,23 @@
 # Stuff Elf: build plan
 
-## Status (2026-10-17, evening)
+## Status (2026-10-17, night): reconciled with `team-stable`
 
-The buyer side (negotiation, slots, hand-off) is built by a teammate as the Deal Engine. The Stuff Elf talks to it only through `DealHooks` (`packages/elves/src/deal-hooks.ts`) and the event log, so merging is a matter of passing the engine's hooks to `createService({ deals })`.
+`team-stable` landed the Deal Engine (`packages/engine`) while this plan was being written, and with it most of what is planned below: buyer conversations, ref codes, slots, floor and ceiling in code, Last Call (`lastCallSweep`, "keep the couch" opt-out), donate, buy-as-a-deal, and the public-memory split that keeps floors away from buyers. Those sections of this plan are **superseded by that code**; read `README.md` ("State of this branch") for how they work.
 
-| Built on `stuff-elf` | Where |
+What this branch adds on top of `team-stable`, and nothing more:
+
+| Added | Where |
 | --- | --- |
+| A "yes" lists only the item it answers ("list both" lists all; a bare yes answers the item whose floor was set last). Before, one yes listed every priced item and opened a deal for each. | `intake.ts` `approvePendingListings`, `chooseToApprove` |
+| Move Report: pounds diverted, CO2e avoided (EPA WARM v13 factors, proxies stated), dollars recovered from deals, dumped counted against. "move report" in the owner chat and `GET /report/:moveId`. | `impact.ts`, `sell.ts`, `server.ts` |
+
+Not carried over, on purpose (the engine does them): my own Last Call, donate, `DealHooks`, and migration `0005_stuff_items.sql`.
+
+Still open from this plan, not built anywhere: telling the engine "I sold it myself" / "it got picked up" / "tossed it" (its `markOutcome` only takes `donated` and `dumped`); a buy verdict against comps and scam rules before the ceiling is set; a "what's left?" status; a Crew Board that shows outcomes.
+
+Tests: 249 pass with no credentials.
+
+--- | --- |
 | Floor never reaches non-owner threads (working memory + Elf notes scoped by role) | `packages/memory/src/working.ts`, `index.ts` |
 | A "yes" approves only the item it answers; "list both" approves all; the engine's code goes in the reply | `intake.ts` `approvePendingListings`, `openDeals` |
 | Short "yes"/"no" after the Stuff Elf asked something routes back to it | `router.ts` |

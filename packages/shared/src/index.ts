@@ -16,13 +16,7 @@ export const ELF_LABELS: Record<ElfName, string> = {
 
 export type Role = "owner" | "roommate" | "buyer" | "seller" | "applicant" | "lister";
 export type ElfStatus = "idle" | "working" | "waiting" | "done" | "blocked";
-/** "kept" = the owner is taking it (it goes on the truck); neither diverted nor dumped in the Move Report. */
-export type ItemOutcome = "listed" | "sold" | "given" | "donated" | "dumped" | "kept";
-/** What the owner wants done with an item; "buy" is something they're getting for the new place. */
-export const ITEM_INTENTS = ["sell", "give", "donate", "keep", "buy"] as const;
-export type ItemIntent = (typeof ITEM_INTENTS)[number];
-/** Last Call progress on an unsold item: price dropped (T-48h), relisted free (T-24h), closed (T-0). */
-export type LastCallStage = "dropped" | "free" | "closed";
+export type ItemOutcome = "listed" | "sold" | "given" | "donated" | "dumped";
 
 export interface Move {
   id: string;
@@ -87,35 +81,7 @@ export interface Item {
   /** Owner said "list it" (or equivalent) after seeing the price. */
   listingApproved: boolean;
   outcome: ItemOutcome;
-  intent: ItemIntent;
-  /** Set when the outcome changes from "listed". */
-  outcomeAt: string | null;
-  /** Leaves before move day (sold, given, donated): the Move-day Elf drops it from the truck estimate. */
-  leavesBeforeMoveDay: boolean;
-  lastCallStage: LastCallStage | null;
   createdAt: string;
-}
-
-/** Column defaults for an item row, shared by every Store implementation. */
-export function itemDefaults(): Omit<Item, "id" | "moveId" | "name" | "category"> {
-  return {
-    weightLb: 25,
-    title: null,
-    description: null,
-    condition: null,
-    priceLowCents: null,
-    priceHighCents: null,
-    listPriceCents: null,
-    floorPriceCents: null,
-    photoAttachmentIds: [],
-    listingApproved: false,
-    outcome: "listed",
-    intent: "sell",
-    outcomeAt: null,
-    leavesBeforeMoveDay: false,
-    lastCallStage: null,
-    createdAt: nowIso(),
-  };
 }
 
 export interface SendRecord {
@@ -271,6 +237,13 @@ export interface Deal {
   slot: Slot | null;
   /** Set once the deal exits; the Move Report counts these. */
   outcome: ItemOutcome | null;
+  /**
+   * Last Call progress for modes that relist before move-out. `dropped` is the T−48h price,
+   * `free` is T−24h, `closed` is the donation or 311 booking at move-out.
+   */
+  lastCallStage: "none" | "dropped" | "free" | "closed";
+  /** The owner said to hold this one ("keep the couch"); Last Call leaves it alone. */
+  lastCallOptOut: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -314,6 +287,8 @@ export function dealDefaults(): Omit<Deal, "id" | "moveId" | "mode" | "title" | 
     agreedCents: null,
     slot: null,
     outcome: null,
+    lastCallStage: "none",
+    lastCallOptOut: false,
     createdAt: ts,
     updatedAt: ts,
   };
@@ -377,6 +352,21 @@ export interface Store {
   upsertListing(
     input: Partial<Listing> & Pick<Listing, "moveId" | "site" | "kind" | "url" | "title">,
   ): Promise<Listing>;
+
+  listDeals(moveId: string): Promise<Deal[]>;
+  getDeal(id: string): Promise<Deal | undefined>;
+  getDealByCode(code: string): Promise<Deal | undefined>;
+  /** Every deal still on the table (listed, negotiating, scheduled, relisted), across moves. */
+  listOpenDeals(): Promise<Deal[]>;
+  /** Matches by id; a new deal needs a unique code. */
+  upsertDeal(input: Partial<Deal> & Pick<Deal, "moveId" | "mode" | "title" | "code">): Promise<Deal>;
+  listDealParties(dealId: string): Promise<DealParty[]>;
+  /** Every deal this space's counterparty is in, oldest first. */
+  listDealPartiesBySpace(spaceId: string): Promise<DealParty[]>;
+  /** Matches by id, else by (dealId, spaceId). */
+  upsertDealParty(
+    input: Partial<DealParty> & Pick<DealParty, "dealId" | "moveId" | "spaceId" | "handle" | "role">,
+  ): Promise<DealParty>;
 
   getThreadOwner(messageId: string): Promise<ElfName | undefined>;
   setThreadOwner(messageId: string, elf: ElfName): Promise<void>;
@@ -539,7 +529,23 @@ export class MemoryStore implements Store {
   async upsertItem(input: Partial<Item> & Pick<Item, "moveId" | "name" | "category">) {
     const id = input.id ?? newId("it");
     const prev = this.items.get(id);
-    const item: Item = { ...itemDefaults(), ...(prev ?? {}), ...input, id };
+    const item: Item = {
+      weightLb: 25,
+      title: null,
+      description: null,
+      condition: null,
+      priceLowCents: null,
+      priceHighCents: null,
+      listPriceCents: null,
+      floorPriceCents: null,
+      photoAttachmentIds: [],
+      listingApproved: false,
+      outcome: "listed",
+      createdAt: nowIso(),
+      ...(prev ?? {}),
+      ...input,
+      id,
+    };
     this.items.set(id, item);
     return item;
   }

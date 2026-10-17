@@ -1,4 +1,4 @@
-import type { EventRow, Item, ItemOutcome } from "@elves/shared";
+import type { Deal, Item, ItemOutcome } from "@elves/shared";
 import type { Category } from "./facts.ts";
 import { fmtUsd } from "./intake.ts";
 
@@ -52,34 +52,25 @@ export interface MoveReport {
   approximate: true;
 }
 
-/** Pure: the Move Report from items and the event log, so the numbers can be rebuilt at any time. */
-export function moveReport(items: Item[], events: EventRow[] = []): MoveReport {
+/** Pure: the Move Report from items and their deals, so the numbers can be rebuilt at any time. */
+export function moveReport(items: Item[], deals: Deal[] = []): MoveReport {
   const byOutcome: Record<ItemOutcome, number> = {
     listed: 0,
     sold: 0,
     given: 0,
     donated: 0,
     dumped: 0,
-    kept: 0,
   };
   const agreed = new Map<string, number>();
-  for (const e of events) {
-    const id = e.payload.itemId;
-    const cents = e.payload.agreedCents ?? e.payload.cents;
-    if (
-      typeof id === "string" &&
-      typeof cents === "number" &&
-      /^(deal\.(agreed|handed_off)|item\.sold)$/.test(e.type)
-    )
-      agreed.set(id, cents);
-  }
+  for (const d of deals)
+    if (d.mode === "sell_item" && d.subjectId && d.agreedCents != null)
+      agreed.set(d.subjectId, d.agreedCents);
   let lbDiverted = 0;
   let lbDumped = 0;
   let kg = 0;
   let dollars = 0;
   const lines: MoveReport["lines"] = [];
   for (const it of items) {
-    if (it.intent === "buy") continue;
     byOutcome[it.outcome]++;
     const factor =
       IMPACT_FACTORS[(it.category as Category) in IMPACT_FACTORS ? (it.category as Category) : "other"];
@@ -109,7 +100,7 @@ export function moveReport(items: Item[], events: EventRow[] = []): MoveReport {
 /** The report as a 2-4 line text. */
 export function reportText(r: MoveReport): string {
   const parts: string[] = [];
-  for (const k of ["sold", "given", "donated", "kept", "dumped"] as const)
+  for (const k of ["sold", "given", "donated", "dumped"] as const)
     if (r.byOutcome[k]) parts.push(`${r.byOutcome[k]} ${k}`);
   const lines: string[] = [];
   if (r.lbDiverted > 0)

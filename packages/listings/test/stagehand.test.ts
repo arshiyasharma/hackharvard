@@ -51,7 +51,7 @@ function listing(site: string, i: number): SiteExtraction["listings"][number] {
 
 interface FakeBrowserOptions {
   /** site -> behaviour */
-  behave?: Record<string, "ok" | "throw" | "hang">;
+  behave?: Record<string, "ok" | "throw" | "hang" | "block">;
   openFails?: boolean;
   delayMs?: number;
 }
@@ -85,6 +85,14 @@ function fakeBrowser(o: FakeBrowserOptions = {}) {
       async waitFor() {
         return true;
       },
+      async dismiss() {},
+      async linkMap() {
+        return { "1-778": "https://boston.craigslist.org/gbs/roo/d/x/778.html" };
+      },
+      async title(page) {
+        const site = (page as PageLike & { site: string }).site;
+        return o.behave?.[site] === "block" ? "Access Denied" : `${site} results`;
+      },
       async extract(_instruction, schema, opts) {
         const site = (opts.page as PageLike & { site: string }).site;
         state.inflight++;
@@ -94,6 +102,7 @@ function fakeBrowser(o: FakeBrowserOptions = {}) {
           if (mode === "hang") await new Promise(() => {});
           if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
           if (mode === "throw") throw new Error(`${site} exploded`);
+          if (mode === "block") return schema.parse({ listings: [] });
           return schema.parse({ listings: [listing(site, 1), listing(site, 2)] });
         } finally {
           state.inflight--;
@@ -122,7 +131,7 @@ describe("StagehandListings", () => {
     expect(out.runs.find((r) => r.site === "facebook")?.status).toBe("skipped");
     expect(out.results).toHaveLength(4);
     expect(out.results[0]?.site).toBe("craigslist");
-    expect(state.acts).toContain("If a cookie, translation or sign-up popup is showing, dismiss it.");
+    expect(state.acts).toEqual([]); // no recipe on this path has an LLM prepare step
   });
   test("a site that throws is one failed run; the others still come back", async () => {
     const { open } = fakeBrowser({ behave: { craigslist: "throw" } });
@@ -133,6 +142,15 @@ describe("StagehandListings", () => {
     });
     expect(out.runs.find((r) => r.site === "airbnb")?.status).toBe("ok");
     expect(out.results.every((r) => r.site === "airbnb")).toBe(true);
+  });
+  test("an anti-bot page with nothing to extract is a failed run, not an empty one", async () => {
+    const { open } = fakeBrowser({ behave: { craigslist: "block" } });
+    const out = await new StagehandListings({ config, open, sites: null, log }).search([room], opts());
+    expect(out.runs.find((r) => r.site === "craigslist")).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("blocked"),
+    });
+    expect(out.runs.find((r) => r.site === "airbnb")?.status).toBe("ok");
   });
   test("a hanging site times out within the per-site budget and the session still closes", async () => {
     const { open, state } = fakeBrowser({ behave: { craigslist: "hang" } });

@@ -1,3 +1,4 @@
+import { openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
 import type { Item } from "@elves/shared";
 import { z } from "zod";
@@ -121,75 +122,82 @@ export function isApproval(text: string): boolean {
   return APPROVAL.test(text) && !DECLINE.test(text);
 }
 
-const ALL_OF_THEM = /\b(all of them|them all|both|everything|(?:list|post) (?:them )?all)\b/i;
+/** An approved item and the sell deal it opened: buyers quote `dealCode` in their first text. */
+export type ApprovedItem = Item & { dealId: string; dealCode: string };
 
-/** The item the text names, by name then category word; null when it names none. */
-export function findItemByText(text: string, items: Item[]): Item | null {
-  const t = text.toLowerCase();
-  const byName = items.find((i) => t.includes(i.name.toLowerCase()));
-  if (byName) return byName;
-  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
-    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
-      const m = items.find((i) => i.category === cat);
-      if (m) return m;
-    }
-  }
-  return null;
-}
-
-/**
- * Approve listing for the item this yes answers, and only that one: the item named in the text; else every
- * pending item when the owner says "all" / "both"; else the item whose floor was set most recently (the one the
- * last "want me to list it?" was about). Returns the items that flipped.
- */
-export async function approvePendingListings(ctx: ElfContext, text: string): Promise<Item[]> {
+/** Mark every priced, unapproved item as approved and open its sell deal; returns the items that flipped. */
+export async function approvePendingListings(ctx: ElfContext, text = ""): Promise<ApprovedItem[]> {
   const items = await ctx.store.listItems(ctx.move.id);
-  const pending = items.filter(
-    (i) => i.floorPriceCents != null && !i.listingApproved && i.outcome === "listed" && i.intent === "sell",
-  );
-  if (!pending.length) return [];
-  let chosen: Item[];
-  const named = findItemByText(text, pending);
-  if (named) chosen = [named];
-  else if (ALL_OF_THEM.test(text)) chosen = pending;
-  else if (pending.length === 1) chosen = pending;
-  else {
-    const events = await ctx.store.listEvents(ctx.move.id);
-    const lastAsked = [...events]
-      .reverse()
-      .find((e) => e.type === "item.floor_set" && pending.some((p) => p.id === e.payload.itemId));
-    chosen = [
-      pending.find((p) => p.id === lastAsked?.payload.itemId) ?? (pending[pending.length - 1] as Item),
-    ];
-  }
-  const out: Item[] = [];
-  for (const it of chosen) {
-    out.push(
-      await ctx.store.upsertItem({
-        id: it.id,
-        moveId: it.moveId,
-        name: it.name,
-        category: it.category,
-        listingApproved: true,
-      }),
-    );
+  const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
+  const out: ApprovedItem[] = [];
+  for (const it of chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id))) {
+    const item = await ctx.store.upsertItem({
+      id: it.id,
+      moveId: it.moveId,
+      name: it.name,
+      category: it.category,
+      listingApproved: true,
+    });
+    const deal = await openDeal(ctx.store, {
+      moveId: item.moveId,
+      mode: "sell_item",
+      subjectId: item.id,
+      title: item.name,
+      askCents: item.listPriceCents ?? item.floorPriceCents,
+      limitCents: item.floorPriceCents,
+    });
+    out.push({ ...item, dealId: deal.id, dealCode: deal.code });
   }
   return out;
 }
 
-/** Tell the Deal Engine about newly approved items; returns item id → buyer-facing code when it gave one. */
-export async function openDeals(ctx: ElfContext, approved: Item[]): Promise<Record<string, string>> {
-  const codes: Record<string, string> = {};
-  if (!ctx.deals) return codes;
-  for (const it of approved) {
-    try {
-      const res = await ctx.deals.listingApproved(it);
-      if (res?.code) codes[it.id] = res.code;
-    } catch (err) {
-      ctx.log.error("deal engine: listingApproved failed", { itemId: it.id, error: String(err) });
+const ALL_OF_THEM = /\b(all of them|them all|both|everything|(?:list|post) (?:them )?all)\b/i;
+
+/**
+ * Which pending items a yes covers: the item the text names; every pending item for "both" / "all of them";
+ * the only one when just one is waiting; else the one whose floor was set most recently, which is the item the
+ * last "want me to list it?" was about.
+ */
+export function chooseToApprove(
+  text: string,
+  pending: Item[],
+  events: { type: string; payload: Record<string, unknown> }[],
+): Item[] {
+  if (pending.length <= 1) return pending;
+  const t = text.toLowerCase();
+  const named = pending.find((i) => t.includes(i.name.toLowerCase()));
+  if (named) return [named];
+  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
+      const m = pending.find((i) => i.category === cat);
+      if (m) return [m];
     }
   }
-  return codes;
+  if (ALL_OF_THEM.test(t)) return pending;
+  const last = [...events]
+    .reverse()
+    .find((e) => e.type === "item.floor_set" && pending.some((p) => p.id === e.payload.itemId));
+  return [pending.find((p) => p.id === last?.payload.itemId) ?? (pending[pending.length - 1] as Item)];
+}
+
+/** onSent for the owner-chat message that announced these listings: their deal summaries thread under it. */
+export function anchorDeals(
+  ctx: ElfContext,
+  approved: ApprovedItem[],
+): ((id: string) => Promise<void>) | undefined {
+  if (!approved.length) return undefined;
+  return async (messageId) => {
+    for (const a of approved) {
+      const deal = await ctx.store.getDeal(a.dealId);
+      if (deal && !deal.ownerThreadId) await ctx.store.upsertDeal({ ...deal, ownerThreadId: messageId });
+    }
+  };
+}
+
+/** The line the owner pastes into a marketplace post, so buyers land in the right deal. */
+export function postLine(a: ApprovedItem, number: string | null): string {
+  const priceText = a.listPriceCents != null ? `, ${fmtUsd(a.listPriceCents)}` : "";
+  return `"${a.title ?? a.name}${priceText}. Text ${number ?? "this number"} and mention ${a.dealCode}."`;
 }
 
 /** Compact per-item status for prompts, so an Elf never asks for what it already has. */
@@ -205,8 +213,6 @@ export function itemStatus(items: Item[]) {
     listPrice: i.listPriceCents != null ? fmtUsd(i.listPriceCents) : null,
     listingApproved: i.listingApproved,
     outcome: i.outcome,
-    intent: i.intent,
-    lastCallStage: i.lastCallStage,
   }));
 }
 

@@ -2,22 +2,41 @@
 
 HackHarvard 2026. Ten specialist agents ("Elves") live in your iMessage/SMS thread on Photon 2.0 lines and run a move end to end: sell the furniture, book the truck and storage, handle the lease, settle the money, keep things out of the landfill. This repo is the service behind the number.
 
-Product spec, decisions and status: [`SPEC.md`](SPEC.md) (start here). Original design doc, implementation plan and the five-Elf spec sheet: [`docs/`](docs/). This README is the engineering map.
+Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including Room Scan: [`docs/elves-spec.md`](docs/elves-spec.md). Original design and the W1–W23 plan: [`docs/`](docs/). **This README is the state of `team-stable`.** SPEC §2, §3 and §6 still describe an older snapshot (Deal Engine "not on this branch", Buy and Donate as stubs, 202 tests, migrations stopping at `0003`). When they disagree with the table below, trust this README, then the code.
 
-## Status
+## State of this branch
 
-Phase 1 (foundation) is live:
+`bun test` is 240 tests across 19 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
-- A text to an assigned pool number gets a read receipt, a typing indicator and a Crew Lead reply written by Claude, with the move-out date and items captured into the move.
-- Three rapid texts become one reply (per-space debounce with cancel and carry-forward).
-- Photo intake: an iPhone photo (HEIC) is downloaded, decoded, identified by Claude vision (item, condition, weight, fair resale range, listing title and description) and becomes an `items` row with a suggested list price.
-- Stuff Elf (selling): a dollar amount sets the floor; the list price is held at the range's upper middle and never below the floor; "yes, list it" marks it approved. Buyers reach it by texting the same number (buyer DMs are the next ticket).
-- The Crew Lead routes follow-ups to the right Elf (thread ownership → photo/price rules → Claude classification → keyword fallback); the crew is five Elves: Crew Lead, Stuff (sell, buy, donate), Money, Move-day (haul, Move Map) and Home (lease, hunt, move-in). Buying, donating and the last three Elves are still stubs: each picks its sub-skill by keyword, acknowledges in its own voice and updates the Crew Board.
-- Home Elf (housing search): "looking for a room in allston under 1200 june 1 to aug 30" asks for whatever is missing (budget → area → dates, one thing at a time), acks, then searches Craigslist, Airbnb, Booking.com and SpareFoot (Apartments.com, Zillow and Facebook Marketplace behind flags) in a real browser via Stagehand v4, flags scams (far-below-market price, wire/app prepayment, "I'm abroad", no photos, cross-site price mismatch), ranks what is left, and texts the top three with links. "more", "tell me about 2", "skip 2", "save 1" work on the saved picks. A hotel for a short gap between move-out and move-in rides along. See [Housing search](#housing-search).
-- Memory: every move, item, board row and message lives in Postgres (Supabase), so a restart or redeploy loses nothing. Each Elf prompt opens with working memory (rendered live from the move), the facts the crew has learned (preferences, constraints, commitments, open loops, people; deduplicated, ranked by relevance and recency, with owner-private facts kept out of buyer threads), a rolling summary once a thread is long, and the recent transcript, all inside a token budget. Facts and summaries are extracted after the reply goes out, so memory never slows a text. See [Memory](#memory).
-- Hosted on Railway: `https://elves-production.up.railway.app/health`.
+Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
-Next: Deal Engine (`packages/engine`), Stuff Elf with buyer DMs, Money (Nessie), Scam Shield, Last Call. See the implementation plan's work queue.
+| Area | On `team-stable` | Still empty |
+| --- | --- | --- |
+| Crew Lead | Built. First text, plan, dates, items, routing, board link once `PUBLIC_URL` is set. | Mini-app polish. The board page exists; it is not a live mini app. |
+| Stuff · Sell | Built. Photo → vision → item, floor, list price, "yes, list it" opens a `sell_item` deal. Buyers text this number. | Nobody posts the listing to a marketplace. The owner pastes the ref into their own post. |
+| Stuff · Buy | Opens a `buy_item` deal after an explicit yes. Needs a forwarded link and a max price. The ceiling is the deal's limit. | No comps. No message to the seller. The seller has to text this number and quote the ref. The canned "I'll check comps" line is no longer what runs when the text is a real buy. |
+| Stuff · Donate | "Donate the lamp" then "yes" marks that item `donated`, closes its open sell deal, and emits `pickup.requested`. | No Goodwill, 311, or bulk-pickup API. A bare "last call" / "recycle" question with no item is still the canned green reply. |
+| Last Call | Sweep in `lastCallSweep`. T−48h: ask drops to 60% of list (`droppedAsk`). T−24h: relisted free and `pickup.requested` (donation or 311). Move-out: anything still open is `dumped`. "Keep the couch" sets `last_call_opt_out`. | The pickup is an event, not a booked truck. |
+| Deal Engine | Built. Postgres state machine plus a sweep. Not Mastra. Modes: `sell_item`, `buy_item`, `sublet_out`, `find_sublet`. States: listed → negotiating → scheduled → handed_off → paid, plus relisted / donated / dumped. Floor and ceiling are code. Three pickup slots, one shared calendar. Scam Shield blocks off-escrow payment on a deal. | No no-show timeout sweep. No poll for "both accepted". A stranger whose text matches two open deals is not joined (ambiguity returns null). A counterparty already in two talks is asked which item when the text names more than one. |
+| Money · Nessie | The engine emits `ledger.hold` when a price is agreed, `escrow.requested` and `ledger.release` on hand-off, and `ledger.refund` if that party walks before hand-off. | **Nessie is not integrated.** No `MoneyRails`, no Nessie client, no Moving Fund, no Escrow account, no Ledger page. The Money Elf is a canned reply. Real dollars are not moved. |
+| Home · Hunt | Built. One missing fact at a time (budget → area → dates), then Craigslist and Airbnb. Scam flags, rank, top 3. "more" / "tell me about 2" / "skip" / "save". "search again" bypasses the 3-minute cache. A forwarded listing URL is ranked with the picks. | Booking, SpareFoot, Apartments, Zillow, and Facebook are off the default allowlist (blocks). Save drafts a text the owner sends; Home does not contact the lister. |
+| Home · Sublet | "Sublet my room for $1500" opens `sublet_out`. "Reach out to 2" after picks opens `find_sublet` and still tells the owner to send the note. | Lease PDF reading is the canned lease reply. Move-in week is the canned checklist reply. No landlord is contacted. |
+| Move-day | A booked slot emits `pickup.scheduled` with `subjectId` and the title, and the owner is told the item comes off the truck estimate. | **The Move-day Elf is empty.** Room Scan, U-Haul size and price, box list, Move Map, ETAs, and return-time planning are not built. Nothing reads `pickup.scheduled` yet. |
+| Owner yes | Inbound 👍 / heart / ✅ with no text counts as "yes" on the owner's question, and on a pending buy or donate. | Outbound 👍 fails on the shared Photon pool (`409`). Replies stay plain text. There is no tapback override for a scam flag. |
+| Memory and store | Postgres (Supabase) via `Bun.sql`. Working memory, transcript, facts, notes. Migrations `0001`–`0006` run on boot. | `0005_workflows.sql` still creates `deal_runs` and `last_call_runs`. The Mastra package that used them was deleted. Nothing writes those tables. |
+
+**Deal Engine, precisely.** `packages/engine` decides; the Elves only phrase it. `openDeal`, `attributeInbound`, `counterpartyTurn`, `ownerTurn`, `lastCallSweep`. A buyer is matched by the ref code in the post (`K7Q2`) or, on a first text, by one shared title word. Negotiation never crosses the owner's floor or ceiling; an offer past the line becomes one question in the owner chat. Hand-off tags the item `sold` or `given`. Payment copy says escrow. That escrow is the ledger events above, not Nessie.
+
+**Routing** (`packages/elves/src/router.ts`), first match wins: counterparty role → that deal's Elf; first contact → Crew Lead; thread owner; "keep the couch" → the Elf that owns the open Last Call deal; "yes" / "no" / a price while an offer or a buy/donate confirm is waiting → that Elf; "2" / "more" / "search again" / a forwarded URL after Home spoke → Home; photo → Stuff; a bare price → Stuff, unless keywords already point at another Elf (so "sublet my room for $1500" stays Home); Claude Haiku at ≥ 0.5; keywords; else Crew Lead. Room Scan is not a route.
+
+**What to build next, in the order the demo needs:**
+
+1. Nessie behind the ledger events (Money Elf voice stays the Elf; the engine keeps the rules). No money moves without the owner's yes.
+2. Room Scan on Move-day, skipping any item whose deal already emitted `pickup.scheduled`.
+3. Move Report from item outcomes and weights. Dumped counts against the total.
+4. Lease PDF and move-in are still canned. U-Haul quotes and the Move Map are still canned.
+
+Do not reintroduce `packages/workflows` or `@mastra/core`. SPEC already records that decision. Leave `0005_workflows.sql` in place so existing databases still migrate.
 
 ## Run it
 
@@ -48,7 +67,7 @@ Environment (all read in `apps/elves/src/config.ts`):
 | `ELVES_DB_POOL`, `ELVES_DB_MIGRATE` | pool size (default 5); `ELVES_DB_MIGRATE=0` skips the boot-time migration |
 | `ELVES_MEMORY`, `ELVES_MEMORY_MESSAGES`, `ELVES_MEMORY_BUDGET` | `off` disables conversational memory; transcript window (default 24 messages) and its token budget (default 1400) |
 | `ELVES_BROWSER`, `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERBASE_CONTEXT_ID` | housing search browser: `browserbase` (hosted; prod), `local` (your Chrome; dev) or `off` (fixtures). The context id (from `bun run browser login`) holds the owner's Facebook login |
-| `ELVES_LISTINGS_SITES`, `STAGEHAND_MODEL`, `ELVES_LISTINGS_*_TIMEOUT_MS`, `ELVES_LISTINGS_CONCURRENCY` | site allowlist (default: craigslist,airbnb,booking,sparefoot), extraction model, per-site / total timeouts, pages in flight |
+| `ELVES_LISTINGS_SITES`, `STAGEHAND_MODEL`, `ELVES_LISTINGS_*_TIMEOUT_MS`, `ELVES_LISTINGS_CONCURRENCY` | site allowlist (default: craigslist,airbnb), extraction model, per-site / total timeouts, pages in flight |
 | `PUBLIC_URL` | HTTPS origin for mini-app links; links are only sent when set |
 | `PORT` | HTTP port (`/health`, `/moves`, `/board/:moveId`, `/events/:moveId`, `/memory/:moveId`, `/b/:moveId` Crew Board page) |
 
@@ -62,7 +81,8 @@ packages/memory/     conversational memory: transcript + summaries, facts, notes
 packages/photon/     Photon 2.0 REST client, poll + Socket.IO inbound, normalization, script transport
 packages/pipeline/   per-space debounce, batch, cancel + carry-forward, deterministic send keys
 packages/llm/        LLM contract; ClaudeLLM (structured outputs via zod) and FakeLLM
-packages/elves/      Elf contract, router, fact extraction, Crew Lead, Stuff Elf, Home Elf, stub Elves
+packages/engine/     Deal Engine: four modes, negotiation, calendar, Scam Shield, Last Call sweep. Ledger events only; no Nessie client
+packages/elves/      Elf contract, router, Crew Lead, Stuff (sell/buy/donate), Home (hunt + sublet deals). Money and Move-day are canned stubs
 packages/listings/   housing search: site recipes, Stagehand v4 runner, dedupe, scam rules, fixtures
 scripts/             photon operator CLI, browser CLI (login, search, sites), offline demo
 ```
@@ -76,7 +96,7 @@ The Home Elf's hunt is a pipeline in `packages/listings` plus `packages/elves/sr
 3. Scam rules run on the raw results (price under half the median, wire / gift card / app payment before a viewing, "I'm abroad", no location, no photos, a different price for the same title on another site); hard flags sink a listing out of the picks. Duplicates across sites collapse to the most trusted copy.
 4. Ranking: the fast model scores up to 25 candidates against the requirements with a one-line reason; a heuristic fills gaps and stands alone with the fake LLM. Picks are stored in `listings` with a rank, and the top three go out as plain text with exact links. Working memory gets a `## Housing search` section so every Elf can answer "did you find me a place?".
 
-Operator commands: `bun run browser sites --kind room --area allston --max 1200` prints every recipe URL; `bun run browser search …` runs a real search and prints the runs table; `bun run browser login --site facebook` opens a Browserbase live view to log in once and prints the `BROWSERBASE_CONTEXT_ID` to set. Apartments.com (Akamai "Access Denied" to a plain headless Chrome), Zillow (PerimeterX) and Facebook Marketplace are off the default allowlist until `bun run browser search` passes on that deployment (Browserbase with proxies); Facebook only runs inside the owner's own persisted login. A block page shows up as a failed run, never as "no results". Automating these sites is against their terms and accounts can be checkpointed; searches are read-only, one per ask, with a three-minute repeat guard.
+Operator commands: `bun run browser sites --kind room --area allston --max 1200` prints every recipe URL; `bun run browser search …` runs a real search and prints the runs table; `bun run browser login --site facebook` opens a Browserbase live view to log in once and prints the `BROWSERBASE_CONTEXT_ID` to set. Verified live from a headless local Chrome: Craigslist (rooms, sublets, apartments) and Airbnb (furnished rooms and sublets, and the hotel gap; Airbnb quotes a sample stay rather than the exact dates, so its monthly figure is that stay's nightly rate × 30 and the ranker treats it as an estimate). Booking.com (drops the search parameters and lands on its search form), Apartments.com (Akamai "Access Denied"), SpareFoot (Cloudflare challenge), Zillow (PerimeterX) and Facebook Marketplace are off the default allowlist until `bun run browser search` passes on that deployment (Browserbase with proxies); Facebook only runs inside the owner's own persisted login. A block page shows up as a failed run, never as "no results". Automating these sites is against their terms and accounts can be checkpointed; searches are read-only, one per ask, with a three-minute repeat guard.
 
 ## Memory
 

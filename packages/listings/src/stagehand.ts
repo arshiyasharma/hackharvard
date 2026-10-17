@@ -1,12 +1,20 @@
 import { createLogger, type Logger } from "@elves/shared";
 import {
+  BLOCK_PAGE_TITLE,
   type BrowserConfig,
   type BrowserOpener,
   type BrowserSession,
   openStagehandBrowser,
 } from "./browser.ts";
 import type { ListingKind, ListingQuery, SiteResult } from "./domain.ts";
-import { type PlannedSearch, recipesFor, SiteExtraction, type SiteRecipe, toResults } from "./recipe.ts";
+import {
+  type PlannedSearch,
+  recipesFor,
+  resolveNodeUrls,
+  SiteExtraction,
+  type SiteRecipe,
+  toResults,
+} from "./recipe.ts";
 import { RECIPES } from "./recipes/index.ts";
 import type { ListingSource, SearchOpts, SearchOutcome, SiteRun } from "./types.ts";
 
@@ -249,11 +257,13 @@ export class StagehandListings implements ListingSource {
   private async runSite(session: BrowserSession, p: PlannedSearch, timeoutMs: number): Promise<SiteResult[]> {
     const page = await session.newPage(p.url);
     try {
+      // Modals open a beat after load, so dismiss once the results have settled, then let the page re-render.
       const ready = await session.waitFor(page, {
         selector: p.recipe.locator,
         settleMs: 750,
         timeoutMs: Math.min(10_000, timeoutMs),
       });
+      await session.dismiss(page);
       if (!ready)
         this.log.debug("results container not found; extracting the whole page", { site: p.recipe.site });
       for (const step of p.recipe.prepare?.(p.query) ?? []) {
@@ -263,12 +273,21 @@ export class StagehandListings implements ListingSource {
           this.log.debug("prepare step skipped", { site: p.recipe.site, step, error: String(err) });
         }
       }
-      const data = await session.extract(p.recipe.instruction(p.query), SiteExtraction, {
+      const raw = await session.extract(p.recipe.instruction(p.query), SiteExtraction, {
         page,
         timeoutMs,
         locator: ready ? p.recipe.locator : undefined,
       });
-      return toResults(p.recipe, p.query, data, p.url);
+      // The model points at links by node id; the snapshot knows their hrefs.
+      const needsLinks =
+        Array.isArray(raw?.listings) && raw.listings.some((l) => !/^https?:\/\//i.test(l?.url ?? ""));
+      const data = needsLinks ? resolveNodeUrls(raw, await session.linkMap(page)) : raw;
+      const results = toResults(p.recipe, p.query, data, p.url);
+      if (!results.length) {
+        const title = await session.title(page);
+        if (BLOCK_PAGE_TITLE.test(title)) throw new Error(`blocked: "${title.trim()}"`);
+      }
+      return results;
     } finally {
       await page.close().catch(() => {});
     }

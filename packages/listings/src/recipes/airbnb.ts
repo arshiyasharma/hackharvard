@@ -15,6 +15,9 @@ export const airbnb: SiteRecipe = {
   kinds: ["sublet", "room", "hotel"],
   needsLogin: false,
   hosts: ["airbnb.com"],
+  // Airbnb's class names are generated; the main content id has been stable for years. Without it the
+  // page is ~1.7M characters of snapshot.
+  locator: "#site-content",
   buildUrl(q) {
     const city = parseCity(q.city);
     if (!city || !q.moveIn || !q.moveOut) return null;
@@ -36,14 +39,15 @@ export const airbnb: SiteRecipe = {
     if (roomType) url.searchParams.append("room_types[]", roomType);
     return url.toString();
   },
-  prepare() {
-    return ["If a cookie, translation or sign-up popup is showing, dismiss it."];
-  },
+  // No prepare() step: the runner's Escape closes the price/translation dialog; an LLM click here tended to
+  // navigate away from the results.
   instruction(q) {
     return (
-      `This is Airbnb search results for ${kindNoun(q.kind)}. Each card is one stay. For each return: the card's ` +
-      "name as the title, the card link, the price as shown and whether it is per night (priceBasis 'night') or a " +
-      "total for the stay (priceBasis 'total'), the location line, and photoCount 1. Skip 'other places' sections."
+      `This is Airbnb search results for ${kindNoun(q.kind)}. Each card is one stay. For each return: as the title, ` +
+      "the card heading plus its descriptive line (e.g. 'Room in Boston · Stay with Maria · 1 bed'), the id of the " +
+      "card or its link as url, the price exactly as shown including any 'for N nights' wording (priceBasis 'total' " +
+      "when it is for a stay, 'night' when it says per night), the rating line as location if no area is shown, and " +
+      "photoCount 1. Skip 'other places' sections."
     );
   },
 };
