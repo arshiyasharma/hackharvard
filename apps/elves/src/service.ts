@@ -16,7 +16,7 @@ import { dealBoard, inquiryFor, joinDeal, lastCallSweep, policyFor } from "@elve
 import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
-import type { InboundMessage, Transport } from "@elves/photon";
+import { type InboundMessage, PhotonApiError, type Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import {
   createLogger,
@@ -53,6 +53,35 @@ export interface Service {
   /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
   notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
   stats: () => Record<string, unknown>;
+}
+
+/**
+ * Split a text into pieces of at most `max` characters, at blank lines first, then at line breaks, then at
+ * spaces, so a reply Photon refuses for its length still arrives whole and readable.
+ */
+export function chunkText(text: string, max = 900): string[] {
+  const out: string[] = [];
+  const pack = (units: string[], sep: string) => {
+    let cur = "";
+    for (const u of units) {
+      const next = cur ? `${cur}${sep}${u}` : u;
+      if (next.length <= max) cur = next;
+      else {
+        if (cur) out.push(cur);
+        if (u.length <= max) cur = u;
+        else {
+          // one unit is itself too long: break it on the next smaller separator
+          const smaller = sep === "\n\n" ? "\n" : sep === "\n" ? " " : null;
+          if (smaller) pack(u.split(smaller), smaller);
+          else for (let i = 0; i < u.length; i += max) out.push(u.slice(i, i + max));
+          cur = "";
+        }
+      }
+    }
+    if (cur) out.push(cur);
+  };
+  pack(text.split("\n\n"), "\n\n");
+  return out.filter((p) => p.trim().length);
 }
 
 /** How often the typing indicator is refreshed while an Elf's deferred work (a search) runs. */
@@ -551,17 +580,43 @@ export function createService(deps: ServiceDeps): Service {
           log.debug("send already recorded; skipping", { key });
           continue;
         }
-        try {
-          const sent = await deps.transport.send(
+        const text = reply.text.trim();
+        if (!text) {
+          log.error("empty reply; nothing sent", { traceId, key, elf: elf.name });
+          continue;
+        }
+        const outbound = (t: string, k: string) =>
+          deps.transport.send(
             {
               spaceId: last.spaceId,
               senderId: last.agentId,
-              text: reply.text,
+              text: t,
               parentMessageId: reply.parentMessageId ?? undefined,
               format: reply.format ?? "plain",
             },
-            key,
+            k,
           );
+        try {
+          let sent: { id: string };
+          try {
+            sent = await outbound(text, key);
+          } catch (err) {
+            // Photon refused the text itself (422): a long reply goes out in pieces, at blank lines.
+            if (!(err instanceof PhotonApiError && err.status === 422 && text.length > 300)) throw err;
+            log.warn("send refused; resending in pieces", {
+              traceId,
+              key,
+              chars: text.length,
+              body: err.body,
+            });
+            const parts = chunkText(text);
+            let first: { id: string } | null = null;
+            for (let i = 0; i < parts.length; i++) {
+              const s = await outbound(parts[i] as string, `${key}:c${i}`);
+              first ??= s;
+            }
+            sent = first as { id: string };
+          }
           await deps.store.recordSend(key, sent.id);
           await deps.store.setThreadOwner(sent.id, elf.name);
           await runOnSent(reply, sent.id);
@@ -592,7 +647,12 @@ export function createService(deps: ServiceDeps): Service {
           );
         } catch (err) {
           counters.failures++;
-          log.error("send failed", { traceId, key, error: String(err) });
+          log.error("send failed", {
+            traceId,
+            key,
+            error: String(err),
+            body: err instanceof PhotonApiError ? err.body : undefined,
+          });
           await deps.store.appendEvent({
             moveId: move.id,
             type: "reply.failed",

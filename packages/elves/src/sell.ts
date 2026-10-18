@@ -11,10 +11,11 @@ import {
 } from "./contract.ts";
 import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { moveReport, reportText } from "./impact.ts";
-import { CATEGORY_WORDS, type Category } from "./facts.ts";
+import { CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB, extractFactsHeuristic } from "./facts.ts";
 import {
   type ApprovedItem,
   anchorDeals,
+  approveListings,
   approvePendingListings,
   describeItem,
   fmtUsd,
@@ -169,12 +170,34 @@ export const stuffElf: Elf = {
     }
     if (ctx.signal.aborted) return { replies: [] };
 
-    const items = await ctx.store.listItems(ctx.move.id);
+    // "selling a desk" said straight to Stuff: capture the item here too, so it never vanishes between Elves.
+    let items = await ctx.store.listItems(ctx.move.id);
+    if (!hasPhotos(ctx.batch)) {
+      for (const it of extractFactsHeuristic(text, ctx.now()).items) {
+        if (it.intent !== "sell" && it.intent !== "unknown") continue;
+        if (items.some((e) => e.name.toLowerCase() === it.name.toLowerCase())) continue;
+        await ctx.store.upsertItem({
+          moveId: ctx.move.id,
+          name: it.name,
+          category: it.category,
+          weightLb: DEFAULT_WEIGHT_LB[it.category],
+          listPriceCents: null,
+          floorPriceCents: null,
+          outcome: "listed",
+        });
+        events.push({
+          type: "item.captured",
+          payload: { name: it.name, category: it.category, intent: it.intent },
+        });
+      }
+      items = await ctx.store.listItems(ctx.move.id);
+    }
     const price = parsePriceCents(text);
     let priced: Item | null = null;
     if (price != null && items.length) {
       const target = pickTarget(text, items, intake.items);
-      if (target) {
+      // "list it at 200" on an item that already has a floor names the list price, not a new floor.
+      if (target && !(wantsListing(text) && target.floorPriceCents != null)) {
         const list =
           target.priceLowCents != null && target.priceHighCents != null
             ? Math.max(price, suggestListCents(target.priceLowCents, target.priceHighCents))
@@ -195,8 +218,12 @@ export const stuffElf: Elf = {
     }
 
     let justApproved: ApprovedItem[] = [];
-    if (price == null && intake.items.length === 0 && wantsListing(text)) {
-      justApproved = await approvePendingListings(ctx, text);
+    if (wantsListing(text)) {
+      // "list it for at least 1200": the floor just set, listed in the same breath. Otherwise whatever is waiting,
+      // even when a new photo came in the same text (the new item has no floor yet, so it is not among them).
+      justApproved = priced
+        ? await approveListings(ctx, [priced], text)
+        : await approvePendingListings(ctx, text);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
@@ -212,6 +239,40 @@ export const stuffElf: Elf = {
     const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
     const current = await ctx.store.listItems(ctx.move.id);
     const needsFloor = current.filter((i) => i.floorPriceCents == null && i.id !== priced?.id);
+    // "list it" with nothing to list: say exactly what is missing instead of letting the model talk around it.
+    if (
+      wantsListing(text) &&
+      !justApproved.length &&
+      !priced &&
+      !intake.items.length &&
+      !hasPhotos(ctx.batch)
+    ) {
+      const unlisted = needsFloor.filter((i) => i.outcome === "listed");
+      if (!current.length)
+        return replyTo(
+          ctx,
+          "📦 What are you selling?\n\nSend a photo and the lowest you'd take, and I'll list it and text you the ref code buyers quote.",
+          {
+            boardPatch: {
+              status: "working",
+              currentTask: "Waiting on a photo",
+              lastUpdate: "Asked what to list",
+            },
+          },
+        );
+      if (unlisted.length)
+        return replyTo(
+          ctx,
+          `❓ What's the lowest you'd take for the ${unlisted.map((i) => i.name).join(" and the ")}?\n\nThen I'll list it and send you the ref code.`,
+          {
+            boardPatch: {
+              status: "working",
+              currentTask: `Waiting on a floor for ${unlisted.map((i) => i.name).join(", ")}`,
+              lastUpdate: "Asked for the floor",
+            },
+          },
+        );
+    }
     const facts = {
       justApproved: justApproved.map((i) => ({
         name: i.name,
@@ -257,6 +318,8 @@ export const stuffElf: Elf = {
       reply = template(facts, intake.items, priced, justApproved, poolNumber);
     }
     if (ctx.signal.aborted) return { replies: [] };
+    // A blank draft is never sent (Photon refuses it with a 422); the template says the same thing.
+    if (!reply.trim()) reply = template(facts, intake.items, priced, justApproved, poolNumber);
     // An LLM draft may paraphrase; the post line with the ref code must survive verbatim.
     for (const a of justApproved)
       if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;

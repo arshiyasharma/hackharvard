@@ -170,10 +170,16 @@ const LIST_AT = /\b(?:at|for)\s*\$?\s?(\d{2,5})(?:\.\d{1,2})?\b(?!\s*(?:am|pm|%)
 
 export async function approvePendingListings(ctx: ElfContext, text = ""): Promise<ApprovedItem[]> {
   const pending = await pendingListings(ctx.store, ctx.move.id);
+  return approveListings(ctx, chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id)), text);
+}
+
+/** List exactly these items: each gets listingApproved, outcome listed, and an open sell deal with a ref code. */
+export async function approveListings(ctx: ElfContext, chosen: Item[], text = ""): Promise<ApprovedItem[]> {
   const at = text.match(LIST_AT);
   const listAt = at ? Number(at[1]) * 100 : null;
   const out: ApprovedItem[] = [];
-  for (const it of chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id))) {
+  for (const it of chosen) {
+    if (it.floorPriceCents == null) continue;
     const listPriceCents =
       listAt != null && it.floorPriceCents != null && listAt >= it.floorPriceCents
         ? listAt

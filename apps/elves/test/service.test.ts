@@ -6,7 +6,7 @@ import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
 import { abilityLine, CREW_ABILITIES } from "@elves/elves";
 import { ScriptTransport } from "@elves/photon";
 import { createLogger, MemoryStore, type Store } from "@elves/shared";
-import { createService } from "../src/service.ts";
+import { chunkText, createService } from "../src/service.ts";
 
 const quiet = createLogger("test", "error");
 const owner = "+14255269066";
@@ -77,6 +77,19 @@ const CHAIR = {
   ],
   notes: null,
 };
+
+describe("chunkText", () => {
+  test("splits at blank lines, then lines, then spaces, never over the limit, nothing lost", () => {
+    const para = (n: number) => `${"word ".repeat(n)}end`;
+    const text = [para(40), para(120), para(300), "tail"].join("\n\n");
+    const parts = chunkText(text, 400);
+    expect(parts.every((p) => p.length <= 400 && p.trim().length > 0)).toBe(true);
+    expect(parts.length).toBeGreaterThan(3);
+    expect(parts.join(" ").replace(/\s+/g, " ")).toBe(text.replace(/\s+/g, " "));
+    expect(chunkText("short", 400)).toEqual(["short"]);
+    expect(chunkText("", 400)).toEqual([]);
+  });
+});
 
 describe("service end to end (script transport)", () => {
   test("first text creates a move and gets a reaction, typing and a threaded Crew Lead reply", async () => {

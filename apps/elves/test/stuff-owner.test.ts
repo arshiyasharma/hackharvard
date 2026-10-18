@@ -115,6 +115,37 @@ describe("Stuff Elf owner side through the service", () => {
     b.stop();
   });
 
+  test("floor and 'list it' in one text lists at once; 'list it at N' keeps the floor; nothing to list gets a plain ask", async () => {
+    const b = boot();
+    // nothing captured yet: "list it" says what to send, it does not stall
+    await b.say("moving out nov 1");
+    expect(await b.say("list it")).toContain("What are you selling?");
+    // an item with no floor yet: the ask names it
+    await b.say("selling a desk");
+    expect(await b.say("list it")).toContain("What's the lowest you'd take for the desk?");
+    // floor and approval in one breath
+    const listed = await b.say("list it for at least 120");
+    const move = (await b.store.listMoves())[0]!;
+    let deals = await b.store.listDeals(move.id);
+    expect(deals).toHaveLength(1);
+    expect(deals[0]!.limitCents).toBe(12000);
+    expect(deals[0]!.askCents).toBeGreaterThanOrEqual(12000);
+    expect(listed).toContain(deals[0]!.code);
+    // a second item: "$5 for the chair" then "list it at 200" keeps the $5 floor and lists at $200
+    await b.say("also need to sell a chair");
+    const items = await b.store.listItems(move.id);
+    if (!items.some((i) => i.name === "chair"))
+      await b.store.upsertItem({ moveId: move.id, name: "chair", category: "chair" });
+    await b.say("$5 for the chair");
+    const second = await b.say("list it at 200");
+    deals = await b.store.listDeals(move.id);
+    const chair = deals.find((d) => d.title === "chair")!;
+    expect(chair.limitCents).toBe(500);
+    expect(chair.askCents).toBe(20000);
+    expect(second).toContain(chair.code);
+    b.stop();
+  });
+
   test("move report counts what left and what was dumped", async () => {
     const b = boot();
     await b.say("moving out nov 1 and selling a couch and a lamp");
