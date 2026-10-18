@@ -69,6 +69,8 @@ How to show it on stage: open the Crew Board (`/b/<moveId>`): four rows, four li
 
 The Photon page rewards "AI that lives with us": agents that participate, not utilities. Our answer is a crew that lives in the thread, remembers across channels, and is careful with the user's trust. Below, every question the judges' page asks, with our answer.
 
+**The Photon story on the site, in order:** (1) three hackathon ideas in one project (a house-hunt agent, a marketplace agent and a money agent: one big task doesn't need to be split up for the user to finish), (2) multi-agent with humans in the loop, (3) a human in every loop, (4) memory across time, channels and people, (5) a voice agent that hands off to a thread, (6) the Photon 1.0 vs 2.0 debate and why dashboards and the Smart Plan became pictures, (7) our Photon skills and depth of use, (8) built for more than moving (weddings, home purchases, visas, business launches, estate clean-outs), and last, (9) mini apps don't work on Photon 2.0.
+
 ### 4.1 Requirements: ship on Photon 2.0, live on a Photon channel
 
 | Requirement | Us |
