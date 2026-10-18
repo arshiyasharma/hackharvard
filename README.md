@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 615 tests across 42 files (636 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 614 tests across 42 files (640 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
