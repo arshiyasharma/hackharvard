@@ -767,3 +767,39 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 .v-last { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; } .v-last span { font-weight: 700; font-size: 1.05rem; padding: 4px 10px; border-radius: 10px; background: var(--fill); } .v-last .free { background: #2ea8ff; color: #04243d; } .v-last i { width: 10px; height: 2px; background: var(--line); }
 .v-budget { display: grid; gap: 6px; } .v-budget .bar { height: 12px; border-radius: 6px; background: var(--fill); overflow: hidden; } .v-budget .bar u { display: block; height: 100%; background: #2ea8ff; transform: scaleX(var(--k)); transform-origin: left; border-radius: 6px; } .v-budget .meta { display: flex; justify-content: space-between; font-size: 13.5px; } .v-budget small { color: var(--muted); font-size: 12.5px; }
 @media (max-width: 980px) { .bento { grid-template-columns: 1fr; } .mod, .mod.s4, .mod.s2, .mod.s3 { grid-column: auto; } .mod .try { position: static; align-self: flex-start; margin-top: 6px; } }
+
+/* Nessie as one story, one step at a time */
+.stepper { display: grid; gap: 16px; }
+.sp-rail { display: flex; gap: 8px; }
+.sp-rail li { flex: 1; min-width: 0; }
+.sp-rail button { width: 100%; display: grid; gap: 7px; text-align: left; }
+.sp-rail i { display: block; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--tk, var(--blue)) 20%, #fff); position: relative; overflow: hidden; }
+.sp-rail i::after { content: ""; position: absolute; inset: 0; background: var(--tk, var(--blue)); transform: scaleX(0); transform-origin: left; transition: transform 0.5s var(--ease); }
+.sp-rail button.past i::after, .sp-rail button[aria-current="true"] i::after { transform: scaleX(1); }
+.sp-rail button[aria-current="true"] i::after { background: var(--ink); }
+.sp-rail span { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--ink) 45%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-rail button[aria-current="true"] span { color: var(--ink); }
+.sp-stage { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 26px; align-items: stretch; min-height: 320px; }
+.sp-text .pain { margin: 0; font-size: clamp(1.7rem, 3.3vw, 2.6rem); line-height: 1.05; letter-spacing: -0.035em; font-weight: 780; text-wrap: balance; }
+.sp-text .sol { margin: 14px 0 0; font-size: 1.2rem; letter-spacing: -0.015em; }
+.sp-text .sol2 { margin: 2px 0 0; color: var(--ink-2); font-size: 1.02rem; }
+.sp-text .more { margin: 14px 0 0; font-size: 0.97rem; line-height: 1.5; color: var(--ink-2); max-width: 46ch; }
+.sp-text .try { margin-top: 16px; padding: 9px 16px; border-radius: 999px; background: var(--ink); color: #fff; font-weight: 700; font-size: 13px; }
+.sp-card { background: #fff; border: 1px solid var(--line); border-radius: 30px; padding: 28px; display: grid; align-content: center; min-width: 0; overflow: hidden; }
+.sp-card.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+.sp-card .vis { zoom: 1.3; min-height: 0; margin: 0; }
+.sp-text.swap, .sp-card.swap { animation: arrive 0.45s var(--ease) both; }
+.sp-nav { display: flex; justify-content: space-between; gap: 10px; }
+.sp-btn { padding: 11px 20px; border-radius: 999px; font-weight: 600; font-size: 14.5px; background: #fff; border: 1px solid var(--line); text-align: center; transition: transform 0.2s var(--ease), opacity 0.2s; }
+.sp-btn.go { background: var(--ink); color: #fff; border-color: var(--ink); }
+.sp-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.sp-btn:disabled { opacity: 0.35; cursor: default; }
+.track-panel .track-actions { margin: 16px 0 18px; }
+@media (max-width: 980px) { .sp-stage { grid-template-columns: 1fr; min-height: 0; } .sp-rail span { display: none; } .sp-card .vis { zoom: 1.05; } }
+.track-panel.compact { padding: clamp(18px, 2.6vw, 30px); }
+.track-panel.compact .why-track { font-size: clamp(1.3rem, 2.5vw, 1.9rem); max-width: 38ch; }
+.track-panel.compact .why-track small { margin-bottom: 8px; }
+.track-panel.compact .apis { display: none; }
+.track-panel.compact .track-actions { margin: 12px 0 14px; }
+.track-panel.compact .sp-stage { min-height: 270px; }
+.track-panel.compact .sp-card { padding: 20px; }

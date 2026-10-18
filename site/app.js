@@ -422,18 +422,41 @@
     }).join("") + "</div>";
   }
 
+  var STORY_ORDER = ["budget", "split", "lastcall", "engine", "net", "plan", "coming", "books"];
+  var STEP_LABEL = { budget: "Budget", split: "Roommates", lastcall: "Last Call", engine: "Deal Engine", net: "Net cost", plan: "Smart Plan", coming: "Coming back", books: "The books" };
+  function stepperHTML(mods) {
+    var ordered = STORY_ORDER.map(function (v) { return mods.filter(function (m) { return m.vis === v; })[0]; }).filter(Boolean);
+    return { ordered: ordered, html: '<div class="stepper"><ol class="sp-rail" aria-label="The money story">' + ordered.map(function (m, i) { return '<li><button type="button" data-step="' + i + '"><i></i><span>' + esc(STEP_LABEL[m.vis]) + "</span></button></li>"; }).join("") + '</ol><div class="sp-stage"><div class="sp-text" id="spText" aria-live="polite"></div><div class="sp-card" id="spCard"></div></div><div class="sp-nav"><button type="button" class="sp-btn" id="spPrev">Back</button><button type="button" class="sp-btn go" id="spNext">Next</button></div></div>' };
+  }
+  function wireStepper(ordered) {
+    var i = 0, text = $("#spText"), card = $("#spCard"), prev = $("#spPrev"), next = $("#spNext"), dots = $$(".sp-rail button");
+    function show(n) {
+      i = clamp(n, 0, ordered.length - 1); var m = ordered[i];
+      dots.forEach(function (d, k) { d.setAttribute("aria-current", String(k === i)); d.classList.toggle("past", k < i); });
+      text.innerHTML = '<h3 class="pain">' + esc(m.pain) + '</h3><p class="sol"><b>' + esc(m.t) + "</b></p><p class=\"sol2\">" + esc(m.s) + "</p><p class=\"more\">" + esc(m.more) + "</p>" + (m.go ? '<button type="button" class="try" data-go="' + m.go + '">Try it live</button>' : "");
+      card.className = "sp-card" + (m.dark ? " dark" : ""); card.innerHTML = '<div class="vis">' + VIS[m.vis]() + "</div>";
+      text.classList.remove("swap"); card.classList.remove("swap"); void text.offsetWidth; text.classList.add("swap"); card.classList.add("swap");
+      prev.disabled = i === 0; next.disabled = i === ordered.length - 1; next.textContent = i === ordered.length - 1 ? "That is the story" : "Next: " + STEP_LABEL[ordered[i + 1].vis];
+      var tb = $("[data-go]", text); if (tb) tb.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var t = $('#led [data-tab="' + tb.dataset.go + '"]'); if (t) setTimeout(function () { t.click(); }, reduce ? 0 : 450); });
+    }
+    dots.forEach(function (d, k) { d.addEventListener("click", function () { show(k); }); });
+    prev.addEventListener("click", function () { show(i - 1); }); next.addEventListener("click", function () { show(i + 1); });
+    $("#track").addEventListener("keydown", function (e) { if (e.key === "ArrowRight") show(i + 1); if (e.key === "ArrowLeft") show(i - 1); });
+    show(0);
+  }
+
   /* ---------- tracks: one at a time ---------- */
   var sel = $("#trackSelect"), trEl = $("#track");
   TRACKS.forEach(function (t) { sel.appendChild(new Option(t.name, t.id)); });
-  var ACC = { photon: ["#0a84ff", "#e7f1ff", "Photon"], nessie: ["#0e0f0c", "#eef7c4", "Nessie"], sustain: ["#2fb36b", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
+  var ACC = { photon: ["#0a84ff", "#e7f1ff", "Photon"], nessie: ["#1b8fe0", "#dcecff", "Nessie"], sustain: ["#2fb36b", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
   function showTrack(id) {
     var t = TRACKS.filter(function (x) { return x.id === id; })[0];
-    var ac = ACC[id], tp = $("#trackPanel"); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];
+    var stp = null; var ac = ACC[id], tp = $("#trackPanel"); tp.classList.toggle("compact", !!t.modules); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];
     trEl.innerHTML =
       '<p class="why-track"><small>Why ' + esc(t.name) + "</small>" + esc(t.why) + "</p>" +
       '<div class="track-actions"><button class="btn small primary" type="button" id="see">See it in the thread</button><ul class="apis" aria-label="What we used">' + t.apis.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>" +
-      (t.modules ? modulesHTML(t.modules) : '<div class="tiles">') + (t.modules ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (t.modules ? "" : "</div>");
-    $$("[data-go]", trEl).forEach(function (b) { b.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var tb = $('#led [data-tab="' + b.dataset.go + '"]'); if (tb) setTimeout(function () { tb.click(); }, reduce ? 0 : 450); }); });
+      (t.modules ? (stp = stepperHTML(t.modules)).html : '<div class="tiles">') + (t.modules ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (t.modules ? "" : "</div>");
+    if (stp) wireStepper(stp.ordered);
     $("#see").addEventListener("click", function () {
       started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
       setTimeout(function () { pickScene(t.scene); }, reduce ? 0 : 500);
