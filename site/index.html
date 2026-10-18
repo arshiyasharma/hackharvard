@@ -82,31 +82,21 @@
   <div class="demo-in">
     <div class="demo-copy">
       <h2 id="h-demo">Demo time.</h2>
-      <p class="demo-sub">We pause the slides and call the agent. Live, on the judges' phones.</p>
-      <ol class="demo-steps" id="demoSteps">
-        <li>Call the number and tell the move out loud</li>
-        <li>Hear it play the brief back, say yes</li>
-        <li>Watch the recap text land in the thread</li>
-        <li>Sell a couch, split a truck, ask for the plan</li>
-      </ol>
-      <div class="demo-num" id="demoNum"></div>
-      <div class="keys dark" data-keys aria-label="Quick words"></div>
+      <p class="demo-sub">We'll call the agent live. If the line drops, the simulator below plays every step.</p>
+      <div class="demo-num" id="demoNum" hidden></div>
+      <a class="demo-fallback" href="#crew">Jump to the simulator</a>
     </div>
     <div class="demo-stage">
       <div class="callui" id="call" data-state="idle">
-        <div class="call-top"><span class="call-av" aria-hidden="true"></span><div><b>Crew Lead</b><span id="callStatus">Elfie · tap to call</span></div><time id="callTime" aria-hidden="true">0:00</time></div>
+        <div class="call-top"><span class="call-av" aria-hidden="true"></span><div><b>Crew Lead</b><span id="callStatus">Elfie · practice call</span></div><time id="callTime" aria-hidden="true">0:00</time></div>
         <div class="wave" id="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
         <div class="caps" id="caps" aria-live="polite"></div>
-        <div class="call-actions"><button type="button" class="callbtn go" id="callGo"><span>Call Elfie</span></button><button type="button" class="callbtn end" id="callEnd" hidden><span>End</span></button></div>
+        <div class="call-actions"><button type="button" class="callbtn go" id="callGo"><span>Practice call</span></button><button type="button" class="callbtn end" id="callEnd" hidden><span>End</span></button></div>
       </div>
       <div class="phone small" id="phone-demo"></div>
     </div>
-    <a class="demo-fallback" href="#crew">If the line drops, every step plays below</a>
   </div>
 </section>
-
-<!-- Photos scrolling -->
-<div class="strip" id="strip1" aria-label="Photos from the build"></div>
 
 <!-- The Elves: emulator -->
 <section class="crew reveal" id="crew" aria-labelledby="h-crew">
@@ -160,6 +150,7 @@
 <!-- Deal Engine -->
 <section class="engine reveal" id="engine" aria-labelledby="h-engine">
   <h2 id="h-engine">The Deal Engine.</h2>
+  <p class="credit">Our unique discovery. Built by Yashashri.</p>
   <p class="lead2">The part we built from scratch: every buyer, applicant and lister you never met, handled by one state machine.</p>
   <div class="modes" id="engModes" role="group" aria-label="Deal modes"></div>
   <div class="eng" id="eng">
@@ -212,14 +203,14 @@
 <!-- Unique -->
 <section class="unique reveal" id="unique" aria-labelledby="h-unique">
   <h2 id="h-unique">What nobody else built.</h2>
+  <div class="feature" id="uFeature"></div>
   <ul class="uniq" id="uniq"></ul>
 </section>
-
-<div class="strip rev" id="strip2" aria-label="More photos from the build"></div>
 
 <!-- Stack -->
 <section class="stack-sec reveal" id="stack" aria-labelledby="h-stack">
   <h2 id="h-stack">Every API and service we used.</h2>
+  <div class="rail" id="rail" aria-label="Services we used"></div>
   <div class="proof">
     <span><b>614</b> automated tests, <b>640</b> on Postgres</span>
     <span><b>~190</b> human test rows</span>

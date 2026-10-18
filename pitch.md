@@ -330,17 +330,17 @@ Per-track appendix slides (swap in for that judge): Photon (4.2 + 4.4), Nessie (
 **Goal:** a page that opens like a product launch and works like a cheat sheet on stage. Built in `site/` (static HTML, CSS and JS, no build step). Name: **Elfie**.
 
 ### 10.1 The flow (top to bottom)
-1. **Title screen.** A giant "Elfie" and one problem line: big tasks like moving take weeks of websites, people and coordination. Sixteen floating chips (Craigslist, Venmo, U-Haul, the group chat…) drift around it.
+1. **Title screen.** A giant "Elfie" on a dotted desktop buried in far too many windows: Craigslist, Airbnb, Zillow, Gmail, a budget spreadsheet, Venmo, U-Haul, a group chat, notes, a calendar, plus floating sticky notes, notification pills, a name tag that says "Overwhelmed", kaomoji and a row of too many browser tabs. Everything drifts. The problem line sits under it: big tasks like moving take weeks of websites, people and coordination.
 2. **The scroll story.** As you scroll, the title shrinks, the chips swarm into one point, and a single **Crew Lead** appears. Then three wires draw out, one at a time, to the **Home**, **Stuff** and **Money** Elves, each popping in with its three jobs. This is the "one agent branching into three sub-agents" moment.
 3. **What we heard.** The interview Short (YouTube embed slot) beside two huge numbers that count up: **15** people interviewed, **30+** on the waitlist.
-4. **Demo time.** A dark full-screen pause: a ringing phone, "Demo time.", the four things we'll do live, the number to call, and a link to the simulator in case the line drops.
-5. **Photo strip.** A slowly scrolling film strip of photos from the build (placeholder tiles until real photos are added), with a second strip, running the other way, later on.
+4. **Demo time.** Deliberately quiet: a small "Demo time." heading, one line, and a practice call you can place (it plays a scripted Crew Lead voice call, then the recap text lands in a phone). Backup if the live call drops.
+5. **Photos.** If photos are listed in `SITE.nightPhotos`, a slow film strip of them appears under Demo time. With no photos the strip is not shown. Team portraits (polaroids) sit in Text the crew.
 6. **The Elves, simulated.** (A strip of four quick words sits at the top, and again in Demo time and Text the crew: **HELP** for all your options, **STATUS** for the move-day checklist and where everything stands, **DASHBOARD** for the live ledger, picture and link, **SMART PLAN** for three plans with your odds. Tap one to play it.) Tabs for Crew Lead, Home, Stuff and Money. Every main function is a button; click it and an iPhone replays the exact reply format. Each Elf also lists what it won't do. This is the backup if the live demo fails.
 7. **Inside the Money Elf.** A working ledger simulator: Overview, Smart Plan, Coming back, Activity. Switch plans, change the budget (the odds recompute), toggle expected payments (the projected net cost updates), see the pending Nessie records.
 8. **How it fits together.** You → Photon 2.0 → router → four agents → Deal Engine, memory, Nessie, Postgres.
 9. **Pick a track.** A dropdown shows one track at a time: "Why Photon" (or Nessie, Sustainability, Cybersec and Fintech), a big statement, the APIs used, and eight tap-to-open tiles (a line each, a "more" on tap) plus a "See it in the thread" button that plays the matching conversation.
-10. **What nobody else built.** Fourteen distinct things, one line each.
-11. **Every API and service.** A searchable list of everything we used, filterable by category (Messaging, Voice, AI, Money, Data, Housing search, Hosting, Runtime, Pictures, Sustainability data, Built by us, Dev tooling), with the test counts above it.
+10. **What nobody else built.** A highlighted "Our unique discovery: the Deal Engine, built by Yashashri" card, then a compact three-column list of the other originals.
+11. **Every API and service.** A small, self-scrolling rail of service icons across the top, then a searchable list of everything we used inside its own scrolling panel, filterable by category (Messaging, Voice, AI, Money, Data, Housing search, Hosting, Runtime, Pictures, Sustainability data, Built by us, Dev tooling), with the test counts above it.
 12. **What's next.** Eight future items.
 13. **Text the crew.** The number, the team, the repo.
 
@@ -349,7 +349,7 @@ iMessage and Photon calm: airy near-white canvas, soft blue for "you", gray for 
 
 ### 10.3 Assets to gather (we cannot make these)
 - The interview Short: upload to YouTube, paste the id in `site/data.js` (`SITE.interviewYouTubeId`).
-- Night-coding photos: drop images into `site/assets/night/` and list them in `SITE.nightPhotos` (optional `SITE.nightCaptions`). They scroll in both strips.
+- Night-coding photos: drop images into `site/assets/night/` and list them in `SITE.nightPhotos` (optional `SITE.nightCaptions`). They appear as a scrolling strip. Team portraits go in `site/assets/team/` and `SITE.team[].photo`.
 - The number to text: `SITE.number` (shown in Demo time and Text the crew).
 - The waitlist and interview counts: `SITE.waitlist` and `SITE.interviews` (currently 30+ and 15).
 - Team names and spellings (taken from the git history, confirm).

@@ -123,22 +123,50 @@
   ["crew", "home", "stuff", "money"].forEach(function (k) {
     NODE[k].innerHTML = avatar(TONE[k]) + '<div class="nm">' + esc(STORY[k].name) + "</div>" + "<ul>" + STORY[k].tasks.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
   });
-  var STARTS = [[8, 20], [30, 12], [52, 9], [74, 14], [93, 24], [4, 44], [20, 36], [80, 40], [95, 56], [10, 66], [27, 78], [47, 86], [68, 80], [88, 78], [58, 62], [38, 60], [16, 90], [76, 62], [64, 26], [42, 28], [92, 90], [24, 56], [84, 8], [54, 94]];
+  var STARTS = [[9, 27], [24, 11], [75, 11], [91, 31], [8, 73], [89, 70], [26, 87], [70, 88], [46, 6], [47, 93], [14, 51], [86, 52],
+    [18, 39], [36, 9], [62, 6], [3, 57], [97, 45], [34, 93], [58, 95], [12, 91], [84, 91], [94, 11], [20, 21], [78, 25], [7, 12], [95, 73], [3, 83], [22, 67], [79, 38], [60, 82]];
+  var MU = {
+    craigslist: '<div class="cl-h">craigslist <b>boston</b> &rsaquo; apts</div><ul class="cl"><li><a>$1,150</a> Room in Allston, sunny <u>no pics</u></li><li><a>$900</a> Sublet Jun to Aug <u class="warn">wire deposit?</u></li><li><a>$1,300</a> Studio near Harvard Ave</li><li><a>$700</a> amazing deal!!! <u class="warn">abroad</u></li><li><a>$1,050</a> 3 bed, 1 room open</li></ul>',
+    airbnb: '<div class="ab"><div><i style="--g:#f7cdbd"></i><b>$1,480</b><span>Allston · 4.9</span></div><div><i style="--g:#c8def7"></i><b>$1,310</b><span>Somerville · 4.7</span></div><div><i style="--g:#d7efd2"></i><b>$1,620</b><span>Cambridge · 4.8</span></div><div><i style="--g:#f5e4b8"></i><b>$990</b><span>Brighton · 4.2</span></div></div>',
+    zillow: '<div class="zl"><em style="left:14%;top:26%">$2.1k</em><em style="left:52%;top:16%">$1.8k</em><em style="left:30%;top:58%">$2.4k</em><em style="left:70%;top:52%">$1.6k</em><em style="left:84%;top:20%">$2.9k</em><em style="left:44%;top:78%">$2.0k</em></div>',
+    gmail: '<ul class="gm"><li class="u"><b>Landlord</b><span>Re: Re: Re: lease?</span></li><li class="u"><b>U-Haul</b><span>Your quote expires today</span></li><li><b>Priya</b><span>can I get the lamp?</span></li><li class="u"><b>Craigslist</b><span>3 new replies</span></li><li><b>Mom</b><span>did you find a place</span></li></ul>',
+    sheet: '<table class="sh"><tr><th></th><th>A</th><th>B</th><th>C</th></tr><tr><td>1</td><td>item</td><td>cost</td><td>paid?</td></tr><tr><td>2</td><td>truck</td><td>240</td><td>??</td></tr><tr><td>3</td><td>deposit</td><td>400</td><td>yes</td></tr><tr><td>4</td><td>gas</td><td>?</td><td>no</td></tr><tr><td>5</td><td>movers</td><td>???</td><td></td></tr></table>',
+    venmo: '<ul class="vm"><li><i></i><b>Priya</b><span>$33.33</span></li><li><i></i><b>Sam</b><span>pay me back!!</span></li><li><i></i><b>U-Haul</b><span>-$240.00</span></li><li><i></i><b>Landlord</b><span>-$400.00</span></li></ul>',
+    uhaul: '<div class="uh"><b>15 ft truck</b><span>Saturday, Allston</span><span>$129 + mileage</span><em>Sold out</em></div>',
+    chat: '<div class="ch"><p class="l">who has the car</p><p class="r">not me</p><p class="l">can\'t saturday</p><p class="r">??</p><p class="l">who is paying for the truck</p></div>',
+    notes: '<ul class="nt"><li>call landlord</li><li>sell couch??</li><li>utilities!!</li><li>keys??</li><li>boxes</li></ul>',
+    calendar: '<div class="cal">' + Array.apply(null, Array(28)).map(function (_, i) { return "<span" + ([3, 9, 10, 17, 22].indexOf(i) >= 0 ? ' class="e"' : "") + ">" + (i + 1) + "</span>"; }).join("") + "</div>",
+    booking: '<div class="bk"><div><i style="--g:#cfe0ff"></i><div><b>Hotel near Harvard</b><span>2 nights · $238</span><em>Free cancellation</em></div></div><div><i style="--g:#ffe3cf"></i><div><b>Inn at Somerville</b><span>2 nights · $196</span><em>1 room left</em></div></div></div>',
+    market: '<div class="mk"><i></i><b>Couch · $50</b><span>is this still available?</span><span>would you take $30</span><span>can you do $20 tmrw</span></div>',
+  };
+  var PIN = '<svg viewBox="0 0 64 56"><path d="M2 8a6 6 0 0 1 6-6h14l6 7h28a6 6 0 0 1 6 6v33a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6z" fill="#7cc4ff"/><path d="M2 18h60v29a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6z" fill="#5ab1fb"/></svg>';
+  var STK = {
+    folder: PIN,
+    trash: '<svg viewBox="0 0 48 56"><path d="M8 14h32l-3 36a4 4 0 0 1-4 4H15a4 4 0 0 1-4-4z" fill="#dfe3ea"/><path d="M14 20l2 28M24 20v28M34 20l-2 28" stroke="#c4cad6" stroke-width="2"/><rect x="5" y="8" width="38" height="6" rx="3" fill="#c9cfdb"/><rect x="18" y="3" width="12" height="6" rx="2" fill="#b3bac8"/></svg>',
+    cursor: '<svg viewBox="0 0 28 36"><path d="M3 2l20 16-9 1.5L18 31l-4 2-4-11-7 6z" fill="#fff" stroke="#0b0c10" stroke-width="2" stroke-linejoin="round"/></svg>',
+  };
   var chipNodes = CHIPS.map(function (c, i) {
-    var node = el("div", "chip" + (i >= 14 && window.innerWidth < 700 ? " lesser" : ""));
-    var rot = ((i * 37) % 17) - 8, w = 150 + ((i * 53) % 62), dur = 3.2 + ((i * 7) % 9) * 0.45;
-    var inner;
-    if (c.toast) inner = el("div", "toast", '<i style="background:' + TN_COL[i % 4] + '"></i><div><b>' + esc(c.t) + "</b><span>" + esc(c.s) + "</span></div>");
-    else inner = el("div", "win", '<div class="bar" style="--c:' + c.c + '"><u></u><u></u><u></u><b>' + esc(c.t) + '</b></div><div class="body">' + c.l.map(function (x) { return "<span>" + esc(x) + "</span>"; }).join("") + '<em></em><em style="width:60%"></em></div>');
-    inner.style.setProperty("--rot", rot + "deg"); inner.style.setProperty("--w", w + "px"); inner.style.setProperty("--dur", dur + "s"); inner.style.setProperty("--dl", (-(i % 9) * 0.6) + "s");
+    var node = el("div", "chip" + (window.innerWidth < 700 && (i === 8 || i === 9 || i === 10 || i === 11 || i > 23) ? " lesser" : ""));
+    var rot = ((i * 37) % 13) - 6, dur = 4 + ((i * 7) % 9) * 0.5, inner;
+    if (c.w) {
+      inner = el("div", "mwrap", '<div class="mw"><div class="mbar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>' + esc(c.t) + '</span></div><div class="mbody mu-' + c.w + '">' + MU[c.w] + '</div></div><div class="mcap">' + esc(c.cap) + "</div>");
+      inner.style.setProperty("--w", Math.round(c.wd * 0.86) + "px");
+    } else if (c.s === "kaomoji") inner = el("div", "kao", esc(c.x));
+    else if (c.s === "note") inner = el("div", "postit", esc(c.x));
+    else if (c.s === "tag") inner = el("div", "nametag", "<small>HELLO</small><small>my name is</small><b>" + esc(c.x) + "</b>");
+    else if (c.s === "pill") inner = el("div", "npill", '<i style="background:' + TN_COL[i % 4] + '"></i><span>' + esc(c.x) + "</span>");
+    else if (c.s === "badge") inner = el("div", "nbadge", esc(c.x));
+    else inner = el("div", "stk " + c.s, STK[c.s]);
+    inner.style.setProperty("--rot", rot + "deg"); inner.style.setProperty("--dur", dur + "s"); inner.style.setProperty("--dl", (-(i % 9) * 0.6) + "s");
     node.appendChild(inner); chipsEl.appendChild(node); return node;
   });
   // a browser tab strip across the top: far too many tabs
   var strip = el("div", "tabstrip");
-  ["Craigslist", "Airbnb", "Zillow", "U-Haul", "Venmo", "Gmail", "Sheet v3", "Booking", "Marketplace", "Zelle", "Utilities", "311", "SpareFoot", "Notes", "Reddit: sublet?", "Landlord", "Maps", "Quote #4", "Facebook", "more tabs"].forEach(function (t, i) {
-    strip.appendChild(el("span", "tab", "<i style=\"background:" + TN_COL[i % 4] + "\"></i>" + esc(t)));
+  ["Craigslist", "Airbnb", "Zillow", "U-Haul", "Venmo", "Gmail (47)", "Sheet v3", "Booking", "Marketplace", "Zelle", "Utilities", "311", "SpareFoot", "Notes", "Reddit: sublet?", "Landlord", "Maps", "Quote #4", "Facebook", "Apartments", "more tabs"].forEach(function (t, i) {
+    strip.appendChild(el("span", "tab", '<i style="background:' + TN_COL[i % 4] + '"></i>' + esc(t)));
   });
   chipsEl.appendChild(strip);
+
   var W = 0, H = 0, target = { x: 0, y: 0 };
   function measure() {
     var sr = stage.getBoundingClientRect(); W = sr.width; H = sr.height;
@@ -245,13 +273,15 @@
     }
     return out;
   }
-  function fillStrip(id, offset) {
-    var s = $(id), track = el("div", "strip-track");
+  function fillStrip(s, offset) {
+    offset = offset || 0; var track = el("div", "strip-track");
     tiles(offset).concat(tiles(offset)).forEach(function (t, i) { track.appendChild(i >= tiles(offset).length ? t.cloneNode(true) : t); });
     s.appendChild(track);
     if (reduce) $$("figure", track).slice(Math.floor(track.children.length / 2)).forEach(function (n) { n.remove(); });
   }
-  fillStrip("#strip1", 0); fillStrip("#strip2", 4);
+  if (SITE.nightPhotos && SITE.nightPhotos.length) {
+    var ps = el("div", "strip"); ps.setAttribute("aria-label", "Photos from the build"); $("#demo").after(ps); fillStrip(ps);
+  }
 
   /* ---------- the crew emulator ---------- */
   var main = new Phone($("#phone-main"));
@@ -392,6 +422,7 @@
   showTrack(TRACKS[0].id);
 
   /* ---------- unique, future ---------- */
+  $("#uFeature").innerHTML = '<div class="uf-badge">Our unique discovery</div><div class="uf-t">The Deal Engine</div><p>One state machine for every stranger you never met: it holds your floor, counters buyers, books slots, runs Last Call and feeds the ledger. Built by Yashashri.</p>';
   $("#uniq").innerHTML = UNIQUE.map(function (u) { return "<li><b>" + esc(u[0]) + "</b><span>" + esc(u[1]) + "</span></li>"; }).join("");
   $("#next").innerHTML = FUTURE.map(function (u) { return "<li><b>" + esc(u[0]) + "</b><span>" + esc(u[1]) + "</span></li>"; }).join("");
 
@@ -421,21 +452,13 @@
     if (k.indexOf("elf:") === 0) return '<i class="ico elfi" aria-hidden="true">' + avatar(k.slice(4)) + "</i>";
     return '<i class="ico" style="--c:' + d[1] + ";--u:url(assets/icons/" + k + '.svg)" aria-hidden="true"></i>';
   }
-  var rail = $("#rail"), seen = {};
+  var rail = $("#rail"), seen = {}, rtrack = el("div", "rail-track");
   STACK.forEach(function (s) {
     var d = ICONS[s.n]; if (!d) return; var key = d[0] + d[1]; if (seen[key]) return; seen[key] = 1;
-    var t = el("div", "rtile", icon(s.n) + "<span>" + esc(s.n.replace(/ \(.*/, "").replace(" API", "")) + "</span>"); rail.appendChild(t);
+    rtrack.appendChild(el("div", "rtile", icon(s.n) + "<span>" + esc(s.n.replace(/ \(.*/, "").replace(" API", "")) + "</span>"));
   });
-  (function () {
-    var down = false, sx = 0, sl = 0, hover = false, last = 0;
-    rail.addEventListener("pointerdown", function (e) { down = true; sx = e.clientX; sl = rail.scrollLeft; rail.classList.add("drag"); });
-    window.addEventListener("pointerup", function () { down = false; rail.classList.remove("drag"); });
-    window.addEventListener("pointermove", function (e) { if (down) rail.scrollLeft = sl - (e.clientX - sx); });
-    rail.addEventListener("pointerenter", function () { hover = true; }); rail.addEventListener("pointerleave", function () { hover = false; });
-    rail.addEventListener("touchstart", function () { hover = true; }, { passive: true }); rail.addEventListener("touchend", function () { setTimeout(function () { hover = false; }, 2500); });
-    if (reduce) return;
-    (function tick(ts) { if (!hover && !down && ts - last > 16) { rail.scrollLeft += 0.5; if (rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 1) rail.scrollLeft = 0; last = ts; } requestAnimationFrame(tick); })(0);
-  })();
+  Array.prototype.slice.call(rtrack.children).forEach(function (n) { rtrack.appendChild(n.cloneNode(true)); });
+  rail.appendChild(rtrack);
 
   /* ---------- the Deal Engine, step by step ---------- */
   (function () {
@@ -493,13 +516,6 @@
     go.addEventListener("click", run); end.addEventListener("click", reset);
     phoneD.clear();
   })();
-
-  /* ---------- unique: statements light up as you pass ---------- */
-  var uniq = $$("#uniq li");
-  if ("IntersectionObserver" in window && !reduce) {
-    var lit = new IntersectionObserver(function (es) { es.forEach(function (e) { e.target.classList.toggle("lit", e.isIntersecting); }); }, { rootMargin: "-38% 0px -38% 0px" });
-    uniq.forEach(function (n) { lit.observe(n); });
-  } else uniq.forEach(function (n) { n.classList.add("lit"); });
 
   /* ---------- future: a road that fills as you walk down it ---------- */
   var road = $("#next");
