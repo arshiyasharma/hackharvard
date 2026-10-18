@@ -5,6 +5,7 @@ import {
   type ElfResult,
   EMPTY_CONVERSATION,
   formatChecklist,
+  formatRemaining,
   homeElf,
   isMoveinIntent,
   moveinSweep,
@@ -321,6 +322,13 @@ describe("Home Elf: move-in week", () => {
         "Gas: done",
         'Say "done with internet", "skip insurance" or "what\'s left" as you go; I\'ll nudge you as each one comes due.',
       ].join("\n"),
+    );
+    // Stuff → Home: booked pickups ride on the checklist
+    expect(formatChecklist([task], move, ["couch Fri 6pm"])).toContain(
+      "Pickups booked (Stuff Elf): couch Fri 6pm.",
+    );
+    expect(formatRemaining([task], move, ["couch Fri 6pm"])).toEndWith(
+      "Pickups booked (Stuff Elf): couch Fri 6pm.",
     );
   });
 });

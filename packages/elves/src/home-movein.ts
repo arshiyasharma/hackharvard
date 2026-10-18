@@ -3,6 +3,7 @@ import { type ElfContext, type ElfResult, memoryPreamble } from "./contract.ts";
 import { formatDate, parseDate, parseDateRange } from "./facts.ts";
 import { extractHousingHeuristic } from "./home-facts.ts";
 import { isSubletOutIntent } from "./home-sublet.ts";
+import { bookedPickups } from "./relations.ts";
 
 /**
  * Move-in week: once the Home Elf knows the move-in date and the new address it writes the checklist (utilities,
@@ -188,22 +189,38 @@ const HOTEL_HINT = 'Need a hotel for those nights? Say "find a hotel for the gap
 const FOLLOWUP_HINT =
   'Say "done with internet", "skip insurance" or "what\'s left" as you go; I\'ll nudge you as each one comes due.';
 
-/** The whole checklist as the owner sees it. */
-export function formatChecklist(tasks: MoveinTask[], move: Move): string {
+/** Stuff → Home: the buyer pickups Stuff booked, as one checklist line, or "" when there are none. */
+function pickupsLine(pickups: string[]): string {
+  return pickups.length ? `Pickups booked (Stuff Elf): ${pickups.join(", ")}.` : "";
+}
+
+/** The whole checklist as the owner sees it, with Stuff's booked pickups when there are any. */
+export function formatChecklist(tasks: MoveinTask[], move: Move, pickups: string[] = []): string {
   const head = `Move-in checklist for ${move.toAddress ?? "the new place"} (move-in ${move.moveInAt ? formatDate(move.moveInAt) : "TBD"}):`;
   const gap = tasks.some((t) => t.key === "luggage_gap" && t.status === "open");
-  return [head, ...tasks.map((t) => taskLine(t, move)), gap ? HOTEL_HINT : "", FOLLOWUP_HINT]
+  return [
+    head,
+    ...tasks.map((t) => taskLine(t, move)),
+    pickupsLine(pickups),
+    gap ? HOTEL_HINT : "",
+    FOLLOWUP_HINT,
+  ]
     .filter(Boolean)
     .join("\n");
 }
 
-/** Only what is still open, for "what's left". */
-export function formatRemaining(tasks: MoveinTask[], move: Move): string {
+/** Only what is still open, for "what's left", plus Stuff's booked pickups. */
+export function formatRemaining(tasks: MoveinTask[], move: Move, pickups: string[] = []): string {
   const open = tasks.filter((t) => t.status === "open");
-  if (!open.length) return "Nothing left on the move-in list. You're set.";
-  return [`Still open for ${move.toAddress ?? "the new place"}:`, ...open.map((t) => taskLine(t, move))].join(
-    "\n",
-  );
+  if (!open.length)
+    return ["Nothing left on the move-in list. You're set.", pickupsLine(pickups)].filter(Boolean).join("\n");
+  return [
+    `Still open for ${move.toAddress ?? "the new place"}:`,
+    ...open.map((t) => taskLine(t, move)),
+    pickupsLine(pickups),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** The cursor that remembers which move-in fact the Elf just asked for ("date" or "address"), so the answer routes back. */
@@ -295,8 +312,11 @@ export async function handleMovein(ctx: ElfContext, text: string, parent: string
   // Follow-ups on a checklist that exists.
   if (fu && fu.kind !== "address") {
     const move = ctx.move;
+    const pickups = await bookedPickups(ctx.store, move);
     if (fu.kind === "left")
-      return reply([formatRemaining(tasks, move)], { boardPatch: board("working", "Listed what's left") });
+      return reply([formatRemaining(tasks, move, pickups)], {
+        boardPatch: board("working", "Listed what's left"),
+      });
     const status: MoveinTaskStatus = fu.kind === "done" ? "done" : "skipped";
     const touched: MoveinTask[] = [];
     for (const key of fu.keys) {
@@ -311,7 +331,7 @@ export async function handleMovein(ctx: ElfContext, text: string, parent: string
       const was = `${named.charAt(0).toUpperCase()}${named.slice(1)} ${fu.keys.length > 1 ? "were" : "was"} already ${status === "done" ? "done" : "skipped"}${
         fu.keys.some((k) => !tasks.some((t) => t.key === k)) ? ", or not on the list" : ""
       }.`;
-      return reply([was, formatRemaining(after, move)], { boardPatch: board("working", was) });
+      return reply([was, formatRemaining(after, move, pickups)], { boardPatch: board("working", was) });
     }
     for (const t of touched)
       events.push({ type: `movein.task_${status}`, payload: { key: t.key, dueAt: t.dueAt } });
@@ -387,7 +407,7 @@ export async function handleMovein(ctx: ElfContext, text: string, parent: string
     payload: { moveInAt: move.moveInAt, toAddress: move.toAddress, tasks: list.map((t) => t.key) },
   });
   const open = list.filter((t) => t.status === "open").length;
-  return reply([capturedLine ?? "", formatChecklist(list, move)], {
+  return reply([capturedLine ?? "", formatChecklist(list, move, await bookedPickups(ctx.store, move))], {
     boardPatch: board(
       "working",
       `Move-in ${formatDate(move.moveInAt)}: ${open} of ${list.length} tasks open`,

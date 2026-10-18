@@ -1,6 +1,8 @@
 import { pendingOwnerAsks, policyFor, price } from "@elves/engine";
 import type { Move, MoveinTask, Store } from "@elves/shared";
 import { formatDate } from "./facts.ts";
+import { moveReport } from "./impact.ts";
+import { bookedPickups } from "./relations.ts";
 import { checklistFor, taskLine } from "./home-movein.ts";
 
 /**
@@ -81,11 +83,15 @@ export async function statusReport(store: Store, move: Move): Promise<string> {
     if (sold.length) bits.push(`sold ${list(sold)}`);
     if (gone.length) bits.push(`gone ${list(gone)}`);
     if (waiting.length) bits.push(`waiting on a photo or price for ${list(waiting)}`);
-    const pickups = deals.flatMap((d) =>
-      d.mode === "sell_item" && d.state === "scheduled" && d.slot ? [`${d.title} ${d.slot.label}`] : [],
-    );
+    const pickups = await bookedPickups(store, move);
     if (pickups.length) bits.push(`pickups booked: ${list(pickups)}`);
     if (bits.length) parts.push(`Stuff: ${bits.join("; ")}.`);
+    // Stuff → Home: the Move Report's headline, once anything has left the apartment.
+    const report = moveReport(items, deals);
+    if (report.lbDiverted > 0)
+      parts.push(
+        `Move Report: about ${report.lbDiverted} lb kept off the curb, ${report.kgCo2eAvoided} kg CO2e avoided.`,
+      );
   }
 
   // Money: what the engine has put on the ledger.

@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 336 tests across 27 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 340 tests across 28 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -61,7 +61,61 @@ The prompt is `SYSTEM` in [`packages/elves/src/crew-lead.ts`](packages/elves/src
 - **"status" / "where are we?":** `statusReport()` in [`status.ts`](packages/elves/src/status.ts), one paragraph read straight off the store, nothing invented: dates and addresses; the checklist (open items with due dates, done items); the sublet post and applicants; housing picks; Stuff listed, sold and booked pickups; the ledger (held in escrow, released); and anything waiting on your yes (a low offer, a viewing time).
 - **Out of scope:** `outOfScope()` matches trucks and movers, move-day logistics, lease reading and landlords, posting for you, paying someone, and legal or financial advice. The reply is the fixed "The crew can't …" sentence plus the closest thing it can do. Anything else off the list is caught by the prompt's scope rules, which forbid improvising an ability.
 - **Approvals:** nothing is booked, posted, paid or agreed without the owner's yes.
-- **Calling two Elves at once:** a text whose keywords hit both Stuff and Home ("sell my couch and find me a room in Allston") routes to the Crew Lead (`via: "delegate"`), which calls `stuffElf.handle` then `homeElf.handle` on the same batch, sends both replies in order, and patches both board rows (`callElves` in `crew-lead.ts`). A text for one Elf still goes straight to it. Money is not wired this way yet.
+- **Calling other Elves:** see "How a text moves through the crew" below.
+
+### How a text moves through the crew
+
+Every text takes the same path (`apps/elves/src/service.ts`):
+
+1. **Batch.** Texts from one phone within the debounce window become one batch; the last one is acknowledged (read receipt, a 👍 per text, typing).
+2. **Route** (`packages/elves/src/router.ts`), first match wins: counterparty (a buyer, applicant or lister in their own space) → the Elf that owns their deal; first contact → Crew Lead; the onboarding call until the brief is confirmed → Crew Lead; `status` → Home, `what can you do?` → Crew Lead; a reply inside an Elf's thread → that Elf; a pending deal question (`yes` / `no` / `$70`, "keep the couch") → the Elf that asked; Home follow-ups (`2`, `more`, `search again`, a date or address Home asked for, `done with internet`) → Home; a room photo while Home writes the sublet post → Home; a photo → Stuff; a bare price → Stuff; **a text whose keywords hit both Stuff and Home → Crew Lead** (`via: "delegate"`); then the fast model classifies, then keywords, then Crew Lead.
+3. **Handle.** The routed Elf gets one `ElfContext` (store, LLM, move, participant, batch, working memory, listings source, clock) and returns one `ElfResult`: `replies` for this space, `outbound` texts for other spaces, `events`, `movePatch`, `boardPatch`, and an optional `later()` for slow work (a browser search) that runs after the replies go out.
+4. **Deliver.** The service writes the move patch, patches the board row, appends the events, sends the replies (idempotent per message), sends the outbound texts, records the thread owner, and runs `later()`.
+
+**The Elf API is one interface** (`Elf` in `contract.ts`: `name`, `description`, `keywords`, `handle(ctx)`), and Crew Lead, Stuff, Home and the Money stub all implement it, so any of them can be routed to or called by another. The registry (`registry.ts`) is how they call each other: `allElves` registers every Elf by name once; `callElf(ctx, "stuff")` runs one on the current batch, `callElves(ctx, ["stuff", "home"])` runs several in order and merges their results (replies and outbound in order, every event, move patches merged, each Elf's board row patched). No Elf imports another, so there are no import cycles.
+
+**When you text the Crew Lead and the work spans Elves:** "sell my couch and find me a room in Allston under 1200" routes to the Crew Lead, which calls `stuffElf.handle` then `homeElf.handle` on the same batch. You get Stuff's reply (the couch is captured; it asks for a photo and a floor) and then Home's (budget and area captured; it asks for dates), both board rows move, and from then on each thread routes to its own Elf. It is keyword-based: a text that clearly asks for both. A text for one Elf goes straight to that Elf, and the Crew Lead's own LLM reply never spawns an Elf on its own. Not on first contact, and not with photos (those stay with intake).
+
+### What each Elf does now
+
+**Crew Lead** (`crew-lead.ts`, `onboarding.ts`, `crew.ts`)
+- First text: the crew intro with the exact ability list, then the onboarding call (gather the brief in 2–4 asking turns, play it back, `yes` locks it in and dispatches the Elves with their first tasks on the board).
+- After the brief: captures move-out / move-in dates and addresses, items the owner names (`sell`, `donate`, `buy`), photos (vision → item, condition, price range → asks for the floor), "yes, list it" approvals (opens the `sell_item` deal and gives the owner the line for their own post), roommates.
+- `what can you do?` / `help` → the ability list. Anything the crew does not do → "The crew can't …" plus the closest thing it can. Nothing is booked, posted, paid or agreed without the owner's yes.
+- Hands one text to both Stuff and Home when it needs both (above). Sends the Crew Board link once.
+
+**Stuff Elf** (`sell.ts`, `intake.ts`, `impact.ts`, the engine)
+- Sell: photo → item with condition and a price range → the owner's floor → `yes, list it` → a `sell_item` deal with a ref code; the owner posts the listing themselves. Per-item approval; floors are never told to buyers.
+- Buyers text this number with the ref (or a title word): the Deal Engine greets, holds the floor, counters, puts a low offer to the owner (`yes` / `no` / a number), agrees, offers three pickup slots on the shared calendar, books one, and reminds. Scam Shield blocks off-escrow payment asks.
+- Owner side: `keep the couch` holds a price through Last Call; `donate the lamp` → `yes` marks it donated and emits `pickup.requested`; `give away`; buy a forwarded listing with a max price after `yes` (`buy_item` deal).
+- Last Call sweep: 48 h before move-out the ask drops to 60%, 24 h before it relists free, at move-out anything open is dumped.
+- Move Report: `what did we keep out of the landfill?` → pounds diverted and kg CO2e avoided (EPA WARM, approximate), dollars recovered.
+
+**Home Elf** (`home.ts`, `home-sublet.ts`, `home-movein.ts`, `status.ts`)
+- Hunt: budget → area → dates, one missing fact per text, then a real-browser search of Craigslist, Airbnb, Booking.com and SpareFoot (storage); scam flags; the top 3 with a line each. `more`, `tell me about 2`, `skip 2`, `save 2`, `search again`, a forwarded listing URL. `reach out to 2` opens a `find_sublet` deal and, with a dedicated line, texts the lister; the lister's replies run through the Deal Engine as the buyer.
+- Sublet out: `sublet my room for $1500` → dates, area, room photos (vision) → the post (title and body with the ref and the number) for the owner to put up; `change …` redrafts, `post it` approves. Applicants text the number with the ref; the engine screens, holds the rent floor, asks the owner on low offers, agrees, offers viewing times, and **holds the time the applicant picks until the owner says `yes`** ("Book it?"); a `no` offers them the other times.
+- `can I sublet my room?` → the lease and landlord decide; the crew does not read leases.
+- Move-in week: `set up internet at the new place` → move-in date → new address (both written onto the move) → the dated checklist (electric, gas, internet, renters insurance, USPS address change, keys, condition report, bags for the gap when move-out comes first). `done with internet`, `skip insurance`, `what's left`, `address is …`; one reminder per task as it comes due. The checklist and `what's left` show the pickups Stuff booked.
+- `status` → one paragraph off the store: dates and addresses, the checklist, the sublet, housing picks, Stuff's listed / sold / pickups, the Move Report headline, the ledger, and anything waiting on the owner's yes.
+
+**Money Elf**: unchanged on this branch (the canned reply; the engine's ledger events). See the Money rows above.
+
+### How the Elves talk to each other
+
+Four carriers, all plain data: the **Move row** (one Elf writes `movePatch`, every Elf reads `ctx.move`), the **store** (items, deals, listings, the checklist), **events** (`store.listEvents`), and **`callElf`** (one Elf runs another on the same batch). The table is `ELF_RELATIONS` in [`packages/elves/src/relations.ts`](packages/elves/src/relations.ts); a test checks every row names Elves on the crew and that the Stuff → Home carriers work end to end (`packages/elves/test/relations.test.ts`, and the "Elves talk through the move and the store" case in `apps/elves/test/service.test.ts`).
+
+| From | To | What | Carrier | Read by |
+| --- | --- | --- | --- | --- |
+| Crew Lead | Stuff Elf | Items the owner names and photographs, the move-out date Last Call counts down to, listing approvals | store items + move.moveOutAt + events item.captured / listing.approved | sell.ts (items, floors), engine lastCallSweep (moveOutAt) |
+| Crew Lead | Home Elf | The confirmed brief: needs a place and what, sublet out, move-in needs, dates and addresses | board row from dispatchBrief + move dates/addresses + working memory | home.ts (ctx.move, memoryPreamble) |
+| Crew Lead | Stuff Elf | One text that asks for both Elves' work is handed to each in turn | callElves(ctx, ["stuff", "home"]) on the same batch | crew-lead.ts handle → registry.ts |
+| Stuff Elf | Home Elf | Booked pickups, so the move checklist and status show when buyers come | sell_item deals in state scheduled with a slot (engine) | relations.ts bookedPickups → home-movein.ts formatChecklist, status.ts |
+| Stuff Elf | Home Elf | What was sold, given, donated or dumped, for the status paragraph and the Move Report line | item.outcome on store items + impact.ts moveReport | status.ts |
+| Home Elf | Stuff Elf | The move-in date and new address once the checklist captures them, so Stuff's board and Last Call lines name real dates | movePatch moveInAt / toAddress → ctx.move | crew-lead.ts, sell.ts (ctx.move) |
+| Home Elf | Money Elf | An agreed sublet and its rent, for the contract and deposit escrow | events deal.agreed + ledger.hold (sublet_out) | not read yet: Money is a stub |
+| Stuff Elf | Money Elf | Escrow holds, releases and refunds on each sale | events ledger.hold / ledger.release / ledger.refund / escrow.requested | status.ts (ledger line); Money itself is a stub |
+
+Stuff ↔ Home today: Stuff's booked pickups appear on Home's checklist, on `what's left` and in `status`; Stuff's outcomes feed the Move Report line in `status`; the move-in date and address Home captures reach Stuff and the Crew Lead through the move row the next turn. Home → Money and Stuff → Money are events only, since Money is still a stub.
 
 ### Crew Lead on a call (Retell)
 

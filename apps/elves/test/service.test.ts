@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { moveOutInstant } from "@elves/engine";
+import { moveOutInstant, openDeal } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
 import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
@@ -137,7 +137,10 @@ describe("service end to end (script transport)", () => {
       transport.push(owner, text);
       await transport.settled();
       await service.pipeline.idle();
-      return transport.sent.slice(before).map((s) => s.text).join("\n");
+      return transport.sent
+        .slice(before)
+        .map((s) => s.text)
+        .join("\n");
     };
     const first = await say("hi");
     expect(first).toStartWith("Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
@@ -171,6 +174,53 @@ describe("service end to end (script transport)", () => {
     const move = (await store.listMoves())[0]!;
     const board = await store.getBoard(move.id);
     expect(board.find((b) => b.elf === "home")?.currentTask).not.toBe("Standing by");
+    stop();
+  });
+
+  test("Elves talk through the move and the store: Home's date reaches the Crew Lead, Stuff's pickup reaches Home", async () => {
+    const { transport, store, service, stop } = boot(null);
+    const say = async (text: string) => {
+      const before = transport.sent.length;
+      transport.push(owner, text);
+      await transport.settled();
+      await service.pipeline.idle();
+      return transport.sent
+        .slice(before)
+        .map((s) => s.text)
+        .join("\n");
+    };
+    await say("hi, moving out nov 1");
+    // Home captures the move-in date and address on its checklist and writes them onto the move
+    expect(await say("set up internet at the new place")).toContain("What day do you move in?");
+    await say("nov 3");
+    expect(await say("12 Elm St")).toContain("Move-in checklist for 12 Elm St (move-in Nov 3)");
+    const move = (await store.listMoves())[0]!;
+    expect((await store.getMove(move.id))?.moveInAt).toBe("2026-11-03");
+    expect((await store.getMove(move.id))?.toAddress).toBe("12 Elm St");
+    // the Crew Lead reads the same move row
+    expect(await say("status")).toStartWith("You're moving out Nov 1 and in Nov 3 at 12 Elm St.");
+
+    // Stuff books a pickup (the engine's doing); Home's "what's left" shows it
+    const couch = await store.upsertItem({
+      moveId: move.id,
+      name: "couch",
+      category: "couch",
+      outcome: "listed",
+    });
+    const deal = await openDeal(store, {
+      moveId: move.id,
+      mode: "sell_item",
+      subjectId: couch.id,
+      title: "couch",
+      askCents: 8000,
+      limitCents: 6000,
+    });
+    await store.upsertDeal({
+      ...deal,
+      state: "scheduled",
+      slot: { id: "s", start: "2026-10-30T22:00:00Z", end: "2026-10-30T23:00:00Z", label: "Fri 6pm" },
+    });
+    expect(await say("what's left")).toContain("Pickups booked (Stuff Elf): couch Fri 6pm.");
     stop();
   });
 

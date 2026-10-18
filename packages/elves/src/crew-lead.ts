@@ -19,10 +19,9 @@ import {
   postLine,
 } from "./intake.ts";
 import { abilitiesReply, crewIntro, crewScopePrompt, isCapabilitiesQuestion, outOfScope } from "./crew.ts";
-import { homeElf } from "./home.ts";
 import { handleOnboarding } from "./onboarding.ts";
+import { callElves, elfByName } from "./registry.ts";
 import { delegatesFor } from "./router.ts";
-import { stuffElf } from "./sell.ts";
 
 const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts on iMessage or SMS. You run the owner's chat and hand work to three specialist Elves. You are not a general assistant: you only talk about this move and only offer what the crew can actually do.
 
@@ -89,7 +88,8 @@ export const crewLead: Elf = {
     if (onboarding) return onboarding;
     const text = asked;
     // A text that asks for Stuff and Home at once: call each, in order, and send each one's reply.
-    const both = [stuffElf, homeElf].filter((e) => delegatesFor(text, [e]).length);
+    const crew = (["stuff", "home"] as const).map((n) => elfByName(n)).filter((e): e is Elf => !!e);
+    const both = crew.filter((e) => delegatesFor(text, [e]).length).map((e) => e.name);
     if (both.length === 2 && !ctx.firstContact && !hasPhotos(ctx.batch)) return callElves(ctx, both);
     const now = ctx.now();
     const heuristic = extractFactsHeuristic(text, now);
@@ -305,22 +305,4 @@ function templateReply(s: {
     );
   else if (!s.justApproved.length && !s.items.length) lines.push("What should the crew start on?");
   return lines.join("\n");
-}
-
-/**
- * The Crew Lead calls other Elves as the work needs them. Each one handles the same batch and its replies go out in
- * order; each one's board row is patched by the Crew Lead, since the service only patches the Elf it routed to.
- */
-async function callElves(ctx: ElfContext, elves: Elf[]): Promise<ElfResult> {
-  const out: ElfResult = { replies: [], events: [], outbound: [], movePatch: {} };
-  for (const elf of elves) {
-    if (ctx.signal.aborted) break;
-    const r = await elf.handle(ctx);
-    out.replies.push(...r.replies);
-    out.events!.push(...(r.events ?? []));
-    out.outbound!.push(...(r.outbound ?? []));
-    Object.assign(out.movePatch!, r.movePatch ?? {});
-    if (r.boardPatch) await ctx.store.patchBoard(ctx.move.id, elf.name, r.boardPatch);
-  }
-  return out;
 }
