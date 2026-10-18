@@ -1,14 +1,16 @@
+import { openDeal } from "@elves/engine";
 import { dedupeResults, isHardFlagged, type ListingSource, type ScamFlag, scamFlags } from "@elves/listings";
 import type { HousingSearch, Listing, ListingKind, ListingQuery, SiteResult } from "@elves/shared";
-import { openDeal } from "@elves/engine";
 import {
   batchText,
   type Elf,
   type ElfContext,
   type ElfResult,
+  hasPhotos,
   lastMessageId,
   memoryPreamble,
 } from "./contract.ts";
+import { isStatusAsk } from "./crew.ts";
 import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { formatDate } from "./facts.ts";
 import {
@@ -19,11 +21,11 @@ import {
   type MissingRequirement,
   mergeSearch,
   missingRequirement,
-  parseBudgetCents,
   queriesFor,
   searchKey,
 } from "./home-facts.ts";
 import { extractListingUrls, type FollowUp, parseFollowUp, wantsFreshSearch } from "./home-followups.ts";
+import { handleMovein } from "./home-movein.ts";
 import {
   type Candidate,
   describeAsk,
@@ -32,30 +34,15 @@ import {
   formatPicks,
   rankListings,
 } from "./home-rank.ts";
+import { handleSubletOut, isSubletQuestion } from "./home-sublet.ts";
+import { statusReport } from "./status.ts";
 import { pickSkill, type Skill, skillReply } from "./stubs.ts";
-
-export const LEASE_SKILL: Skill = {
-  id: "lease",
-  keywords: [
-    "lease",
-    "sublease",
-    "landlord",
-    "clause",
-    "notice",
-    "security deposit",
-    "agreement",
-    "contract",
-    "tenant",
-  ],
-  task: "Waiting for the lease",
-  reply:
-    "Home Elf here. Send the lease PDF and I'll tell you whether you can sublet, quote the clauses, and draft the landlord notice.",
-};
 
 export const HUNT_SKILL: Skill = {
   id: "hunt",
   keywords: [
     "find a sublet",
+    "sublease",
     "storage",
     "storage unit",
     "find me a place",
@@ -118,8 +105,8 @@ Write the reply as a text message:
 export const homeElf: Elf = {
   name: "home",
   description:
-    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; the current lease, subletting it out, landlord notices, security deposit; move-in week (utilities, internet, address change, renters insurance)",
-  keywords: [...LEASE_SKILL.keywords, ...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
+    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; subletting the owner's own room out (writing the post, screening applicants); move-in week (utilities, internet, address change, renters insurance)",
+  keywords: [...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
     // Sublet applicants and listers talk to the Deal Engine in their own space.
@@ -128,8 +115,26 @@ export const homeElf: Elf = {
     if (decided) return decided;
     const text = batchText(ctx.batch);
     const parent = lastMessageId(ctx.batch);
-    const subletOut = await listOwnRoom(ctx, text, parent);
+    // "status": where the whole move stands, the checklist included. Read straight off the store.
+    if (isStatusAsk(text) && !hasPhotos(ctx.batch))
+      return {
+        replies: [{ text: await statusReport(ctx.store, ctx.move), parentMessageId: parent }],
+        events: [{ type: "status.sent", payload: {} }],
+      };
+    const subletOut = await handleSubletOut(ctx, text, parent);
     if (subletOut) return subletOut;
+    const movein = await handleMovein(ctx, text, parent);
+    if (movein) return movein;
+    // "can I sublet my room?" is the lease's call; the Elf doesn't read leases, it writes the post once they can.
+    if (isSubletQuestion(text))
+      return {
+        replies: [
+          {
+            text: "Your lease and landlord decide that one; I don't read leases. If you're allowed, say \"sublet my room\" and I'll write the post.",
+            parentMessageId: parent,
+          },
+        ],
+      };
     const now = ctx.now();
     const saved = await ctx.store.getSearch(ctx.move.id);
     const listings = await ctx.store.listListings(ctx.move.id);
@@ -139,7 +144,7 @@ export const homeElf: Elf = {
       return followUp(ctx, fu, saved ?? emptySearch(ctx.move.id, now), listings, parent);
 
     const heuristic = extractHousingHeuristic(text, now);
-    const { skill } = pickSkill(text, [HUNT_SKILL, LEASE_SKILL, MOVEIN_SKILL]);
+    const { skill } = pickSkill(text, [HUNT_SKILL, MOVEIN_SKILL]);
     const hasHousingFacts =
       heuristic.kinds.length > 0 ||
       heuristic.neighborhoods.length > 0 ||
@@ -389,46 +394,8 @@ function forwardedResults(search: HousingSearch, urls: string[]): SiteResult[] {
   }));
 }
 
-async function listOwnRoom(ctx: ElfContext, text: string, parent: string): Promise<ElfResult | null> {
-  if (!/\b(sublet|sublease)\b/i.test(text) || !/\b(my room|my place|my apartment|my lease)\b/i.test(text))
-    return null;
-  const cents = parseBudgetCents(text);
-  if (cents == null)
-    return {
-      replies: [
-        {
-          text: "What monthly rent should I list your room at? I won't post it until I have a number.",
-          parentMessageId: parent,
-        },
-      ],
-      boardPatch: { status: "waiting", currentTask: "Subletting your room", lastUpdate: "Need a rent" },
-    };
-  const deal = await openDeal(ctx.store, {
-    moveId: ctx.move.id,
-    mode: "sublet_out",
-    subjectId: null,
-    title: "room",
-    askCents: cents,
-    limitCents: cents,
-  });
-  return {
-    replies: [
-      {
-        text: `Listed your room at ${fmtPrice(cents, "month")} (ref ${deal.code}). Applicants text this number and I'll handle them. I won't go under that rent.`,
-        parentMessageId: parent,
-      },
-    ],
-    events: [{ type: "deal.opened", payload: { dealId: deal.id, mode: "sublet_out", code: deal.code, cents } }],
-    boardPatch: {
-      status: "working",
-      currentTask: `Subletting your room (ref ${deal.code})`,
-      lastUpdate: `Listed at ${fmtPrice(cents, "month")}`,
-    },
-  };
-}
-
-/** The message the owner sends. Home drafts it and does not contact the lister. */
-function draftOutreach(search: HousingSearch, listing: Listing): string {
+/** The first text to a lister: what the owner wants, when, and the budget. No name, no reasons for moving. */
+export function outreachNote(search: HousingSearch, listing: Listing): string {
   const when =
     search.moveIn && search.moveOut
       ? ` from ${formatDate(search.moveIn)} to ${formatDate(search.moveOut)}`
@@ -439,12 +406,30 @@ function draftOutreach(search: HousingSearch, listing: Listing): string {
     search.budgetMaxCents != null
       ? ` My budget is ${fmtPrice(search.budgetMaxCents, "month").replace("/mo", "")} a month.`
       : "";
+  return `Hi, I saw your listing for ${listing.title}${when}.${budget} Is it still available?`;
+}
+
+/** The message the owner sends when the listing shows no phone. Home drafts it and does not contact the lister. */
+function draftOutreach(search: HousingSearch, listing: Listing): string {
   return [
     `Saved ${listing.rank}: ${listing.title}.`,
     "You send this; I won't contact them:",
-    `"Hi, I saw your listing for ${listing.title}${when}.${budget} Is it still available?"`,
+    `"${outreachNote(search, listing)}"`,
     listing.url,
   ].join("\n");
+}
+
+/**
+ * A phone number as a messaging handle (E.164). Ten digits are taken as US; anything that is not 8 to 15 digits
+ * is not a number the crew can text.
+ */
+export function phoneHandle(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (raw.trim().startsWith("+") && digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+  return null;
 }
 
 async function runSearch(
@@ -657,24 +642,85 @@ async function followUp(
   if (fu.kind === "reach") {
     await ctx.store.upsertListing({ ...target, status: "shortlisted" });
     const cents = search.budgetMaxCents ?? target.priceCents;
+    // We are the buyer: open at or under the owner's line, so a lister holding at a rent above the budget is
+    // countered at the budget and then put to the owner, never accepted just because it is the listed price.
+    const askCents =
+      search.budgetMaxCents != null && target.priceCents != null
+        ? Math.min(search.budgetMaxCents, target.priceCents)
+        : (target.priceCents ?? search.budgetMaxCents);
     const deal = await openDeal(ctx.store, {
       moveId: ctx.move.id,
       mode: "find_sublet",
       subjectId: null,
       title: target.title,
-      askCents: target.priceCents,
+      askCents,
       limitCents: cents,
     });
-    return reply(
-      `${draftOutreach(search, target)}\nRef ${deal.code}. When they text this number with that ref, I'll negotiate${cents != null ? ` up to ${fmtPrice(cents, "month")}` : ""}. I still won't message them myself.`,
-      {
-        events: [
-          { type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } },
-          { type: "deal.opened", payload: { dealId: deal.id, mode: "find_sublet", code: deal.code } },
+    const events: NonNullable<ElfResult["events"]> = [
+      { type: "housing.listing_shortlisted", payload: { listingId: target.id, rank: fu.n } },
+      { type: "deal.opened", payload: { dealId: deal.id, mode: "find_sublet", code: deal.code } },
+    ];
+    const boardPatch: ElfResult["boardPatch"] = {
+      status: "working",
+      lastUpdate: `Sublet: ${target.title} (ref ${deal.code})`,
+    };
+    const upTo = cents != null ? ` up to ${fmtPrice(cents, "month")}` : "";
+    /** The lister's replies, summarized in the owner chat, thread under this message. */
+    const anchor = async (messageId: string) => {
+      const fresh = await ctx.store.getDeal(deal.id);
+      if (fresh && !fresh.ownerThreadId) await ctx.store.upsertDeal({ ...fresh, ownerThreadId: messageId });
+    };
+    const handoff = (lead: string) =>
+      `${lead}${draftOutreach(search, target)}\nRef ${deal.code}. When they text this number with that ref, I'll negotiate${upTo}. I still won't message them myself.`;
+    const handle = phoneHandle(target.contact.phone);
+    if (!handle)
+      return {
+        replies: [{ text: handoff(""), parentMessageId: parent, onSent: anchor }],
+        events,
+        boardPatch,
+      };
+
+    // The listing shows a number: the dedicated line texts the lister first, and the owner hears which line did.
+    const note = outreachNote(search, target);
+    let line: string | null | undefined; // undefined until the note is actually sent
+    return {
+      replies: [],
+      outbound: [
+        {
+          to: { handle, platform: ctx.participant.platform },
+          dealId: deal.id,
+          text: note,
+          parentMessageId: null,
+          onSent: async (_id, info) => {
+            line = info.line;
+          },
+        },
+      ],
+      events: [
+        ...events,
+        { type: "housing.lister_texted", payload: { listingId: target.id, handle, dealId: deal.id } },
+      ],
+      boardPatch,
+      later: async () => ({
+        replies: [
+          {
+            text:
+              line === undefined
+                ? handoff("I couldn't text them from my line. ")
+                : `Texted them from ${line ?? "my line"}: "${note}"\nRef ${deal.code}. I'll relay what they say and negotiate${upTo}.`,
+            parentMessageId: parent,
+            onSent: anchor,
+          },
         ],
-        boardPatch: { status: "working", lastUpdate: `Sublet: ${target.title} (ref ${deal.code})` },
-      },
-    );
+        boardPatch: {
+          ...boardPatch,
+          lastUpdate:
+            line === undefined
+              ? `Sublet: ${target.title} (ref ${deal.code}); owner sends the note`
+              : `Sublet: texted the lister of ${target.title} (ref ${deal.code})`,
+        },
+      }),
+    };
   }
   await ctx.store.upsertListing({ ...target, status: "shortlisted" });
   return reply(draftOutreach(search, target), {

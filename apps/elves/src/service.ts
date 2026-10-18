@@ -6,7 +6,10 @@ import {
   type ElfOutbound,
   type ElfReply,
   EMPTY_CONVERSATION,
+  isAddressedOutbound,
+  moveinSweep,
   route,
+  type SentInfo,
   spaceOwnerKey,
 } from "@elves/elves";
 import { dealBoard, inquiryFor, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
@@ -37,7 +40,7 @@ export interface ServiceDeps {
   publicUrl: string | null;
   logger?: Logger;
   now?: () => Date;
-  /** How often Last Call runs (relists anything unsold 48h before move-out); 0 turns the timer off. */
+  /** How often the sweeps run (Last Call relists, move-in week reminders); 0 turns the timer off. */
   sweepMs?: number;
 }
 
@@ -45,7 +48,7 @@ export interface Service {
   pipeline: Pipeline;
   handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
-  /** One Last Call pass now; returns how many texts went out. */
+  /** One Last Call and move-in reminder pass now; returns how many texts went out. */
   sweep: () => Promise<number>;
   /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
   notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
@@ -187,33 +190,95 @@ export function createService(deps: ServiceDeps): Service {
     return parts.join(" ") || "[empty]";
   }
 
-  async function runOnSent(reply: ElfReply, messageId: string) {
+  async function runOnSent(reply: ElfReply, messageId: string, info: SentInfo = { line: null }) {
     if (!reply.onSent) return;
     try {
-      await reply.onSent(messageId);
+      await reply.onSent(messageId, info);
     } catch (err) {
       log.warn("onSent hook failed", { error: String(err) });
     }
   }
 
   /**
-   * Send a text into another space of the move, as the pool number that space talks to, and remember it in that
-   * space's transcript. Idempotent on `key`.
+   * Open the space for a handle-addressed note from the dedicated line and put that person on the deal as its
+   * counterparty (a lister). Null when the project cannot text first; the note is then dropped and logged.
+   */
+  async function openFor(
+    move: Move,
+    note: Extract<ElfOutbound, { to: unknown }>,
+    key: string,
+    traceId: string | null,
+  ): Promise<{ spaceId: string; senderId: string; line: string | null; target: Participant } | null> {
+    try {
+      const opened = await deps.transport.openSpace(note.to.handle, note.to.platform);
+      const who = {
+        spaceId: opened.spaceId,
+        handle: note.to.handle,
+        platform: note.to.platform,
+        agentUserId: opened.senderId,
+      };
+      const deal = await deps.store.getDeal(note.dealId);
+      let target: Participant;
+      if (deal) {
+        const { participant, party } = await joinDeal(deps.store, deal, who);
+        target = participant;
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "deal.party_joined",
+          payload: { dealId: deal.id, partyId: party.id, via: "outreach", role: participant.role },
+          traceId,
+        });
+      } else {
+        target = await deps.store.upsertParticipant({ moveId: move.id, role: "lister", ...who });
+      }
+      log.info("opened a space from the dedicated line", {
+        moveId: move.id,
+        spaceId: opened.spaceId,
+        line: opened.senderHandle,
+        dealId: note.dealId,
+      });
+      return { spaceId: opened.spaceId, senderId: opened.senderId, line: opened.senderHandle, target };
+    } catch (err) {
+      counters.failures++;
+      log.error("could not open a space for outreach; note dropped", {
+        key,
+        handle: note.to.handle,
+        error: String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Send a text into another space of the move, as the pool number that space talks to (or, for a note addressed
+   * to a handle, from the dedicated line into a space opened for it), and remember it in that space's transcript.
+   * Idempotent on `key`.
    */
   async function deliverTo(move: Move, elf: ElfName, note: ElfOutbound, key: string, traceId: string | null) {
-    const target = await deps.store.getParticipantBySpace(note.spaceId);
-    const senderId =
-      target?.agentUserId ??
-      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
-        ?.agentUserId;
+    let spaceId: string;
+    let senderId: string | null | undefined;
+    let line: string | null = null;
+    let target: Participant | undefined;
+    if (isAddressedOutbound(note)) {
+      const opened = await openFor(move, note, key, traceId);
+      if (!opened) return;
+      ({ spaceId, senderId, line, target } = opened);
+    } else {
+      spaceId = note.spaceId;
+      target = await deps.store.getParticipantBySpace(spaceId);
+      senderId =
+        target?.agentUserId ??
+        (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
+          ?.agentUserId;
+    }
     if (!senderId) {
-      log.warn("no sender for outbound text; skipped", { spaceId: note.spaceId, key });
+      log.warn("no sender for outbound text; skipped", { spaceId, key });
       return;
     }
     try {
       const sent = await deps.transport.send(
         {
-          spaceId: note.spaceId,
+          spaceId,
           senderId,
           text: note.text,
           parentMessageId: note.parentMessageId ?? undefined,
@@ -223,23 +288,23 @@ export function createService(deps: ServiceDeps): Service {
       );
       await deps.store.recordSend(key, sent.id);
       await deps.store.setThreadOwner(sent.id, elf);
-      await deps.store.setThreadOwner(spaceOwnerKey(note.spaceId), elf);
-      await runOnSent(note, sent.id);
+      await deps.store.setThreadOwner(spaceOwnerKey(spaceId), elf);
+      await runOnSent(note, sent.id, { line });
       counters.outbound++;
       await deps.store.appendEvent({
         moveId: move.id,
         type: "outbound.sent",
-        payload: { elf, spaceId: note.spaceId, messageId: sent.id, text: note.text },
+        payload: { elf, spaceId, messageId: sent.id, text: note.text, ...(line ? { line } : {}) },
         traceId,
       });
       await safeMem("remember outbound", async (m) => {
-        await m.ensureThread(note.spaceId, {
+        await m.ensureThread(spaceId, {
           moveId: move.id,
           role: target?.role ?? "owner",
           handle: target?.handle ?? null,
         });
         await m.remember({
-          threadId: note.spaceId,
+          threadId: spaceId,
           moveId: move.id,
           role: "assistant",
           id: sent.id,
@@ -250,17 +315,46 @@ export function createService(deps: ServiceDeps): Service {
       });
     } catch (err) {
       counters.failures++;
-      log.error("outbound send failed", { key, spaceId: note.spaceId, error: String(err) });
+      log.error("outbound send failed", { key, spaceId, error: String(err) });
     }
+  }
+
+  /** Move-in week: one text per checklist task as it comes due, into the owner's space from the Home Elf. */
+  async function remindMovein(): Promise<number> {
+    const { reminders } = await moveinSweep(deps.store, { now: now() });
+    let sent = 0;
+    const touched = new Map<string, string>();
+    for (const r of reminders) {
+      const move = await deps.store.getMove(r.moveId);
+      if (!move) continue;
+      const key = sendKey("movein", `${r.moveId}:${r.key}:${r.dueAt}`);
+      if (await deps.store.getSend(key)) continue;
+      await deliverTo(move, "home", { spaceId: move.ownerSpaceId, text: r.text }, key, null);
+      await deps.store.appendEvent({
+        moveId: move.id,
+        type: "movein.reminded",
+        payload: { key: r.key, dueAt: r.dueAt, elf: "home" },
+        traceId: null,
+      });
+      touched.set(move.id, r.text.split(". ")[0] ?? r.text);
+      sent++;
+    }
+    for (const [moveId, lastUpdate] of touched)
+      await deps.store.patchBoard(moveId, "home", { status: "working", lastUpdate });
+    return sent;
   }
 
   /** Last Call: anything unsold 48h before move-out relists free; owner and interested parties hear it. */
   async function sweep(): Promise<number> {
     counters.sweeps++;
+    const reminded = await remindMovein().catch((err) => {
+      log.error("move-in reminder sweep failed", { error: String(err) });
+      return 0;
+    });
     const res = await lastCallSweep(deps.store, { now: now() });
     for (const ev of res.events)
       await deps.store.appendEvent({ moveId: ev.moveId, type: ev.type, payload: ev.payload, traceId: null });
-    let sent = 0;
+    let sent = reminded;
     const touched = new Set<string>();
     for (const m of res.messages) {
       const move = await deps.store.getMove(m.moveId);
@@ -598,7 +692,7 @@ export function createService(deps: ServiceDeps): Service {
     const sweepMs = deps.sweepMs ?? 10 * 60_000;
     if (sweepMs > 0) {
       const timer = setInterval(
-        () => void sweep().catch((err) => log.error("last call sweep failed", { error: String(err) })),
+        () => void sweep().catch((err) => log.error("sweep failed", { error: String(err) })),
         sweepMs,
       );
       signal.addEventListener("abort", () => clearInterval(timer));

@@ -1,10 +1,11 @@
 import { pendingOwnerAsks, policyFor, price } from "@elves/engine";
-import type { Move, Store } from "@elves/shared";
+import type { Move, MoveinTask, Store } from "@elves/shared";
 import { formatDate } from "./facts.ts";
+import { checklistFor, taskLine } from "./home-movein.ts";
 
 /**
  * "status": one paragraph with where the whole move stands, read straight off the store so nothing is invented:
- * dates, what Home has (the sublet, the search), what Stuff has (listed, sold, booked pickups),
+ * dates, what Home has (the search, the sublet, the checklist), what Stuff has (listed, sold, booked pickups),
  * what is on the ledger, and anything waiting on the owner's yes.
  */
 
@@ -23,13 +24,34 @@ export async function statusReport(store: Store, move: Move): Promise<string> {
     when.push(`in ${formatDate(move.moveInAt)}${move.toAddress ? ` at ${move.toAddress}` : ""}`);
   parts.push(when.length ? `You're moving ${when.join(" and ")}.` : "No move dates yet.");
 
-  // Home: a sublet the owner is running, then the housing search.
+  // Home: the checklist first, it's what "status" is most often for.
+  const stored = await store.listMoveinTasks(move.id);
+  const tasks: MoveinTask[] = stored.length
+    ? stored
+    : checklistFor(move).map((r) => ({
+        ...r,
+        status: "open" as const,
+        notes: null,
+        remindedAt: null,
+        updatedAt: "",
+      }));
+  if (tasks.length) {
+    const open = tasks.filter((t) => t.status === "open").map((t) => taskLine(t, move));
+    const done = tasks.filter((t) => t.status === "done").map((t) => t.label);
+    parts.push(
+      open.length
+        ? `Checklist: ${list(open)}${done.length ? `; done: ${list(done)}` : ""}.`
+        : "Checklist: everything's done.",
+    );
+  } else parts.push("Checklist: starts once I have your move-in date.");
+
   const deals = await store.listDeals(move.id);
-  const sublet = deals.find((d) => d.mode === "sublet_out");
-  if (sublet) {
-    let line = "Sublet: open";
-    if (sublet.slot) line = `Sublet: a viewing is booked ${sublet.slot.label}`;
-    else {
+  const post = await store.getSubletPost(move.id);
+  if (post && post.status !== "collecting") {
+    const sublet = deals.find((d) => d.mode === "sublet_out");
+    let line = `Sublet: the post is ${post.status === "approved" ? "approved" : "drafted"}`;
+    if (sublet?.slot) line += `, a viewing is booked ${sublet.slot.label}`;
+    else if (sublet) {
       const parties = await store.listDealParties(sublet.id);
       const talking = parties.filter((p) =>
         ["talking", "agreed", "awaiting_owner"].includes(p.status),
@@ -37,7 +59,7 @@ export async function statusReport(store: Store, move: Move): Promise<string> {
       if (talking) line += `, ${talking} applicant${talking > 1 ? "s" : ""} talking`;
     }
     parts.push(`${line}.`);
-  }
+  } else if (post) parts.push("Sublet: still collecting the details for your post.");
 
   const listings = await store.listListings(move.id);
   const ranked = listings.filter((l) => l.rank != null && l.status !== "rejected").length;

@@ -2,6 +2,7 @@ import type {
   Page,
   PhotonMessage,
   PhotonResource,
+  PhotonUserSnapshot,
   SendMessageRequest,
   SharedLineAssignment,
 } from "./types.ts";
@@ -193,18 +194,12 @@ export class PhotonClient {
 
   // ---- users & spaces ----
   createOrGetUser(handle: string, platform: string) {
-    return this.request<{ id: string; handle: string; kind: string; platform: string }>("POST", "/users", {
+    return this.request<PhotonUserSnapshot>("POST", "/users", {
       body: { handle, platform },
     });
   }
   listUsers(query: Query = {}) {
-    return this.request<Page<{ id: string; handle: string; kind: string; platform: string }>>(
-      "GET",
-      "/users",
-      {
-        query,
-      },
-    );
+    return this.request<Page<PhotonUserSnapshot>>("GET", "/users", { query });
   }
   createOrGetSpace(participantIds: string[], platform: string, idempotencyKey: string) {
     return this.request<{ id: string; kind: string; participantIds: string[]; platform: string }>(

@@ -1,9 +1,9 @@
 import type { ElfName } from "@elves/shared";
 
 /**
- * What the crew can and cannot do: the one list the Crew Lead's text prompt and its first message read, so the
- * owner hears the same abilities everywhere and anything off the list gets a plain "the crew can't do that".
- * (The Retell voice agent's prompt lives in the Retell portal, not here.)
+ * What the crew can and cannot do: the one list the Crew Lead's text prompt, its first message, the onboarding
+ * call and the Retell voice prompt all read, so the owner hears the same abilities everywhere and anything off
+ * the list gets a plain "the crew can't do that".
  */
 
 export interface Ability {
@@ -12,6 +12,8 @@ export interface Ability {
   name: string;
   /** One line as the owner reads it in a text. */
   text: string;
+  /** The same ability said out loud, as a verb phrase: "The Home Elf <spoken>, <spoken> and <spoken>." */
+  spoken: string;
 }
 
 export const CREW_ABILITIES: Ability[] = [
@@ -19,36 +21,44 @@ export const CREW_ABILITIES: Ability[] = [
     elf: "home",
     name: "find a place",
     text: "Home Elf finds you a place to move into, a hotel for the gap, or storage (Craigslist, Airbnb, Booking.com, SpareFoot), flags scams and texts you the top 3.",
+    spoken:
+      "finds you a place, a hotel for the gap or storage, and sends you the top three with scams flagged",
   },
   {
     elf: "home",
     name: "sublet your place",
     text: "Home Elf sublets your place: asks the rent, dates, area and room photos, writes the post for you to put up, and handles applicants. No viewing gets booked without your yes.",
+    spoken: "sublets your place, writing the post and never booking a viewing without your yes",
   },
   {
     elf: "home",
     name: "move checklist and status",
     text: 'Home Elf keeps your move checklist (utilities, internet, renters insurance, address change, keys). Text "status" anytime for where everything stands.',
+    spoken: "keeps your move checklist, like utilities, internet and keys",
   },
   {
     elf: "stuff",
     name: "price from a photo",
     text: "Stuff Elf prices an item from a photo and writes the listing line; you post it yourself on Facebook Marketplace or wherever you like.",
+    spoken: "prices your things from a photo for you to post",
   },
   {
     elf: "stuff",
     name: "deal with buyers",
     text: "Stuff Elf negotiates with buyers who text this number, never under your lowest price, and checks with you on low offers.",
+    spoken: "deals with buyers, never under your lowest price",
   },
   {
     elf: "stuff",
     name: "Last Call",
     text: "Stuff Elf runs Last Call: 48 hours before move-out unsold things drop in price, at 24 hours they go free, then it asks you about donating.",
+    spoken: "drops prices on what's left before move-out, then asks about donating",
   },
   {
     elf: "money",
     name: "ledger",
     text: "Money Elf keeps the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move.",
+    spoken: "keeps the move's ledger of sales, escrow and money set aside",
   },
 ];
 
@@ -61,6 +71,24 @@ export const CREW_LIMITS = [
   "pay, send or request money for you",
   "give legal or financial advice",
 ] as const;
+
+const ELF_SPOKEN: Record<Ability["elf"], string> = {
+  home: "Home Elf",
+  stuff: "Stuff Elf",
+  money: "Money Elf",
+};
+
+/** One spoken sentence per Elf: "The Home Elf finds you a place, sublets your place and keeps your checklist." */
+export function spokenAbilities(): string {
+  return (["home", "stuff", "money"] as const)
+    .map((elf) => {
+      const xs = CREW_ABILITIES.filter((a) => a.elf === elf).map((a) => a.spoken);
+      const joined =
+        xs.length > 1 ? `${xs.slice(0, -1).join("; ")}; and ${xs[xs.length - 1]}` : (xs[0] ?? "");
+      return `The ${ELF_SPOKEN[elf]} ${joined}.`;
+    })
+    .join(" ");
+}
 
 /** The ability lines as one plain-text block, one line each. */
 export function abilitiesText(): string {

@@ -1,20 +1,30 @@
 import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
-import type { ElfName, Role, Store } from "@elves/shared";
+import {
+  type ElfName,
+  onboardingActive,
+  onboardingKey,
+  parseOnboardingState,
+  type Role,
+  type Store,
+} from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
 import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
+import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
 import { parsePriceCents } from "./intake.ts";
 
 export type RouteVia =
   | "first_contact"
+  | "onboarding"
   | "counterparty"
   | "thread"
   | "deal"
   | "followup"
   | "scope"
+  | "delegate"
   | "photo"
   | "price"
   | "llm"
@@ -56,6 +66,11 @@ export function keywordRoute(text: string, elves: Elf[]): { elf: ElfName; score:
   return best;
 }
 
+/** The Elves whose keywords a text hits, in the order given; more than one means the work spans them. */
+export function delegatesFor(text: string, elves: Elf[]): ElfName[] {
+  return elves.filter((e) => keywordScore(text, e.keywords) > 0).map((e) => e.name);
+}
+
 /** Thread-owner key for "the Elf that last replied in this space" (the shared pool has no real threads). */
 export function spaceOwnerKey(spaceId: string): string {
   return `space:${spaceId}`;
@@ -80,6 +95,21 @@ export async function route(
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
+  // Until the owner confirms the brief, every owner text is part of the onboarding call.
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && deps.elves.some((e) => e.name === "crew_lead")) {
+    const state = parseOnboardingState(await deps.store.getCursor(onboardingKey(opts.moveId)));
+    if (onboardingActive(state)) return { elf: "crew_lead", via: "onboarding", confidence: 1 };
+  }
+
+  const text = batchText(batch);
+  // "status" is the Home Elf's (it has the checklist and the sublet); "what can you do?" is the Crew Lead's.
+  // Both are answered from any thread.
+  if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch)) {
+    if (isStatusAsk(text) && deps.elves.some((e) => e.name === "home"))
+      return { elf: "home", via: "scope", confidence: 1 };
+    if (isCapabilitiesQuestion(text) && deps.elves.some((e) => e.name === "crew_lead"))
+      return { elf: "crew_lead", via: "scope", confidence: 1 };
+  }
 
   // "status" and "what can you do?" are the Crew Lead's, from any thread.
   const asked = batchText(batch);
@@ -99,7 +129,6 @@ export async function route(
     }
   }
 
-  const text = batchText(batch);
   // "keep the couch" / "no last call" holds a price; the Elf that owns the deal records it.
   if (opts.moveId && lastCallHold(text)) {
     const open = (await deps.store.listDeals(opts.moveId)).find(
@@ -134,6 +163,26 @@ export async function route(
     const hasPicks = !isHuntFollowUp(text) || (await deps.store.listListings(opts.moveId)).length > 0;
     if (lastElf === "home" && hasPicks) return { elf: "home", via: "followup", confidence: 0.95 };
   }
+  // A date or address the Home Elf just asked for, or "done with internet" on its checklist, goes back to Home.
+  if (opts.moveId && deps.elves.some((e) => e.name === "home") && text.trim()) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const pending = await deps.store.getCursor(moveinAskKey(opts.moveId));
+      const onList =
+        !pending &&
+        parseMoveinFollowUp(text) != null &&
+        (await deps.store.listMoveinTasks(opts.moveId)).length > 0;
+      if (pending || onList) return { elf: "home", via: "followup", confidence: 0.95 };
+    }
+  }
+  // Room photos while Home is writing the owner's sublet post are for the post, not for sale.
+  if (opts.moveId && hasPhotos(batch) && deps.elves.some((e) => e.name === "home")) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const post = await deps.store.getSubletPost(opts.moveId);
+      if (post && post.status !== "approved") return { elf: "home", via: "followup", confidence: 0.95 };
+    }
+  }
   // Photos and bare prices are the Stuff Elf's job; no model call needed.
   if (hasPhotos(batch) && deps.elves.some((e) => e.name === "stuff"))
     return { elf: "stuff", via: "photo", confidence: 0.95 };
@@ -149,6 +198,14 @@ export async function route(
     (keywordRoute(text, deps.elves)?.elf ?? "stuff") === "stuff"
   ) {
     return { elf: "stuff", via: "price", confidence: 0.9 };
+  }
+  // One text that asks for two Elves' work ("sell the couch and find me a room"): the Crew Lead calls both.
+  if (opts.role === undefined || opts.role === "owner") {
+    const both = delegatesFor(
+      text,
+      deps.elves.filter((e) => e.name === "stuff" || e.name === "home"),
+    );
+    if (both.length === 2) return { elf: "crew_lead", via: "delegate", confidence: 0.9 };
   }
   if (!text.trim()) return { elf: "crew_lead", via: "default", confidence: 0.5 };
 

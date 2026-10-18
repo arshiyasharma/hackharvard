@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { housingLines, renderWorkingMemory } from "@elves/memory";
-import { type HousingSearch, type Listing, listingDefaults, MemoryStore } from "@elves/shared";
+import { housingLines, moveinLines, renderWorkingMemory } from "@elves/memory";
+import {
+  type HousingSearch,
+  type Listing,
+  listingDefaults,
+  MemoryStore,
+  type MoveinTask,
+} from "@elves/shared";
 
 describe("working memory: housing search", () => {
   test("renders the ask, the last search and the top picks; nothing when there is no search", async () => {
@@ -68,5 +74,41 @@ describe("working memory: housing search", () => {
     expect(full).toContain("## Housing search\n- Looking for: room");
     expect(full.indexOf("## Housing search")).toBeLessThan(full.indexOf("## Crew"));
     expect(housingLines({ search: null, listings: [] })).toEqual(["- (no search yet)"]);
+  });
+});
+
+describe("working memory: move-in week", () => {
+  test("renders each task with its date or status; nothing when there is no checklist", async () => {
+    const store = new MemoryStore();
+    let move = await store.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    expect(renderWorkingMemory(move, [], await store.getBoard(move.id))).not.toContain("## Move-in week");
+    move = await store.updateMove(move.id, { moveInAt: "2026-06-01", toAddress: "45 Harvard Ave" });
+    const task = (over: Partial<MoveinTask>): MoveinTask => ({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+      status: "open",
+      notes: null,
+      remindedAt: null,
+      updatedAt: "2026-05-01T12:00:00.000Z",
+      ...over,
+    });
+    const tasks = [
+      task({ key: "electric", label: "Electric", remindedAt: "2026-05-20T09:00:00.000Z" }),
+      task({ status: "done", notes: "Xfinity" }),
+      task({ key: "renters_insurance", label: "Renters insurance", dueAt: "2026-05-25", status: "skipped" }),
+      task({ key: "keys", label: "Keys", dueAt: "2026-06-01" }),
+    ];
+    expect(moveinLines(tasks, move)).toEqual([
+      "- Move-in 2026-06-01 at 45 Harvard Ave · 2 of 4 tasks open",
+      "- Electric: due 2026-05-22 (reminded)",
+      "- Internet: done · Xfinity",
+      "- Renters insurance: skipped",
+      "- Keys: due 2026-06-01",
+    ]);
+    const text = renderWorkingMemory(move, [], await store.getBoard(move.id), [], null, [], tasks);
+    expect(text).toContain("## Move-in week\n- Move-in 2026-06-01 at 45 Harvard Ave");
+    expect(text).toContain("- Internet: done · Xfinity");
   });
 });

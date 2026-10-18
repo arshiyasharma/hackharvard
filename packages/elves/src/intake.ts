@@ -2,7 +2,7 @@ import { openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
 import type { Item } from "@elves/shared";
 import { z } from "zod";
-import type { ElfContext } from "./contract.ts";
+import { type ElfContext, isImageAttachment } from "./contract.ts";
 import { CATEGORIES, CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB } from "./facts.ts";
 
 export const ItemIdentification = z.object({
@@ -30,17 +30,23 @@ export interface IntakeResult {
   notes: string | null;
 }
 
-/** Download the batch's photos, identify the items with vision, and create or enrich `items` rows. */
-export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult> {
-  const photoIds = ctx.batch.messages.flatMap((m) => m.attachments.map((a) => a.id));
-  if (photoIds.length === 0) return { items: [], failed: 0, notes: null };
-  const images: {
-    id: string;
-    mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-    base64: string;
-  }[] = [];
+export interface BatchImage {
+  id: string;
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  base64: string;
+}
+
+/** Download and decode the batch's photos (HEIC included), at most `max`; unreadable ones are counted. */
+export async function loadBatchImages(
+  ctx: ElfContext,
+  max = 4,
+): Promise<{ images: BatchImage[]; failed: number }> {
+  const photoIds = ctx.batch.messages.flatMap((m) =>
+    m.attachments.filter(isImageAttachment).map((a) => a.id),
+  );
+  const images: BatchImage[] = [];
   let failed = 0;
-  for (const id of photoIds.slice(0, 4)) {
+  for (const id of photoIds.slice(0, max)) {
     try {
       const file = await ctx.fetchAttachment(id);
       if (!file) {
@@ -58,6 +64,14 @@ export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult>
       ctx.log.warn("photo intake: could not prepare image", { id, error: String(err) });
     }
   }
+  return { images, failed };
+}
+
+/** Download the batch's photos, identify the items with vision, and create or enrich `items` rows. */
+export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult> {
+  const photoIds = ctx.batch.messages.flatMap((m) => m.attachments.map((a) => a.id));
+  if (photoIds.length === 0) return { items: [], failed: 0, notes: null };
+  const { images, failed } = await loadBatchImages(ctx);
   if (images.length === 0 || ctx.signal.aborted) return { items: [], failed, notes: null };
 
   let ident: ItemIdentification;

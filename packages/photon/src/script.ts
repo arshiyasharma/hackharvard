@@ -1,4 +1,4 @@
-import type { AttachmentFile, InboundMessage, OutboundReply, Transport } from "./transport.ts";
+import type { AttachmentFile, InboundMessage, OpenedSpace, OutboundReply, Transport } from "./transport.ts";
 
 export interface ScriptSend extends OutboundReply {
   id: string;
@@ -17,6 +17,8 @@ export class ScriptTransport implements Transport {
   readonly typingEvents: { spaceId: string; on: boolean }[] = [];
   readonly reads: string[] = [];
   readonly attachments = new Map<string, AttachmentFile>();
+  /** Spaces the service opened from the dedicated line, by space id; a text pushed into one arrives on that line. */
+  readonly opened = new Map<string, { handle: string; platform: string; senderId: string }>();
   private queue: InboundMessage[] = [];
   private waiters: ((m: InboundMessage | null) => void)[] = [];
   private sendWaiters: { n: number; resolve: () => void }[] = [];
@@ -28,6 +30,9 @@ export class ScriptTransport implements Transport {
     readonly agentHandle = "+16280000000",
     /** Prefix for generated message ids, so two transports sharing a store never collide (restart tests). */
     readonly idPrefix = "",
+    /** The dedicated line: the agent user `openSpace` sends as, and the number replies into opened spaces reach. */
+    readonly dedicatedId = "usr_line",
+    readonly dedicatedHandle = "+16285550100",
   ) {}
 
   spaceFor(handle: string) {
@@ -40,15 +45,17 @@ export class ScriptTransport implements Transport {
     text: string | null,
     extra: Partial<Pick<InboundMessage, "attachments" | "reaction" | "parentMessageId" | "spaceKind">> = {},
   ): InboundMessage {
+    const spaceId = this.spaceFor(handle);
+    const line = this.opened.get(spaceId);
     const msg: InboundMessage = {
       id: `${this.idPrefix}msg_${++this.seq}`,
-      spaceId: this.spaceFor(handle),
+      spaceId,
       spaceKind: extra.spaceKind ?? "direct",
-      platform: "script",
+      platform: line?.platform ?? "script",
       senderId: `usr_${handle.replace(/[^0-9a-z]/gi, "")}`,
       senderHandle: handle,
-      agentId: this.agentId,
-      agentHandle: this.agentHandle,
+      agentId: line ? this.dedicatedId : this.agentId,
+      agentHandle: line ? this.dedicatedHandle : this.agentHandle,
       text,
       attachments: extra.attachments ?? [],
       reaction: extra.reaction ?? null,
@@ -87,6 +94,11 @@ export class ScriptTransport implements Transport {
       return true;
     });
     return { id };
+  }
+  async openSpace(handle: string, platform: string): Promise<OpenedSpace> {
+    const spaceId = this.spaceFor(handle);
+    this.opened.set(spaceId, { handle, platform, senderId: this.dedicatedId });
+    return { spaceId, senderId: this.dedicatedId, senderHandle: this.dedicatedHandle };
   }
   async react(target: { messageId: string }, emoji: string) {
     this.reactions.push({ messageId: target.messageId, emoji });

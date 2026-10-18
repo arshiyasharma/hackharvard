@@ -2,6 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
+/** Re-exported for `scripts/`, which have no zod of their own. */
+export { z };
+
 export interface ClassifyInput {
   text: string;
   context: string;
@@ -19,15 +22,41 @@ export interface ImageInput {
   base64: string;
 }
 
+export interface DocumentInput {
+  mediaType: "application/pdf";
+  base64: string;
+}
+
+export interface ExtractInput {
+  system: string;
+  user: string;
+  model?: "fast" | "smart";
+  maxTokens?: number;
+}
+
+export interface DraftInput {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  /** Defaults to the drafting model; "fast" runs a simulated owner or a judge cheaply. */
+  model?: "fast" | "smart";
+}
+
 export interface LLM {
   readonly name: string;
   classify(input: ClassifyInput): Promise<ClassifyResult>;
-  draft(input: { system: string; user: string; maxTokens?: number }): Promise<string>;
-  extract<T>(schema: z.ZodType<T>, input: { system: string; user: string }): Promise<T>;
+  draft(input: DraftInput): Promise<string>;
+  /** Structured extraction; `model: "smart"` runs it on the drafting model (the onboarding call). */
+  extract<T>(schema: z.ZodType<T>, input: ExtractInput): Promise<T>;
   /** Structured extraction over one or more images plus text. */
   extractFromImages<T>(
     schema: z.ZodType<T>,
     input: { system: string; user: string; images: ImageInput[] },
+  ): Promise<T>;
+  /** Structured extraction over a PDF (a lease) plus text. */
+  extractFromDocument<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; document: DocumentInput },
   ): Promise<T>;
 }
 
@@ -73,6 +102,12 @@ export class FakeLLM implements LLM {
   async extractFromImages<T>(schema: z.ZodType<T>): Promise<T> {
     if (this.visionResult == null) throw new Error("FakeLLM.visionResult not set");
     return schema.parse(this.visionResult);
+  }
+  /** Tests set this to control what a document read returns. */
+  documentResult: unknown = null;
+  async extractFromDocument<T>(schema: z.ZodType<T>): Promise<T> {
+    if (this.documentResult == null) throw new Error("FakeLLM.documentResult not set");
+    return schema.parse(this.documentResult);
   }
 }
 
@@ -125,9 +160,9 @@ export class ClaudeLLM implements LLM {
     return parsed;
   }
 
-  async draft(input: { system: string; user: string; maxTokens?: number }): Promise<string> {
+  async draft(input: DraftInput): Promise<string> {
     const res = await this.client.messages.create({
-      model: this.smart,
+      model: input.model === "fast" ? this.fast : this.smart,
       max_tokens: input.maxTokens ?? 1024,
       output_config: { effort: "low" },
       system: input.system,
@@ -141,11 +176,12 @@ export class ClaudeLLM implements LLM {
       .trim();
   }
 
-  async extract<T>(schema: z.ZodType<T>, input: { system: string; user: string }): Promise<T> {
+  async extract<T>(schema: z.ZodType<T>, input: ExtractInput): Promise<T> {
+    const smart = input.model === "smart";
     const res = await this.client.messages.parse({
-      model: this.fast,
-      max_tokens: 2048,
-      output_config: { effort: "low", format: zodOutputFormat(schema) },
+      model: smart ? this.smart : this.fast,
+      max_tokens: input.maxTokens ?? (smart ? 4096 : 2048),
+      output_config: { effort: smart ? "medium" : "low", format: zodOutputFormat(schema) },
       system: input.system,
       messages: [{ role: "user", content: input.user }],
     });
@@ -174,6 +210,28 @@ export class ClaudeLLM implements LLM {
       messages: [{ role: "user", content }],
     });
     if (res.parsed_output == null) throw new Error("image extraction returned no parsable output");
+    return res.parsed_output;
+  }
+
+  async extractFromDocument<T>(
+    schema: z.ZodType<T>,
+    input: { system: string; user: string; document: DocumentInput },
+  ): Promise<T> {
+    const content: Anthropic.ContentBlockParam[] = [
+      {
+        type: "document",
+        source: { type: "base64", media_type: input.document.mediaType, data: input.document.base64 },
+      },
+      { type: "text", text: input.user },
+    ];
+    const res = await this.client.messages.parse({
+      model: this.smart,
+      max_tokens: 4096,
+      output_config: { effort: "low", format: zodOutputFormat(schema) },
+      system: input.system,
+      messages: [{ role: "user", content }],
+    });
+    if (res.parsed_output == null) throw new Error("document extraction returned no parsable output");
     return res.parsed_output;
   }
 }

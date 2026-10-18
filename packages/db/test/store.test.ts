@@ -23,7 +23,7 @@ if (pgUrl) {
       return {
         store: new PostgresStore(db),
         cleanup: async () => {
-          // listings and housing_searches cascade from moves
+          // listings, housing_searches and movein_tasks cascade from moves
           await db`delete from moves where owner_handle like ${`${run}:%`}`;
           await db`delete from events where move_id is null and trace_id = ${run}`;
           await db`delete from thread_owners where message_id like ${`${run}:%`}`;
@@ -302,6 +302,141 @@ describe.each(backends)("Store contract (%s)", (_name, open) => {
       title: "Other",
     });
     expect((await store.listListings(move.id)).map((l) => l.site)).toEqual(["craigslist", "airbnb"]);
+  });
+
+  test("the sublet post is one row per move and round-trips every field", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner9"),
+      ownerSpaceId: handle("spc9"),
+      platform: "imessage",
+    });
+    expect(await store.getSubletPost(move.id)).toBeUndefined();
+    const post = await store.saveSubletPost({
+      moveId: move.id,
+      dealId: null,
+      rentCents: 150000,
+      availableFrom: "2026-06-01",
+      availableUntil: null,
+      area: "Allston",
+      furnished: true,
+      roomType: "private room in a 3BR",
+      details: ["laundry in building"],
+      photoAttachmentIds: [],
+      photoNotes: null,
+      title: null,
+      body: null,
+      status: "collecting",
+    });
+    expect(post.updatedAt).toBeTruthy();
+    const drafted = await store.saveSubletPost({
+      ...post,
+      dealId: "dl_1",
+      availableUntil: "2026-08-31",
+      photoAttachmentIds: ["att1"],
+      photoNotes: "Bright room with a big window.",
+      title: "Furnished room in Allston",
+      body: "Text us.",
+      status: "drafted",
+    });
+    expect(drafted).toMatchObject({
+      dealId: "dl_1",
+      rentCents: 150000,
+      availableUntil: "2026-08-31",
+      furnished: true,
+      details: ["laundry in building"],
+      photoAttachmentIds: ["att1"],
+      status: "drafted",
+    });
+    expect((await store.getSubletPost(move.id))?.title).toBe("Furnished room in Allston");
+  });
+
+  test("a lease reading is one row per move and a new PDF replaces it", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner10"),
+      ownerSpaceId: handle("spc10"),
+      platform: "imessage",
+    });
+    expect(await store.getLeaseReading(move.id)).toBeUndefined();
+    const first = await store.saveLeaseReading({
+      moveId: move.id,
+      attachmentId: "att_lease1",
+      filename: "lease.pdf",
+      reading: { sublet: "with_consent", noticeDays: 30, nested: { ok: true } },
+    });
+    expect(first.readAt).toBeTruthy();
+    const second = await store.saveLeaseReading({
+      moveId: move.id,
+      attachmentId: "att_lease2",
+      filename: null,
+      reading: { sublet: "prohibited" },
+    });
+    expect(second.attachmentId).toBe("att_lease2");
+    expect((await store.getLeaseReading(move.id))?.reading).toEqual({ sublet: "prohibited" });
+  });
+
+  test("move-in tasks are one row per (move, key), keep status on re-upsert, and list due ones once", async () => {
+    const move = await store.createMove({
+      ownerHandle: handle("owner11"),
+      ownerSpaceId: handle("spc11"),
+      platform: "imessage",
+    });
+    expect(await store.listMoveinTasks(move.id)).toEqual([]);
+    const keys = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "keys",
+      label: "Keys",
+      dueAt: "2026-06-01",
+    });
+    expect(keys).toMatchObject({ status: "open", notes: null, remindedAt: null });
+    expect(keys.updatedAt).toBeTruthy();
+    await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+    });
+    await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "electric",
+      label: "Electric",
+      dueAt: "2026-05-22",
+    });
+    // checklist order: by due date, then the fixed key order
+    expect((await store.listMoveinTasks(move.id)).map((t) => t.key)).toEqual([
+      "electric",
+      "internet",
+      "keys",
+    ]);
+
+    const done = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+      status: "done",
+      notes: "Xfinity, installed",
+    });
+    expect(done).toMatchObject({ status: "done", notes: "Xfinity, installed" });
+    // a re-upsert with a new date keeps status and notes
+    const moved = await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-29",
+    });
+    expect(moved).toMatchObject({ dueAt: "2026-05-29", status: "done", notes: "Xfinity, installed" });
+    expect((await store.listMoveinTasks(move.id)).length).toBe(3);
+
+    // due: open, not yet reminded, on or before the date; this move's rows only
+    const due = (await store.listDueMoveinTasks("2026-05-24")).filter((t) => t.moveId === move.id);
+    expect(due.map((t) => t.key)).toEqual(["electric"]);
+    await store.upsertMoveinTask({ ...due[0]!, remindedAt: "2026-05-20T09:00:00.000Z" });
+    expect((await store.listDueMoveinTasks("2026-05-24")).filter((t) => t.moveId === move.id)).toEqual([]);
+    expect((await store.listMoveinTasks(move.id)).find((t) => t.key === "electric")?.remindedAt).toBe(
+      "2026-05-20T09:00:00.000Z",
+    );
+    const all = (await store.listDueMoveinTasks("2026-06-01")).filter((t) => t.moveId === move.id);
+    expect(all.map((t) => t.key)).toEqual(["keys"]);
   });
 
   test("listMoves returns every move in creation order", async () => {

@@ -57,10 +57,12 @@ describe("statusReport", () => {
   test("an empty move says what's missing", async () => {
     const store = new MemoryStore();
     const move = await store.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "imessage" });
-    expect(await statusReport(store, move)).toBe("No move dates yet.");
+    expect(await statusReport(store, move)).toBe(
+      "No move dates yet. Checklist: starts once I have your move-in date.",
+    );
   });
 
-  test("dates, the sublet, stuff, the ledger and what waits on the owner, in one paragraph", async () => {
+  test("dates, the checklist, stuff, the ledger and what waits on the owner, in one paragraph", async () => {
     const store = new MemoryStore();
     let move = await store.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "imessage" });
     move = await store.updateMove(move.id, {
@@ -69,6 +71,14 @@ describe("statusReport", () => {
       fromAddress: "Allston",
       toAddress: "12 Elm St",
     });
+    await store.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-10-24",
+      status: "done",
+    });
+    await store.upsertMoveinTask({ moveId: move.id, key: "keys", label: "Keys", dueAt: "2026-11-03" });
     await store.upsertItem({
       moveId: move.id,
       name: "couch",
@@ -105,7 +115,7 @@ describe("statusReport", () => {
 
     const s = await statusReport(store, move);
     expect(s).toStartWith("You're moving out Nov 1 of Allston and in Nov 3 at 12 Elm St.");
-    expect(s).toContain("Sublet: open, 1 applicant talking.");
+    expect(s).toContain("Checklist: Keys: pick up on Nov 3; done: Internet.");
     expect(s).toContain("Stuff: listed couch; sold desk.");
     expect(s).toContain("Ledger: $60 held in escrow.");
     expect(s).toContain("Waiting on your yes: a viewing Fri 6pm for the room.");

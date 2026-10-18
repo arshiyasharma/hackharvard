@@ -15,6 +15,8 @@ export interface Config {
     pollMs: number;
     /** Replay inbound messages created at/after this ISO time on boot (default: boot time). */
     since: string | undefined;
+    /** Agent user id of the dedicated line that texts strangers first; undefined = discover from the project. */
+    dedicatedAgentId: string | undefined;
   };
   ownerPhone: string | null;
   buyerPhone: string | null;
@@ -55,6 +57,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       inbound: env.PHOTON_INBOUND === "socket" ? "socket" : "poll",
       pollMs: Number(env.PHOTON_POLL_MS ?? 1500),
       since: env.PHOTON_SINCE || undefined,
+      dedicatedAgentId: env.PHOTON_DEDICATED_AGENT_ID || undefined,
     },
     ownerPhone: env.OWNER_PHONE || null,
     buyerPhone: env.BUYER_PHONE || null,

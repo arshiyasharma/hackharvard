@@ -30,6 +30,7 @@ if (config.transport === "script") {
     inbound: config.photon.inbound,
     pollMs: config.photon.pollMs,
     since: config.photon.since,
+    dedicatedAgentId: config.photon.dedicatedAgentId,
     cursor: { get: (n) => store.getCursor(n), set: (n, v) => store.setCursor(n, v) },
     logger: createLogger("photon2"),
   });
