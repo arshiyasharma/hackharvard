@@ -30,6 +30,18 @@ type Row = Record<string, unknown>;
 
 const MOVEIN_KEY_ORDER = [...MOVEIN_TASK_KEYS];
 
+/**
+ * Checklist order: by due date, then the checklist's own key order. Sorted here, not in SQL: Bun.sql sends a JS
+ * array parameter as "a,b,c", which Postgres rejects as a malformed array literal (seen live on 2026-10-17).
+ */
+function sortMoveinTasks(tasks: MoveinTask[]): MoveinTask[] {
+  const pos = (k: string) => {
+    const i = MOVEIN_KEY_ORDER.indexOf(k as (typeof MOVEIN_KEY_ORDER)[number]);
+    return i === -1 ? MOVEIN_KEY_ORDER.length : i;
+  };
+  return [...tasks].sort((a, b) => a.dueAt.localeCompare(b.dueAt) || pos(a.key) - pos(b.key));
+}
+
 const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v));
 const str = (v: unknown): string | null => (v == null ? null : String(v));
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
@@ -454,9 +466,8 @@ export class PostgresStore implements Store {
 
   async listMoveinTasks(moveId: string) {
     const rows = await this.sql`
-      select * from movein_tasks where move_id = ${moveId}
-      order by due_at, array_position(${MOVEIN_KEY_ORDER}::text[], key)`;
-    return rows.map((r: Row) => moveinTaskRow(r));
+      select * from movein_tasks where move_id = ${moveId}`;
+    return sortMoveinTasks(rows.map((r: Row) => moveinTaskRow(r)));
   }
   async upsertMoveinTask(input: MoveinTaskInput) {
     const prev = (
@@ -476,9 +487,8 @@ export class PostgresStore implements Store {
   async listDueMoveinTasks(through: string) {
     const rows = await this.sql`
       select * from movein_tasks
-      where status = 'open' and reminded_at is null and due_at <= ${through}
-      order by due_at, array_position(${MOVEIN_KEY_ORDER}::text[], key)`;
-    return rows.map((r: Row) => moveinTaskRow(r));
+      where status = 'open' and reminded_at is null and due_at <= ${through}`;
+    return sortMoveinTasks(rows.map((r: Row) => moveinTaskRow(r)));
   }
 
   async getSearch(moveId: string) {
