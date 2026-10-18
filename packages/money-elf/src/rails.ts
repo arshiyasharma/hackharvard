@@ -31,13 +31,13 @@ export interface MoveMoneyInput {
   /** YYYY-MM-DD */
   date: string;
   /**
-   * Default completed. "pending" records money that is expected, not moved yet (Move Plans, decision #54):
+   * Default completed. "pending" records money that is expected, not moved yet (Move Plans, decision #67):
    * a future-dated record that settle() later flips to completed or cancelled.
    */
   status?: "pending" | "completed";
 }
 
-/** Only deposits and withdrawals can be settled: Nessie rejects a status update on a purchase (#54). */
+/** Only deposits and withdrawals can be settled: Nessie rejects a status update on a purchase (#67). */
 export type SettleKind = "deposit" | "withdrawal";
 
 export interface MoneyRecord {
@@ -508,6 +508,7 @@ export class FakeRails implements MoneyRails {
     }
     throw new RailsError(`unknown ${kind} ${id}`, 404, "");
   }
+
   async readAccount(accountId: string): Promise<AccountRecords> {
     const a = this.acct(accountId);
     const strip = <T extends { accountId: string }>({ accountId: _a, ...rest }: T) => rest;

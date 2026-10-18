@@ -13,7 +13,15 @@
  */
 
 import type { LLM } from "@elves/llm";
-import { createLogger, ELF_LABELS, type ElfName, type Logger, type Store } from "@elves/shared";
+import {
+  createLogger,
+  ELF_LABELS,
+  type ElfName,
+  type Logger,
+  onboardingKey,
+  parseOnboardingState,
+  type Store,
+} from "@elves/shared";
 import type { SQL } from "bun";
 import { InMemoryBackend } from "./backends/inmemory.ts";
 import { PostgresBackend } from "./backends/postgres.ts";
@@ -41,6 +49,7 @@ export {
   type HousingView,
   housingLines,
   itemLine,
+  moveinLines,
   renderPublicMemory,
   renderWorkingMemory,
 } from "./working.ts";
@@ -228,21 +237,40 @@ export class MoveMemory {
   /** Everything an Elf should see before it answers, within the token budget. */
   async context(input: ContextInput): Promise<ConversationContext> {
     const cfg = this.config;
-    const [thread, recent, ranked, notes, move, items, board, participants, search, listings, deals] =
-      await Promise.all([
-        this.backend.getThread(input.threadId),
-        this.backend.recentMessages(input.threadId, cfg.lastMessages),
-        this.backend.searchFacts(input.moveId, { query: input.query ?? "", limit: cfg.maxFacts * 2 }),
-        input.elf ? this.backend.listNotes(input.moveId, input.elf) : Promise.resolve([]),
-        this.store.getMove(input.moveId),
-        this.store.listItems(input.moveId),
-        this.store.getBoard(input.moveId),
-        this.store.listParticipants(input.moveId),
-        this.store.getSearch(input.moveId),
-        this.store.listListings(input.moveId),
-        this.dealViews(input.moveId),
-      ]);
+    const [
+      thread,
+      recent,
+      ranked,
+      notes,
+      move,
+      items,
+      board,
+      participants,
+      search,
+      listings,
+      deals,
+      movein,
+      onboarding,
+    ] = await Promise.all([
+      this.backend.getThread(input.threadId),
+      this.backend.recentMessages(input.threadId, cfg.lastMessages),
+      this.backend.searchFacts(input.moveId, { query: input.query ?? "", limit: cfg.maxFacts * 2 }),
+      input.elf ? this.backend.listNotes(input.moveId, input.elf) : Promise.resolve([]),
+      this.store.getMove(input.moveId),
+      this.store.listItems(input.moveId),
+      this.store.getBoard(input.moveId),
+      this.store.listParticipants(input.moveId),
+      this.store.getSearch(input.moveId),
+      this.store.listListings(input.moveId),
+      this.dealViews(input.moveId),
+      this.store.listMoveinTasks(input.moveId),
+      this.store.getCursor(onboardingKey(input.moveId)),
+    ]);
     const role = input.role ?? thread?.role ?? "owner";
+    const onboardingState = parseOnboardingState(onboarding);
+    const brief = onboardingState
+      ? { brief: onboardingState.brief, confirmed: onboardingState.status === "confirmed" }
+      : null;
 
     // Transcript: the newest messages outside the summary, trimmed from the oldest end to the budget.
     const through = thread?.summaryThroughSeq ?? 0;
@@ -277,7 +305,7 @@ export class MoveMemory {
     const workingMemory = move
       ? clipToTokens(
           crewSide
-            ? renderWorkingMemory(move, items, board, participants, housing, deals)
+            ? renderWorkingMemory(move, items, board, participants, housing, deals, movein, brief)
             : renderPublicMemory(items, deals),
           cfg.budget.working,
         )
@@ -299,7 +327,9 @@ export class MoveMemory {
 
   private async dealViews(moveId: string): Promise<DealView[]> {
     const deals = await this.store.listDeals(moveId);
-    return Promise.all(deals.map(async (deal) => ({ deal, parties: await this.store.listDealParties(deal.id) })));
+    return Promise.all(
+      deals.map(async (deal) => ({ deal, parties: await this.store.listDealParties(deal.id) })),
+    );
   }
 
   private speaker(m: MessageRow, threadRole: string): string {

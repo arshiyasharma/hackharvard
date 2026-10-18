@@ -1,21 +1,29 @@
 import {
+  ELF_EMOJI,
   allElves,
   batchText,
   type Elf,
   type ElfContext,
+  type ElfImage,
   type ElfOutbound,
+  type ElfPoll,
   type ElfReply,
   EMPTY_CONVERSATION,
+  isAddressedOutbound,
+  moveinSweep,
   route,
+  type SentInfo,
   spaceOwnerKey,
 } from "@elves/elves";
-import { attributeInbound, dealBoard, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
+import { codesIn, dealBoard, inquiryFor, isOpen, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
-import type { InboundMessage, Transport } from "@elves/photon";
+import { type InboundMessage, PhotonApiError, type Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import {
+  ELF_LABELS,
+  type Deal,
   createLogger,
   type ElfName,
   type Logger,
@@ -27,6 +35,16 @@ import {
 export interface ServiceDeps {
   store: Store;
   transport: Transport;
+  /**
+   * Sends iMessage mini app cards (the Money Elf's Moving Ledger dashboard) through Spectrum, and refreshes a
+   * sent card in place; skipped when unset.
+   */
+  miniApps?: {
+    send(handle: string, url: string): Promise<void>;
+    refresh?(handle: string): Promise<void>;
+  } | null;
+  /** Event types after which the owner's mini app card is refreshed (the Money Elf's LEDGER_CHANGING_EVENTS). */
+  refreshCardOn?: ReadonlySet<string>;
   llm: LLM;
   elves?: Elf[];
   /** Conversational memory (transcript, facts, summaries); null disables it. */
@@ -37,7 +55,7 @@ export interface ServiceDeps {
   publicUrl: string | null;
   logger?: Logger;
   now?: () => Date;
-  /** How often Last Call runs (relists anything unsold 48h before move-out); 0 turns the timer off. */
+  /** How often the sweeps run (Last Call relists, move-in week reminders); 0 turns the timer off. */
   sweepMs?: number;
 }
 
@@ -45,11 +63,56 @@ export interface Service {
   pipeline: Pipeline;
   handleBatch: (batch: Batch, ctx: { signal: AbortSignal; settle?: () => void }) => Promise<void>;
   run: (signal: AbortSignal) => Promise<void>;
-  /** One Last Call pass now; returns how many texts went out. */
+  /** One Last Call and move-in reminder pass now; returns how many texts went out. */
   sweep: () => Promise<number>;
   /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
   notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
+  /**
+   * Send texts an Elf produced outside any inbound batch (an approval tapped in the Money Elf's dashboard).
+   * Each note goes to its space once per `key`; returns how many were sent.
+   */
+  deliverOutbound: (moveId: string, elf: ElfName, notes: ElfOutbound[], key: string) => Promise<number>;
   stats: () => Record<string, unknown>;
+}
+
+/** "📦 Stuff Elf": the first line of every text the crew sends, so the owner always knows who is talking. */
+export function elfHeader(elf: ElfName): string {
+  return `${ELF_EMOJI[elf]} ${ELF_LABELS[elf]}`;
+}
+
+/** The text under its Elf's header, with a blank line between; a text that already carries it is left alone. */
+export function withHeader(elf: ElfName, text: string): string {
+  const head = elfHeader(elf);
+  return text.startsWith(`${head}\n`) ? text : `${head}\n\n${text}`;
+}
+
+/**
+ * Split a text into pieces of at most `max` characters, at blank lines first, then at line breaks, then at
+ * spaces, so a reply Photon refuses for its length still arrives whole and readable.
+ */
+export function chunkText(text: string, max = 900): string[] {
+  const out: string[] = [];
+  const pack = (units: string[], sep: string) => {
+    let cur = "";
+    for (const u of units) {
+      const next = cur ? `${cur}${sep}${u}` : u;
+      if (next.length <= max) cur = next;
+      else {
+        if (cur) out.push(cur);
+        if (u.length <= max) cur = u;
+        else {
+          // one unit is itself too long: break it on the next smaller separator
+          const smaller = sep === "\n\n" ? "\n" : sep === "\n" ? " " : null;
+          if (smaller) pack(u.split(smaller), smaller);
+          else for (let i = 0; i < u.length; i += max) out.push(u.slice(i, i + max));
+          cur = "";
+        }
+      }
+    }
+    if (cur) out.push(cur);
+  };
+  pack(text.split("\n\n"), "\n\n");
+  return out.filter((p) => p.trim().length);
 }
 
 /** How often the typing indicator is refreshed while an Elf's deferred work (a search) runs. */
@@ -82,20 +145,102 @@ export function createService(deps: ServiceDeps): Service {
     }
   }
 
+  const LIVE_PARTY = ["talking", "agreed", "awaiting_owner", "scheduled", "waitlisted"];
+
+  /**
+   * On the shared pool every phone that texts in runs a move of its own, so a buyer is usually also an owner.
+   * A phone is treated as the counterparty on another move's deal while it is inside that conversation: from the
+   * text that quotes the deal's ref code until the deal closes. Returns null when this phone is just an owner.
+   */
+  async function elsewhere(
+    existing: Participant,
+    msg: InboundMessage,
+  ): Promise<{ move: Move; participant: Participant } | null> {
+    const as = async (deal: Deal) => {
+      const move = await deps.store.getMove(deal.moveId);
+      if (!move) return null;
+      const role = policyFor(deal.mode).counterpartyRole;
+      const { id: _id, createdAt: _createdAt, ...rest } = existing;
+      const participant = await deps.store.upsertParticipant({ ...rest, moveId: deal.moveId, role });
+      return { move, participant };
+    };
+    for (const code of codesIn(msg.text ?? "")) {
+      const deal = await deps.store.getDealByCode(code);
+      if (deal && isOpen(deal.state) && deal.moveId !== existing.moveId) return as(deal);
+    }
+    const parties = (await deps.store.listDealPartiesBySpace(msg.spaceId))
+      .filter((p) => LIVE_PARTY.includes(p.status))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    for (const p of parties) {
+      const deal = await deps.store.getDeal(p.dealId);
+      if (deal && isOpen(deal.state)) return existing.moveId === deal.moveId ? null : as(deal);
+    }
+    return null;
+  }
+
   async function resolveMove(
     msg: InboundMessage,
   ): Promise<{ move: Move; participant: Participant; firstContact: boolean }> {
-    const existing = await deps.store.getParticipantBySpace(msg.spaceId);
+    let existing = await deps.store.getParticipantBySpace(msg.spaceId);
     if (existing) {
+      // The pool number a phone talks to can change (re-assigned); outbound texts must come from the current one.
+      if (msg.agentId && existing.agentUserId !== msg.agentId) {
+        const { id: _id, createdAt: _createdAt, ...rest } = existing;
+        existing = await deps.store.upsertParticipant({ ...rest, agentUserId: msg.agentId });
+      }
+      // An owner quoting another move's ref code (or still inside that deal) is that deal's buyer for this text.
+      const away = await elsewhere(existing, msg);
+      if (away) {
+        log.info("owner acting as counterparty on another move", {
+          spaceId: msg.spaceId,
+          moveId: away.move.id,
+        });
+        return { ...away, firstContact: false };
+      }
+      // A counterparty whose deal has closed, and who runs a move of their own, is that move's owner again.
+      if (existing.role !== "owner") {
+        const live = (await deps.store.listDealPartiesBySpace(msg.spaceId)).some((p) =>
+          LIVE_PARTY.includes(p.status),
+        );
+        const own = live ? undefined : await deps.store.getMoveByOwnerHandle(msg.senderHandle);
+        if (own && own.id !== existing.moveId) {
+          const { id: _id, createdAt: _createdAt, ...rest } = existing;
+          existing = await deps.store.upsertParticipant({ ...rest, moveId: own.id, role: "owner" });
+          return { move: own, participant: existing, firstContact: false };
+        }
+      }
       const move = await deps.store.getMove(existing.moveId);
       if (move) return { move, participant: existing, firstContact: false };
     }
     // A stranger quoting a listing's ref code joins that deal, even if they run a move of their own; a stranger
     // who is not an owner joins the one open deal on this number their text names ("is the couch available?").
     let move = await deps.store.getMoveByOwnerHandle(msg.senderHandle);
-    const attributed =
-      (await attributeInbound(deps.store, msg, { allowMatch: false })) ??
-      (move ? null : await attributeInbound(deps.store, msg, { allowMatch: true }));
+    const inquiry = await inquiryFor(deps.store, msg, { allowMatch: !move });
+    if (inquiry?.kind === "ask") {
+      // Several listings fit: record them as a buyer-in-waiting, and the Stuff Elf asks which one they mean.
+      const participant = await deps.store.upsertParticipant({
+        moveId: inquiry.move.id,
+        handle: msg.senderHandle,
+        role: policyFor(inquiry.options[0]!.mode).counterpartyRole,
+        spaceId: msg.spaceId,
+        platform: msg.platform,
+        agentUserId: msg.agentId,
+      });
+      // Remember exactly which listings we are about to offer, so "2" means the second one they were shown.
+      await deps.store.appendEvent({
+        moveId: inquiry.move.id,
+        type: "inquiry.asked",
+        payload: { spaceId: msg.spaceId, dealIds: inquiry.options.map((d) => d.id) },
+        traceId: null,
+      });
+      log.info("stranger asked about several listings", {
+        moveId: inquiry.move.id,
+        options: inquiry.options.length,
+        spaceId: msg.spaceId,
+      });
+      return { move: inquiry.move, participant, firstContact: false };
+    }
+    const attributed = inquiry?.kind === "join" ? inquiry.attribution : null;
     if (attributed) {
       const { participant, party } = await joinDeal(deps.store, attributed.deal, {
         spaceId: msg.spaceId,
@@ -157,35 +302,97 @@ export function createService(deps: ServiceDeps): Service {
     return parts.join(" ") || "[empty]";
   }
 
-  async function runOnSent(reply: ElfReply, messageId: string) {
+  async function runOnSent(reply: ElfReply, messageId: string, info: SentInfo = { line: null }) {
     if (!reply.onSent) return;
     try {
-      await reply.onSent(messageId);
+      await reply.onSent(messageId, info);
     } catch (err) {
       log.warn("onSent hook failed", { error: String(err) });
     }
   }
 
   /**
-   * Send a text into another space of the move, as the pool number that space talks to, and remember it in that
-   * space's transcript. Idempotent on `key`.
+   * Open the space for a handle-addressed note from the dedicated line and put that person on the deal as its
+   * counterparty (a lister). Null when the project cannot text first; the note is then dropped and logged.
+   */
+  async function openFor(
+    move: Move,
+    note: Extract<ElfOutbound, { to: unknown }>,
+    key: string,
+    traceId: string | null,
+  ): Promise<{ spaceId: string; senderId: string; line: string | null; target: Participant } | null> {
+    try {
+      const opened = await deps.transport.openSpace(note.to.handle, note.to.platform);
+      const who = {
+        spaceId: opened.spaceId,
+        handle: note.to.handle,
+        platform: note.to.platform,
+        agentUserId: opened.senderId,
+      };
+      const deal = await deps.store.getDeal(note.dealId);
+      let target: Participant;
+      if (deal) {
+        const { participant, party } = await joinDeal(deps.store, deal, who);
+        target = participant;
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "deal.party_joined",
+          payload: { dealId: deal.id, partyId: party.id, via: "outreach", role: participant.role },
+          traceId,
+        });
+      } else {
+        target = await deps.store.upsertParticipant({ moveId: move.id, role: "lister", ...who });
+      }
+      log.info("opened a space from the dedicated line", {
+        moveId: move.id,
+        spaceId: opened.spaceId,
+        line: opened.senderHandle,
+        dealId: note.dealId,
+      });
+      return { spaceId: opened.spaceId, senderId: opened.senderId, line: opened.senderHandle, target };
+    } catch (err) {
+      counters.failures++;
+      log.error("could not open a space for outreach; note dropped", {
+        key,
+        handle: note.to.handle,
+        error: String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Send a text into another space of the move, as the pool number that space talks to (or, for a note addressed
+   * to a handle, from the dedicated line into a space opened for it), and remember it in that space's transcript.
+   * Idempotent on `key`.
    */
   async function deliverTo(move: Move, elf: ElfName, note: ElfOutbound, key: string, traceId: string | null) {
-    const target = await deps.store.getParticipantBySpace(note.spaceId);
-    const senderId =
-      target?.agentUserId ??
-      (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
-        ?.agentUserId;
+    let spaceId: string;
+    let senderId: string | null | undefined;
+    let line: string | null = null;
+    let target: Participant | undefined;
+    if (isAddressedOutbound(note)) {
+      const opened = await openFor(move, note, key, traceId);
+      if (!opened) return;
+      ({ spaceId, senderId, line, target } = opened);
+    } else {
+      spaceId = note.spaceId;
+      target = await deps.store.getParticipantBySpace(spaceId);
+      senderId =
+        target?.agentUserId ??
+        (await deps.store.listParticipants(move.id)).find((p) => p.role === "owner" && p.agentUserId)
+          ?.agentUserId;
+    }
     if (!senderId) {
-      log.warn("no sender for outbound text; skipped", { spaceId: note.spaceId, key });
+      log.warn("no sender for outbound text; skipped", { spaceId, key });
       return;
     }
     try {
       const sent = await deps.transport.send(
         {
-          spaceId: note.spaceId,
+          spaceId,
           senderId,
-          text: note.text,
+          text: withHeader(note.elf ?? elf, note.text.trim()),
           parentMessageId: note.parentMessageId ?? undefined,
           format: note.format ?? "plain",
         },
@@ -193,23 +400,39 @@ export function createService(deps: ServiceDeps): Service {
       );
       await deps.store.recordSend(key, sent.id);
       await deps.store.setThreadOwner(sent.id, elf);
-      await deps.store.setThreadOwner(spaceOwnerKey(note.spaceId), elf);
-      await runOnSent(note, sent.id);
+      await deps.store.setThreadOwner(spaceOwnerKey(spaceId), elf);
+      await runOnSent(note, sent.id, { line });
       counters.outbound++;
       await deps.store.appendEvent({
         moveId: move.id,
         type: "outbound.sent",
-        payload: { elf, spaceId: note.spaceId, messageId: sent.id, text: note.text },
+        payload: { elf, spaceId, messageId: sent.id, text: note.text, ...(line ? { line } : {}) },
         traceId,
       });
+      const notePoll = isAddressedOutbound(note) ? undefined : note.poll;
+      if (notePoll && deps.transport.sendPoll) {
+        try {
+          const poll = await deps.transport.sendPoll({ spaceId, senderId }, notePoll, `${key}:poll`);
+          await deps.store.setThreadOwner(poll.id, elf);
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "poll.sent",
+            payload: { elf, spaceId, messageId: poll.id, question: notePoll.question },
+            traceId,
+          });
+        } catch (err) {
+          // The text already asked; a refused poll (shared pool) is logged, not retried.
+          log.warn("outbound poll refused; the text still asks", { key, error: String(err) });
+        }
+      }
       await safeMem("remember outbound", async (m) => {
-        await m.ensureThread(note.spaceId, {
+        await m.ensureThread(spaceId, {
           moveId: move.id,
           role: target?.role ?? "owner",
           handle: target?.handle ?? null,
         });
         await m.remember({
-          threadId: note.spaceId,
+          threadId: spaceId,
           moveId: move.id,
           role: "assistant",
           id: sent.id,
@@ -220,17 +443,46 @@ export function createService(deps: ServiceDeps): Service {
       });
     } catch (err) {
       counters.failures++;
-      log.error("outbound send failed", { key, spaceId: note.spaceId, error: String(err) });
+      log.error("outbound send failed", { key, spaceId, error: String(err) });
     }
+  }
+
+  /** Move-in week: one text per checklist task as it comes due, into the owner's space from the Home Elf. */
+  async function remindMovein(): Promise<number> {
+    const { reminders } = await moveinSweep(deps.store, { now: now() });
+    let sent = 0;
+    const touched = new Map<string, string>();
+    for (const r of reminders) {
+      const move = await deps.store.getMove(r.moveId);
+      if (!move) continue;
+      const key = sendKey("movein", `${r.moveId}:${r.key}:${r.dueAt}`);
+      if (await deps.store.getSend(key)) continue;
+      await deliverTo(move, "home", { spaceId: move.ownerSpaceId, text: r.text }, key, null);
+      await deps.store.appendEvent({
+        moveId: move.id,
+        type: "movein.reminded",
+        payload: { key: r.key, dueAt: r.dueAt, elf: "home" },
+        traceId: null,
+      });
+      touched.set(move.id, r.text.split(". ")[0] ?? r.text);
+      sent++;
+    }
+    for (const [moveId, lastUpdate] of touched)
+      await deps.store.patchBoard(moveId, "home", { status: "working", lastUpdate });
+    return sent;
   }
 
   /** Last Call: anything unsold 48h before move-out relists free; owner and interested parties hear it. */
   async function sweep(): Promise<number> {
     counters.sweeps++;
+    const reminded = await remindMovein().catch((err) => {
+      log.error("move-in reminder sweep failed", { error: String(err) });
+      return 0;
+    });
     const res = await lastCallSweep(deps.store, { now: now() });
     for (const ev of res.events)
       await deps.store.appendEvent({ moveId: ev.moveId, type: ev.type, payload: ev.payload, traceId: null });
-    let sent = 0;
+    let sent = reminded;
     const touched = new Set<string>();
     for (const m of res.messages) {
       const move = await deps.store.getMove(m.moveId);
@@ -286,22 +538,28 @@ export function createService(deps: ServiceDeps): Service {
       firstContact,
     });
 
-    // Acknowledge before any model call: reaction + typing + read receipt (best effort, never blocks).
+    // Acknowledge before any model call (best effort, never blocks): read receipt, then a 👍 on every text in the
+    // batch, then typing. SMS has no tapbacks, and a tapback on a tapback is noise, so those are skipped. On the
+    // shared iMessage pool Photon refuses reactions (409); the transport stops asking that space after the first.
     const ack = (async () => {
-      try {
-        await deps.transport.react(
-          { spaceId: last.spaceId, senderId: last.agentId, messageId: last.id },
-          "👍",
-          sendKey("react", last.id),
-        );
-        counters.reactions++;
-      } catch (err) {
-        log.debug("reaction not sent", { error: String(err) });
-      }
       try {
         await deps.transport.read(last.id, sendKey("read", last.id));
       } catch (err) {
         log.debug("read receipt not sent", { error: String(err) });
+      }
+      for (const m of batch.messages) {
+        if (m.platform === "sms" || (m.reaction && !m.text && !m.attachments.length)) continue;
+        try {
+          await deps.transport.react(
+            { spaceId: m.spaceId, senderId: m.agentId, messageId: m.id },
+            "👍",
+            sendKey("react", m.id),
+          );
+          counters.reactions++;
+        } catch (err) {
+          log.debug("reaction not sent", { error: String(err) });
+          break;
+        }
       }
       try {
         await deps.transport.typing(last.spaceId, last.agentId, true);
@@ -421,17 +679,44 @@ export function createService(deps: ServiceDeps): Service {
           log.debug("send already recorded; skipping", { key });
           continue;
         }
-        try {
-          const sent = await deps.transport.send(
+        const bare = reply.text.trim();
+        if (!bare) {
+          log.error("empty reply; nothing sent", { traceId, key, elf: elf.name });
+          continue;
+        }
+        const text = withHeader(reply.elf ?? elf.name, bare);
+        const outbound = (t: string, k: string) =>
+          deps.transport.send(
             {
               spaceId: last.spaceId,
               senderId: last.agentId,
-              text: reply.text,
+              text: t,
               parentMessageId: reply.parentMessageId ?? undefined,
               format: reply.format ?? "plain",
             },
-            key,
+            k,
           );
+        try {
+          let sent: { id: string };
+          try {
+            sent = await outbound(text, key);
+          } catch (err) {
+            // Photon refused the text itself (422): a long reply goes out in pieces, at blank lines.
+            if (!(err instanceof PhotonApiError && err.status === 422 && text.length > 300)) throw err;
+            log.warn("send refused; resending in pieces", {
+              traceId,
+              key,
+              chars: text.length,
+              body: err.body,
+            });
+            const parts = chunkText(text);
+            let first: { id: string } | null = null;
+            for (let i = 0; i < parts.length; i++) {
+              const s = await outbound(parts[i] as string, `${key}:c${i}`);
+              first ??= s;
+            }
+            sent = first as { id: string };
+          }
           await deps.store.recordSend(key, sent.id);
           await deps.store.setThreadOwner(sent.id, elf.name);
           await runOnSent(reply, sent.id);
@@ -462,7 +747,12 @@ export function createService(deps: ServiceDeps): Service {
           );
         } catch (err) {
           counters.failures++;
-          log.error("send failed", { traceId, key, error: String(err) });
+          log.error("send failed", {
+            traceId,
+            key,
+            error: String(err),
+            body: err instanceof PhotonApiError ? err.body : undefined,
+          });
           await deps.store.appendEvent({
             moveId: move.id,
             type: "reply.failed",
@@ -485,7 +775,76 @@ export function createService(deps: ServiceDeps): Service {
       return k;
     };
 
+    /** The result's images, then its poll, in the sender's chat (after the reply text). */
+    const sendExtras = async (images: ElfImage[], poll: ElfPoll | undefined) => {
+      const target = { spaceId: last.spaceId, senderId: last.agentId };
+      for (const [i, img] of images.entries()) {
+        const key = sendKey("image", last.id, i);
+        if (await deps.store.getSend(key)) continue;
+        if (!deps.transport.sendImage) {
+          log.info("transport can't send images; skipped", { key, alt: img.alt });
+          continue;
+        }
+        try {
+          const sent = await deps.transport.sendImage(target, img, key);
+          await deps.store.recordSend(key, sent.id);
+          await deps.store.setThreadOwner(sent.id, elf.name);
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "image.sent",
+            payload: { elf: elf.name, messageId: sent.id, alt: img.alt, bytes: img.bytes.byteLength },
+            traceId,
+          });
+        } catch (err) {
+          counters.failures++;
+          log.error("image send failed", { key, error: String(err) });
+        }
+      }
+      if (!poll) return;
+      const key = sendKey("poll", last.id, 0);
+      if ((await deps.store.getSend(key)) || !deps.transport.sendPoll) return;
+      try {
+        const sent = await deps.transport.sendPoll(target, poll, key);
+        await deps.store.recordSend(key, sent.id);
+        await deps.store.setThreadOwner(sent.id, elf.name);
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "poll.sent",
+          payload: { elf: elf.name, messageId: sent.id, question: poll.question },
+          traceId,
+        });
+      } catch (err) {
+        // The reply text already says "Reply yes"; a refused poll (shared pool) is logged, not retried.
+        log.warn("poll refused; the text still asks", { key, error: String(err) });
+      }
+    };
+
     let n = await sendReplies(result.replies, 0);
+    await sendExtras(result.images ?? [], result.poll);
+    if (result.miniApp && deps.miniApps) {
+      try {
+        await deps.miniApps.send(participant.handle, result.miniApp.url);
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "miniapp.sent",
+          payload: { elf: elf.name, handle: participant.handle },
+          traceId,
+        });
+      } catch (err) {
+        // The text reply already went out with the plain link; the card is a bonus.
+        log.warn("mini app card not sent", { error: String(err).slice(0, 300) });
+      }
+    } else if (
+      deps.miniApps?.refresh &&
+      deps.refreshCardOn &&
+      (result.events ?? []).some((e) => deps.refreshCardOn?.has(e.type))
+    ) {
+      // The Ledger changed (a payment came in, a deposit came back): update the owner's card in place.
+      // A no-op if the owner hasn't been sent a card yet.
+      await deps.miniApps.refresh(move.ownerHandle).catch((err) => {
+        log.warn("mini app card not refreshed", { error: String(err).slice(0, 300) });
+      });
+    }
     let notes = await sendOutbound(result.outbound ?? [], 0);
 
     // Slow follow-up work (a housing search) runs after the ack is out.
@@ -562,7 +921,7 @@ export function createService(deps: ServiceDeps): Service {
     const sweepMs = deps.sweepMs ?? 10 * 60_000;
     if (sweepMs > 0) {
       const timer = setInterval(
-        () => void sweep().catch((err) => log.error("last call sweep failed", { error: String(err) })),
+        () => void sweep().catch((err) => log.error("sweep failed", { error: String(err) })),
         sweepMs,
       );
       signal.addEventListener("abort", () => clearInterval(timer));
@@ -592,10 +951,39 @@ export function createService(deps: ServiceDeps): Service {
   async function notifyOwner(moveId: string, elf: ElfName, text: string, key: string): Promise<boolean> {
     const move = await deps.store.getMove(moveId);
     if (!move) return false;
-    const sk = sendKey("notify", key);
-    if (await deps.store.getSend(sk)) return false;
-    await deliverTo(move, elf, { spaceId: move.ownerSpaceId, text }, sk, null);
-    return Boolean(await deps.store.getSend(sk));
+    // The owner may have several spaces (iMessage, SMS, a line they were re-assigned from). Newest first; the first
+    // space that accepts the text wins, so one dead line never silences the recap.
+    const spaces = (await deps.store.listParticipants(move.id))
+      .filter((p) => p.role === "owner" && p.agentUserId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((p) => p.spaceId);
+    if (!spaces.includes(move.ownerSpaceId)) spaces.push(move.ownerSpaceId);
+    const keys = spaces.map((spaceId) => sendKey("notify", `${key}:${spaceId}`));
+    for (const k of keys) if (await deps.store.getSend(k)) return false; // already delivered
+    for (const [i, spaceId] of spaces.entries()) {
+      await deliverTo(move, elf, { spaceId, text }, keys[i]!, null);
+      if (await deps.store.getSend(keys[i]!)) return true;
+      log.warn("recap not delivered to this space; trying the next", { moveId, spaceId });
+    }
+    return false;
+  }
+
+  async function deliverOutbound(
+    moveId: string,
+    elf: ElfName,
+    notes: ElfOutbound[],
+    key: string,
+  ): Promise<number> {
+    const move = await deps.store.getMove(moveId);
+    if (!move) return 0;
+    let sent = 0;
+    for (const [i, note] of notes.entries()) {
+      const sk = sendKey("outside", key, i);
+      if (await deps.store.getSend(sk)) continue;
+      await deliverTo(move, elf, note, sk, null);
+      if (await deps.store.getSend(sk)) sent++;
+    }
+    return sent;
   }
 
   return {
@@ -604,6 +992,7 @@ export function createService(deps: ServiceDeps): Service {
     run,
     sweep,
     notifyOwner,
+    deliverOutbound,
     stats: () => ({
       ...counters,
       memory: mem?.stats() ?? { kind: "off" },

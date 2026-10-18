@@ -15,6 +15,15 @@ export interface OweRow {
   owedCents: number;
   /** Loans only: the original amount, the monthly payment, and how much has been paid. */
   loan: { totalCents: number; monthlyCents: number; paidCents: number } | null;
+  /** Open payment requests (Nessie bills) behind owedCents. */
+  bills: { nickname: string; amountCents: number }[];
+}
+
+/** Something waiting for the owner's yes; the dashboard can approve or decline it by id. */
+export interface PendingRow {
+  id: string;
+  kind: string;
+  summary: string;
 }
 
 export interface LedgerView {
@@ -33,6 +42,8 @@ export interface LedgerView {
   deposits: { what: string; cents: number; dueBackAt: string | null }[];
   recent: Activity[];
   pending: string[];
+  /** The same pending actions, with ids, newest first. */
+  pendingActions: PendingRow[];
   records: number;
   /** What the move costs, what's still coming back and when (projection.ts). */
   projection: Projection;
@@ -68,13 +79,14 @@ export async function buildLedgerView(service: MoneyService, move: MoneyMove): P
               paidCents: loanEntry.amountCents - o.loanCents,
             }
           : null,
+      bills: o.bills,
     };
   });
   const people = new Map((await service.store.listPeople(move.id)).map((p) => [p.id, p.name]));
   return {
     moveId: move.id,
     ownerName: owner.name === "Owner" ? "Your" : `${owner.name}'s`,
-    asOf: new Date().toISOString(),
+    asOf: service.clock().toISOString(),
     fundCents: books.fundCents,
     owedCents: owes.reduce((a, o) => a + o.owedCents, 0),
     escrowCents: books.escrowCents,
@@ -90,6 +102,7 @@ export async function buildLedgerView(service: MoneyService, move: MoneyMove): P
       .map((e) => ({ what: e.what, cents: e.amountCents, dueBackAt: e.dueBackAt })),
     recent: books.recent.slice(0, 6),
     pending: pending.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((p) => p.summary),
+    pendingActions: pending.map((p) => ({ id: p.id, kind: p.kind, summary: p.summary })),
     records: books.records,
     projection: projectMove({ books, entries, names: people, now: service.clock() }),
     plans: planState
@@ -114,7 +127,7 @@ export function ledgerSummaryLine(v: LedgerView): string {
   if (v.owedCents) parts.push(`${fmtUsd(v.owedCents)} owed to you`);
   if (v.escrowCents) parts.push(`${fmtUsd(v.escrowCents)} in escrow`);
   if (v.depositsOutCents) parts.push(`${fmtUsd(v.depositsOutCents)} in deposits out`);
-  return parts.length ? `${cap(parts.join(", "))}.` : "Nothing on the Ledger yet.";
+  return parts.length ? `${cap(parts.join(", "))}.` : "Nothing here yet.";
 }
 
 function cap(s: string) {

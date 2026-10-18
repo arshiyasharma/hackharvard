@@ -1,4 +1,5 @@
 import type { DealMode, ElfName, ItemOutcome, Role } from "@elves/shared";
+import { BUYER, SELLER, type Voice } from "./voice.ts";
 
 /**
  * What changes between the four modes. Everything else (the state machine, negotiation, scheduling, Scam Shield,
@@ -30,6 +31,10 @@ export interface ModePolicy {
   maxRounds: number;
   /** Does Last Call apply (anything we are getting rid of before move-out)? */
   lastCall: boolean;
+  /** A time the counterparty picks is put to the owner before it is booked (viewings), not booked on the spot. */
+  ownerConfirmsSlot: boolean;
+  /** The phrases for this side of the table: SELLER when a stranger texts in about ours, BUYER when we want theirs. */
+  voice: Voice;
 }
 
 export const POLICIES: Record<DealMode, ModePolicy> = {
@@ -48,6 +53,8 @@ export const POLICIES: Record<DealMode, ModePolicy> = {
     concession: 0.5,
     maxRounds: 2,
     lastCall: true,
+    ownerConfirmsSlot: false,
+    voice: SELLER,
   },
   buy_item: {
     mode: "buy_item",
@@ -64,6 +71,9 @@ export const POLICIES: Record<DealMode, ModePolicy> = {
     concession: 0.5,
     maxRounds: 2,
     lastCall: false,
+    ownerConfirmsSlot: false,
+    // Still the original copy; BUYER fits this mode too and is a one-word change once its flow is reviewed.
+    voice: SELLER,
   },
   sublet_out: {
     mode: "sublet_out",
@@ -80,6 +90,8 @@ export const POLICIES: Record<DealMode, ModePolicy> = {
     concession: 0.34,
     maxRounds: 2,
     lastCall: false,
+    ownerConfirmsSlot: true,
+    voice: SELLER,
   },
   find_sublet: {
     mode: "find_sublet",
@@ -96,6 +108,8 @@ export const POLICIES: Record<DealMode, ModePolicy> = {
     concession: 0.34,
     maxRounds: 2,
     lastCall: false,
+    ownerConfirmsSlot: true,
+    voice: BUYER,
   },
 };
 

@@ -1,5 +1,5 @@
 /**
- * Move Plans (decision #53): three ways to run the rest of the move, each with a projected cost and the chance of
+ * Move Plans (decision #66): three ways to run the rest of the move, each with a projected cost and the chance of
  * finishing under the owner's budget.
  *
  * A plan says, for every listed item, whether to sell it at the list price (Last Call drops it on schedule),
@@ -93,7 +93,7 @@ export interface PlanStats {
 }
 
 export type PlanLabel = "A" | "B" | "C";
-/** Named from the final numbers, so a name never overclaims (decision #53). */
+/** Named from the final numbers, so a name never overclaims (decision #66). */
 export type PlanName = "best odds" | "cheapest" | "runner-up" | "least effort";
 
 export interface Plan {

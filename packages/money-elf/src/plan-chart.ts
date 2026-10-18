@@ -1,5 +1,5 @@
 /**
- * Move Plans as pictures (decision #53):
+ * Move Plans as pictures (decision #66):
  * - planRace: each plan's spread of possible final costs as a curve, with the budget line and the under-budget
  *   side shaded, so "which plan is likely to land under $X" reads at a glance.
  * - planGrid: what each plan does with each item, plus the truck and movers.
@@ -28,15 +28,19 @@ export interface Font {
   family: string;
 }
 
-/** Card colors. A function, not a constant: ledger-card.ts and this file import each other. */
+/**
+ * Card colors in the Elves Ledger system (decision #64): the plans are three ink tones, since green means money in,
+ * amber means waiting and lime is kept for "projected". A function, not a constant: ledger-card.ts and this file
+ * import each other.
+ */
 export function cardColors(): PlanColors {
   return {
-    series: [C.fund, C.escrow, C.owed],
+    series: [C.ink, "#6B6C64", "#A9A89F"],
     grid: C.line,
     text: C.ink,
     muted: C.muted,
-    bg: C.card,
-    shade: C.fundBg,
+    bg: C.surface,
+    shade: C.fill,
   };
 }
 
@@ -246,64 +250,78 @@ export function planPath(
 }
 
 const W = 1080;
-const PAD = 64;
+const PAD = 56;
 
-/** The picture sent with the draft: the race between the plans, then the decision grid. */
+function panelRect(x: number, y: number, w: number, h: number) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="32" fill="${C.surface}" stroke="${C.line}" stroke-width="2"/>`;
+}
+
+/** The picture sent with the draft, in the Elves Ledger system: the race between the plans, then the grid. */
 export function plansCardSvg(state: PlanState): string {
   const parts: string[] = [];
-  let y = PAD + 64;
-  parts.push(text(PAD, y, "Move Plans", 60, 700, C.ink));
-  y += 56;
+  const inner = W - 2 * PAD;
+  const colors = cardColors();
+  const f = { size: 24, family: "Inter" };
+  let y = PAD + 44;
+  parts.push(text(PAD, y, "Move Plans", 32, 600, C.ink));
+  parts.push(text(W - PAD, y, "estimates, not quotes", 24, 500, C.muted, "end"));
+  y += 70;
   parts.push(
     text(
       PAD,
       y,
-      `under ${fmtUsd(state.budgetCents)} · move-out ${fmtDate(state.moveOutDate)} · estimates, not quotes`,
+      `Under ${fmtUsd(state.budgetCents)} · move-out ${fmtDate(state.moveOutDate)}`,
       28,
-      400,
+      500,
       C.muted,
     ),
   );
-  y += 40;
-  const f = { size: 26, family: "Inter" };
+  y += 36;
+
+  const raceH = 440;
+  parts.push(panelRect(PAD, y, inner, raceH));
   parts.push(
     planRace(
       state.drafts,
       state.budgetCents,
-      { x: PAD + 8, y, w: W - 2 * PAD - 16, h: 420 },
-      cardColors(),
+      { x: PAD + 36, y: y + 28, w: inner - 72, h: raceH - 56 },
+      colors,
       f,
     ),
   );
-  y += 420 + 56;
-  parts.push(text(PAD, y, "WHAT EACH PLAN DOES", 26, 700, C.muted));
-  y += 16;
-  const grid = planGrid(state.drafts, { x: PAD, y, w: W - 2 * PAD }, cardColors(), f);
+  y += raceH + 56;
+
+  parts.push(text(PAD + 4, y, "What each plan does", 26, 600, C.ink));
+  y += 24;
+  const grid = planGrid(state.drafts, { x: PAD + 36, y: y + 16, w: inner - 72 }, colors, f);
+  parts.push(panelRect(PAD, y, inner, grid.h + 48));
   parts.push(grid.svg);
-  y += grid.h + 48;
+  y += grid.h + 48 + 52;
   parts.push(
     text(
-      PAD,
+      W / 2,
       y,
-      `% = chance of finishing under budget, from ${2000} simulated moves per plan.`,
-      24,
+      `% = chance of finishing under budget, from 2,000 simulated moves per plan`,
+      22,
       400,
       C.muted,
+      "middle",
     ),
   );
   y += 34;
   parts.push(
     text(
-      PAD,
+      W / 2,
       y,
-      `Trucks from a rate table (${ASSUMPTIONS.trucks.map((t) => `${t.size} ${fmtUsd(t.cents)}`).join(", ")}).`,
-      24,
+      `Trucks from a rate table: ${ASSUMPTIONS.trucks.map((t) => `${t.size} ${fmtUsd(t.cents)}`).join(" · ")}`,
+      22,
       400,
       C.muted,
+      "middle",
     ),
   );
-  const H = Math.round(y + 24 + PAD);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${C.bg}"/><rect x="24" y="24" width="${W - 48}" height="${H - 48}" rx="44" fill="${C.card}"/>${parts.join("")}</svg>`;
+  const H = Math.round(y + PAD);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${C.canvas}"/>${parts.join("")}</svg>`;
 }
 
 export function renderPlansPng(state: PlanState): Promise<Uint8Array<ArrayBuffer>> {

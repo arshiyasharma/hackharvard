@@ -24,11 +24,13 @@ export type Intent =
   | { kind: "add_contact"; name: string; handle: string }
   | { kind: "ledger" }
   | { kind: "scam_check" }
-  /** Move Plans (decision #53). budgetCents null: reuse the last budget, or ask for one. */
+  /** Move Plans (decision #66). budgetCents null: reuse the last budget, or ask for one. */
   | { kind: "plan_draft"; budgetCents: number | null }
   | { kind: "plan_choose"; label: "A" | "B" | "C" }
   | { kind: "plan_status" }
   | { kind: "plan_cancel" }
+  /** The owner wants to correct or undo something already on the Ledger ("the truck was actually $260"). */
+  | { kind: "fix" }
   | { kind: "other" };
 
 /**
@@ -162,6 +164,13 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
 
   if (/\b(scam|legit|sketchy|suspicious|fishy|safe to pay|real\?)\b/i.test(t)) return { kind: "scam_check" };
 
+  if (
+    /\b(was actually|is actually|should('ve| have)? been|that'?s wrong|is wrong|was wrong|wrong amount|mistake|typo|undo|fix (the|that|it|my)|correct (the|that|it)|edit (the|that|my)|change (the|that|my) (amount|split|share|deposit|truck|ledger))\b/i.test(
+      t,
+    )
+  )
+    return { kind: "fix" };
+
   const depositPaid = /\b(paid|put down|sent|gave|left|put)\b/i.test(t) && !!amounts[0];
   const dueBack = /\b(due back|back by|returned by|refund(ed)? by|get it back|back on)\b/i.test(t);
   if (
@@ -251,7 +260,7 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     return { kind: "mark_paid", person: null, what: costLabel(t), amountCents: amounts[0] ?? null };
 
   if (
-    /\b(ledger|the books|show me the money|who owes|owe|owes|balance|how much|totals?|money (status|update)|where('?s| is) the money)\b/i.test(
+    /\b(dashboard|my money|how('?s| is| am i doing (with|on)) (my )?money|money (overview|summary|picture|status|update)|where do i stand|ledger|the books|show me the money|who owes|owe|owes|balance|how much|totals?|where('?s| is) the money)\b/i.test(
       lower,
     )
   )
@@ -300,6 +309,7 @@ const LlmIntent = z.object({
     "add_contact",
     "ledger",
     "scam_check",
+    "fix",
     "other",
   ]),
   amountDollars: z.number().nullable().describe("the dollar amount the sender wrote, exactly; null if none"),
@@ -329,8 +339,9 @@ The owner of the move is "me". Kinds:
 - pay_person: the owner wants to send someone money
 - pickup_confirmed / pickup_failed: a buyer picked up a sold item, or the pickup fell through
 - add_contact: a person's phone number
-- ledger: asks about balances, who owes what, totals
+- ledger: asks to see the dashboard, their money, balances, who owes what, or totals
 - scam_check: asks whether something is a scam or forwards a suspicious message
+- fix: wants to correct, change or undo something already on the Ledger ("the truck was actually $260", "undo that")
 Only report an amount the sender actually wrote. Never invent people or amounts.`;
 
 /** LLM-first parse with the rule parser as the backup; any LLM amount not in the text is rejected. */
@@ -398,6 +409,8 @@ export async function parseIntent(
       case "pickup_confirmed":
       case "pickup_failed":
         return { kind: r.kind, item: r.item };
+      case "fix":
+        return { kind: "fix" };
       case "ledger":
       case "scam_check":
         return { kind: r.kind };

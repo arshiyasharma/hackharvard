@@ -20,7 +20,7 @@ export type RecordTag =
   | "escrow_release"
   | "escrow_refund"
   | "payment"
-  /** Move Plans (decision #54): expected sale money into the Moving Fund, a pending deposit. */
+  /** Move Plans (decision #67): expected sale money into the Moving Fund, a pending deposit. */
   | "plan_in"
   /** Move Plans: an expected cost (truck, movers), a pending withdrawal on the owner's account. */
   | "plan_out";
@@ -102,6 +102,9 @@ export interface Activity {
   account: "you" | "fund" | "escrow";
   direction: "in" | "out";
   tag: RecordTag;
+  /** The Nessie record behind it (a deposit, withdrawal or purchase id), for the dashboard's detail sheet. */
+  recordId: string;
+  kind: "deposit" | "withdrawal" | "purchase";
 }
 
 export function untagged(description: string): string {
@@ -110,10 +113,10 @@ export function untagged(description: string): string {
 
 function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
   const out: Activity[] = [];
-  for (const [list, direction] of [
-    [r.deposits, "in"],
-    [r.withdrawals, "out"],
-    [r.purchases, "out"],
+  for (const [list, direction, kind] of [
+    [r.deposits, "in", "deposit"],
+    [r.withdrawals, "out", "withdrawal"],
+    [r.purchases, "out", "purchase"],
   ] as const) {
     for (const x of list) {
       const t = readTag(x.description);
@@ -125,6 +128,8 @@ function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
           account,
           direction,
           tag: t.tag,
+          recordId: x.id,
+          kind,
         });
     }
   }
@@ -173,7 +178,15 @@ export async function readBooks(store: MoneyStore, rails: MoneyRails, moveId: st
   const owner = people.find((p) => p.role === "owner");
   const fundId = await store.getFundAccount(moveId);
   const escrowId = await store.getEscrowAccount(moveId);
-  const read = (id: string | null | undefined) => (id ? rails.readAccount(id) : Promise.resolve(null));
+  // Records corrected away in the mini app (status "cancelled") no longer count anywhere.
+  const live = (r: AccountRecords): AccountRecords => ({
+    ...r,
+    withdrawals: r.withdrawals.filter((x) => x.status !== "cancelled"),
+    deposits: r.deposits.filter((x) => x.status !== "cancelled"),
+    purchases: r.purchases.filter((x) => x.status !== "cancelled"),
+  });
+  const read = (id: string | null | undefined) =>
+    id ? rails.readAccount(id).then(live) : Promise.resolve(null);
   const others = people.filter((p) => p.role !== "owner" && p.nessieAccountId);
   const [ownerRecs, fundRecs, escrowRecs, ...otherRecs] = await Promise.all([
     read(owner?.nessieAccountId),

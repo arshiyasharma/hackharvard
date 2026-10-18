@@ -4,10 +4,13 @@ import {
   type AttachmentFile,
   type InboundMessage,
   normalizePhotonMessage,
+  type OutboundImage,
+  type OutboundPoll,
+  type OpenedSpace,
   type OutboundReply,
   type Transport,
 } from "./transport.ts";
-import type { MessageEventData, PhotonEvent, PhotonMessage } from "./types.ts";
+import type { MessageEventData, PhotonEvent, PhotonMessage, PhotonUserSnapshot } from "./types.ts";
 
 export interface Photon2TransportOptions {
   client: PhotonClient;
@@ -22,6 +25,11 @@ export interface Photon2TransportOptions {
     set(name: string, value: string): Promise<void>;
   };
   platform?: string;
+  /**
+   * The agent user id of the project's dedicated line (PHOTON_DEDICATED_AGENT_ID), which `openSpace` sends as.
+   * Unset: discovered once from the project's agent users (`details.type === "dedicated"`) and its resources.
+   */
+  dedicatedAgentId?: string;
   logger?: Logger;
 }
 
@@ -62,9 +70,13 @@ export class Photon2Transport implements Transport {
   private readonly since: string;
   private readonly cursor: Photon2TransportOptions["cursor"];
   private readonly platform?: string;
+  private readonly dedicatedAgentId?: string;
+  private dedicated?: Promise<{ id: string; handle: string | null }>;
   private readonly log: Logger;
   /** Spaces where Photon refused a threaded reply (409 SPACE_NOT_SENDABLE); later sends go flat. */
   readonly noThreads = new Set<string>();
+  /** Spaces where Photon refused a reaction (the shared pool does); they are not asked again. */
+  readonly noReactions = new Set<string>();
   /** Bounded set of handled message ids so overlapping polls or replays are idempotent. */
   private seen = new Set<string>();
   private seenOrder: string[] = [];
@@ -76,6 +88,7 @@ export class Photon2Transport implements Transport {
     this.since = opts.since ?? new Date(Date.now() - 5_000).toISOString();
     this.cursor = opts.cursor;
     this.platform = opts.platform;
+    this.dedicatedAgentId = opts.dedicatedAgentId;
     this.log = opts.logger ?? createLogger("photon2");
   }
 
@@ -258,8 +271,76 @@ export class Photon2Transport implements Transport {
       throw err;
     }
   }
+  async sendImage(target: { spaceId: string; senderId: string }, image: OutboundImage, key: string) {
+    const att = await this.client.uploadAttachment(image, `${key}:upload`);
+    const res = await this.client.sendAttachment({ ...target, attachmentId: att.id }, key);
+    return { id: res.id };
+  }
+  async sendPoll(target: { spaceId: string; senderId: string }, poll: OutboundPoll, key: string) {
+    const res = await this.client.sendPoll({ ...target, ...poll }, key);
+    return { id: res.id };
+  }
+  /** The dedicated line's agent user, resolved once; a failed lookup is retried on the next call. */
+  private dedicatedLine(): Promise<{ id: string; handle: string | null }> {
+    if (!this.dedicated) {
+      this.dedicated = this.resolveDedicatedLine().catch((err) => {
+        this.dedicated = undefined;
+        throw err;
+      });
+    }
+    return this.dedicated;
+  }
+
+  private async resolveDedicatedLine(): Promise<{ id: string; handle: string | null }> {
+    const agents = await this.client.listUsers({ kind: "agent", pageSize: 100 });
+    const byId = (id: string) => agents.items.find((u) => u.id === id);
+    if (this.dedicatedAgentId) {
+      return { id: this.dedicatedAgentId, handle: byId(this.dedicatedAgentId)?.handle ?? null };
+    }
+    const dedicated = agents.items.filter((u) => u.details?.type === "dedicated");
+    let pick: PhotonUserSnapshot | undefined = dedicated.length === 1 ? dedicated[0] : undefined;
+    if (!pick && dedicated.length > 1) {
+      // Several dedicated agents: the one whose line resource is active.
+      const { resources } = await this.client.listResources();
+      const active = new Set(
+        resources
+          .filter(
+            (r) =>
+              /dedicated/i.test(`${r.type} ${JSON.stringify(r.detail)}`) && /active|ready/i.test(r.state),
+          )
+          .map((r) => r.resourceId),
+      );
+      pick = dedicated.find((u) => u.details?.resourceId && active.has(u.details.resourceId)) ?? dedicated[0];
+    }
+    if (!pick) {
+      throw new Error(
+        "no dedicated Photon line: set PHOTON_DEDICATED_AGENT_ID or provision one (bun run photon provision-dedicated); the shared pool cannot text first",
+      );
+    }
+    this.log.info("dedicated line resolved", { agentId: pick.id, handle: pick.handle });
+    return { id: pick.id, handle: pick.handle ?? null };
+  }
+
+  async openSpace(handle: string, platform: string): Promise<OpenedSpace> {
+    const line = await this.dedicatedLine();
+    const user = await this.client.createOrGetUser(handle, platform);
+    const space = await this.client.createOrGetSpace(
+      [line.id, user.id],
+      platform,
+      `space:${line.id}:${user.id}`,
+    );
+    return { spaceId: space.id, senderId: line.id, senderHandle: line.handle };
+  }
+
   async react(target: { spaceId: string; senderId: string; messageId: string }, emoji: string, key: string) {
-    await this.client.react({ ...target, reaction: emoji }, key);
+    if (this.noReactions.has(target.spaceId)) throw new Error(`reactions refused in ${target.spaceId}`);
+    try {
+      await this.client.react({ ...target, reaction: emoji }, key);
+    } catch (err) {
+      if (err instanceof PhotonApiError && err.status === 409 && err.code === "SPACE_NOT_SENDABLE")
+        this.noReactions.add(target.spaceId);
+      throw err;
+    }
   }
   async typing(spaceId: string, senderId: string, on: boolean) {
     await this.client.setTyping(spaceId, senderId, on);

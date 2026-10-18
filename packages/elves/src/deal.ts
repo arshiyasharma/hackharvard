@@ -6,7 +6,9 @@ import {
   ownerTurn,
   partyForText,
   policyFor,
+  price,
   type TurnResult,
+  whichListing,
 } from "@elves/engine";
 import type { DealParty } from "@elves/shared";
 import {
@@ -28,7 +30,9 @@ import {
 const COUNTERPARTY_SYSTEM = `You are an Elf on a moving crew, texting with someone about a deal the crew is handling for its owner (selling or buying an item, or a room). You speak for the crew, not as the owner.
 
 Rewrite the draft reply as one text message:
-- Plain text, 1 to 2 short lines, no markdown, no emoji.
+- Plain text, 1 to 3 short lines, no markdown. Warm and quick, like a person texting back, never a form.
+- A blank line before the question, and the question is the last line on its own.
+- At most ONE emoji, at the start of a line: ✅ when something is agreed or booked, ❓ before the question. None in prices or times. Never introduce yourself: the text goes out under a header naming the Elf.
 - Keep every price, time, slot number and address in the draft exactly as written. Never add a price, discount, time or promise that is not in the draft.
 - If their message asked a simple question about the item and the listing facts answer it (condition, size, color), answer it in a few words, then say the draft's point.
 - Payment only ever goes through Elves escrow; never suggest cash apps, checks or wires.
@@ -36,9 +40,10 @@ Rewrite the draft reply as one text message:
 
 const DOLLARS = /\$\s?\d[\d,]*(?:\.\d{1,2})?/g;
 
-/** A redraft may only use dollar amounts the engine already chose. */
-export function keepsNumbers(template: string, draft: string): boolean {
-  const allowed = new Set((template.match(DOLLARS) ?? []).map((d) => d.replace(/[\s,]/g, "")));
+/** A redraft may only use dollar amounts the engine already chose: those in its draft, or in the facts it was given. */
+export function keepsNumbers(template: string, draft: string, facts: unknown = null): boolean {
+  const source = facts ? `${template} ${JSON.stringify(facts)}` : template;
+  const allowed = new Set((source.match(DOLLARS) ?? []).map((d) => d.replace(/[\s,]/g, "")));
   return (draft.match(DOLLARS) ?? []).every((d) => allowed.has(d.replace(/[\s,]/g, "")));
 }
 
@@ -50,12 +55,34 @@ async function voice(ctx: ElfContext, m: EngineMessage, theirText: string): Prom
       user: `${memoryPreamble(ctx.conversation)}\n\nListing facts (JSON):\n${JSON.stringify(m.facts)}\n\nTheir latest message(s):\n"""${theirText}"""\n\nDraft reply (keep its numbers):\n"""${m.text}"""\n\nWrite the text.`,
       maxTokens: 200,
     });
-    if (draft && keepsNumbers(m.text, draft)) return draft;
+    if (draft && keepsNumbers(m.text, draft, m.facts)) return draft;
     ctx.log.warn("deal draft changed the numbers; using the engine's words", { kind: m.kind });
   } catch (err) {
     ctx.log.warn("deal draft failed; using the engine's words", { error: String(err) });
   }
   return m.text;
+}
+
+/** Owner-facing engine lines get one signpost emoji by kind, so the owner's chat reads like the rest of the crew's texts. */
+const OWNER_LEAD: Record<string, string> = {
+  ask: "❓",
+  booked: "✅",
+  owner_yes: "✅",
+  agreed: "🤝",
+  counter: "💬",
+  owner_counter: "💬",
+  owner_no: "💬",
+  scam: "🚨",
+  walked: "↩️",
+  handed_off: "🎉",
+  reschedule: "🔁",
+  slot_declined: "🔁",
+  slot_taken: "🔁",
+  join: "👋",
+};
+function ownerText(m: EngineMessage): string {
+  const lead = OWNER_LEAD[m.kind];
+  return lead && !/^\p{Extended_Pictographic}/u.test(m.text) ? `${lead} ${m.text}` : m.text;
 }
 
 /** Turn the engine's messages into replies (this space) and outbound texts (other spaces). */
@@ -95,10 +122,15 @@ async function deliver(ctx: ElfContext, r: TurnResult, here: { partyId: string |
         if (p) outbound.push({ spaceId: p.spaceId, text: m.text, parentMessageId: null });
       }
     } else if (inOwnerChat) {
-      replies.push({ text: m.text, parentMessageId: lastMessageId(ctx.batch), onSent });
+      replies.push({ text: ownerText(m), parentMessageId: lastMessageId(ctx.batch), onSent });
     } else {
       const deal = m.dealId === r.deal.id ? r.deal : await ctx.store.getDeal(m.dealId);
-      outbound.push({ spaceId: ctx.move.ownerSpaceId, text: m.text, parentMessageId: deal?.ownerThreadId ?? null, onSent });
+      outbound.push({
+        spaceId: ctx.move.ownerSpaceId,
+        text: ownerText(m),
+        parentMessageId: deal?.ownerThreadId ?? null,
+        onSent,
+      });
     }
   }
 
@@ -120,12 +152,36 @@ async function deliver(ctx: ElfContext, r: TurnResult, here: { partyId: string |
 export async function handleCounterparty(ctx: ElfContext): Promise<ElfResult> {
   const text = batchText(ctx.batch);
   const last = ctx.batch.messages[ctx.batch.messages.length - 1];
+  const hadParties = (await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)).length > 0;
   const party = await partyForText(ctx.store, ctx.participant.spaceId, text, {
     handle: ctx.participant.handle,
     platform: ctx.participant.platform,
     agentUserId: last?.agentId ?? ctx.participant.agentUserId,
   });
   if (!party) {
+    // A stranger who has not picked a listing yet: say what is on offer (names and asking prices only).
+    if (!(await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)).length) {
+      const options = await whichListing(ctx.store, ctx.move.id, ctx.participant.spaceId);
+      if (options.length) {
+        const list = options
+          .map((d, i) => `${i + 1}) ${d.title}, ${price(d.askCents, policyFor(d.mode).unit)}`)
+          .join("\n");
+        return {
+          replies: [
+            {
+              text: `Hi! Which one are you asking about?\n${list}\nReply with the name or the number.`,
+              parentMessageId: lastMessageId(ctx.batch),
+            },
+          ],
+          events: [
+            {
+              type: "inquiry.asked",
+              payload: { spaceId: ctx.participant.spaceId, dealIds: options.map((d) => d.id) },
+            },
+          ],
+        };
+      }
+    }
     const titles: string[] = [];
     for (const row of await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)) {
       const deal = await ctx.store.getDeal(row.dealId);
@@ -139,7 +195,15 @@ export async function handleCounterparty(ctx: ElfContext): Promise<ElfResult> {
       replies: [{ text: which, parentMessageId: lastMessageId(ctx.batch) }],
     };
   }
-  const r = await counterpartyTurn({ store: ctx.store, move: ctx.move, party, text, clock: { now: ctx.now() } });
+  // A bare "2" that only picked a listing from our "which one?" list is not a $2 offer.
+  const picked = !hadParties && /^#?\d{1,2}[.)]?$/.test(text.trim());
+  const r = await counterpartyTurn({
+    store: ctx.store,
+    move: ctx.move,
+    party,
+    text: picked ? "is it still available?" : text,
+    clock: { now: ctx.now() },
+  });
   if (ctx.signal.aborted) return { replies: [] };
   return deliver(ctx, r, { partyId: party.id });
 }

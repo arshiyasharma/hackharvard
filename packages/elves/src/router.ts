@@ -1,18 +1,31 @@
-import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
+import { codesIn, isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
-import type { ElfName, Role, Store } from "@elves/shared";
+import {
+  type ElfName,
+  onboardingActive,
+  onboardingKey,
+  parseOnboardingState,
+  type Role,
+  type Store,
+} from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
-import { parsePriceCents } from "./intake.ts";
+import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
+import { parsePriceCents, pendingListings, REF_ASK, wantsListing } from "./intake.ts";
 
 export type RouteVia =
+  | "poll"
   | "first_contact"
+  | "onboarding"
   | "counterparty"
   | "thread"
   | "deal"
   | "followup"
+  | "scope"
+  | "delegate"
   | "photo"
   | "price"
   | "llm"
@@ -54,13 +67,32 @@ export function keywordRoute(text: string, elves: Elf[]): { elf: ElfName; score:
   return best;
 }
 
+/** The Elves whose keywords a text hits, in the order given; more than one means the work spans them. */
+export function delegatesFor(text: string, elves: Elf[]): ElfName[] {
+  return elves.filter((e) => keywordScore(text, e.keywords) > 0).map((e) => e.name);
+}
+
 /** Thread-owner key for "the Elf that last replied in this space" (the shared pool has no real threads). */
 export function spaceOwnerKey(spaceId: string): string {
   return `space:${spaceId}`;
 }
 
+/** Asking to see the Money Elf's dashboard, which skips the Crew Lead's first-contact hello. */
+const DASHBOARD_ASK = /\b(dashboard|ledger)\b/i;
+
 /** Roles that text in about a deal; everyone else is crew. */
 const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
+
+/**
+ * Move Plans texts, the Money Elf's (decision #66). Mirrors parsePlanIntent in packages/money-elf/src/parse.ts;
+ * the router can't import it (the Money Elf package depends on this one). "Payment plan" is a roommate loan and
+ * already reaches the Money Elf by keyword.
+ */
+const MOVE_PLAN_ASK =
+  /\bplan (out )?(my|the|this) move\b|\bmove plans?\b|\bkeep (this|the|my) move under\b|\b(what|which) plan am i on\b|\bplan status\b|\b(go with|pick|choose|switch(?: me)? to|take|let'?s do)\s+plan\s+[abc]\b|\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i;
+/** A bare plan pick ("B", "go with C"): only right after the Money Elf sent plans. */
+const PLAN_PICK =
+  /^\s*(?:plan\s+)?[abc]\s*[.!]?\s*$|^\s*(?:go with|pick|choose|switch(?: me)? to|take)\s+[abc]\s*[.!]?\s*$/i;
 
 /**
  * Crew Lead routing: a counterparty (a buyer texting about a listing) always goes to the Elf that owns their
@@ -73,20 +105,70 @@ export async function route(
   deps: RouterDeps,
   opts: { firstContact: boolean; moveId?: string; role?: Role },
 ): Promise<RouteDecision> {
+  // A tap on a poll goes back to the Elf that sent it: option ids start with that Elf's name ("money:approve:…").
+  for (const m of [...batch.messages].reverse()) {
+    const id = m.pollVote?.selectedOptions[0]?.id ?? "";
+    const owner = deps.elves.find((e) => id.startsWith(`${e.name}:`));
+    if (owner) return { elf: owner.name, via: "poll", confidence: 1 };
+  }
   if (opts.role && COUNTERPARTY_ROLES.includes(opts.role)) {
-    const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
+    let elf = await counterpartyElf(deps, batch.spaceId);
+    if (!elf)
+      for (const code of codesIn(batchText(batch))) {
+        const deal = await deps.store.getDealByCode(code);
+        if (deal) {
+          elf = policyFor(deal.mode).elf;
+          break;
+        }
+      }
+    elf ??= "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
+  // "show me the dashboard" as the first text (a new phone, or after a restart) still opens the dashboard.
+  if (opts.firstContact && DASHBOARD_ASK.test(batchText(batch)) && deps.elves.some((e) => e.name === "money"))
+    return { elf: "money", via: "first_contact", confidence: 1 };
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
+  // Until the owner confirms the brief, every owner text is part of the onboarding call.
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && deps.elves.some((e) => e.name === "crew_lead")) {
+    const state = parseOnboardingState(await deps.store.getCursor(onboardingKey(opts.moveId)));
+    if (onboardingActive(state)) return { elf: "crew_lead", via: "onboarding", confidence: 1 };
+  }
+
+  const text = batchText(batch);
+  // Move Plans ("plan my move under $300", "go with plan B", "what plan am I on") go to the Money Elf, before
+  // "status" and the price rules can claim them. Polls are refused on the shared pool, so picks come as text.
+  if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch) && deps.elves.some((e) => e.name === "money")) {
+    if (MOVE_PLAN_ASK.test(text)) return { elf: "money", via: "scope", confidence: 1 };
+    if (PLAN_PICK.test(text) && (await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId))) === "money")
+      return { elf: "money", via: "followup", confidence: 0.95 };
+  }
+  // "status" is the Home Elf's (it has the checklist and the sublet); "what can you do?" is the Crew Lead's.
+  // Both are answered from any thread.
+  if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch)) {
+    if (isStatusAsk(text) && deps.elves.some((e) => e.name === "home"))
+      return { elf: "home", via: "scope", confidence: 1 };
+    if (isCapabilitiesQuestion(text) && deps.elves.some((e) => e.name === "crew_lead"))
+      return { elf: "crew_lead", via: "scope", confidence: 1 };
+  }
+
+  // "status" and "what can you do?" are the Crew Lead's, from any thread.
+  const asked = batchText(batch);
+  if (
+    (opts.role ?? "owner") === "owner" &&
+    !hasPhotos(batch) &&
+    (isStatusAsk(asked) || isCapabilitiesQuestion(asked)) &&
+    deps.elves.some((e) => e.name === "crew_lead")
+  )
+    return { elf: "crew_lead", via: "scope", confidence: 1 };
 
   for (const m of [...batch.messages].reverse()) {
     if (m.parentMessageId) {
       const owner = await deps.store.getThreadOwner(m.parentMessageId);
-      if (owner) return { elf: owner, via: "thread", confidence: 1 };
+      if (owner && deps.elves.some((e) => e.name === owner))
+        return { elf: owner, via: "thread", confidence: 1 };
     }
   }
 
-  const text = batchText(batch);
   // "keep the couch" / "no last call" holds a price; the Elf that owns the deal records it.
   if (opts.moveId && lastCallHold(text)) {
     const open = (await deps.store.listDeals(opts.moveId)).find(
@@ -110,6 +192,27 @@ export async function route(
       }
     }
   }
+  // "yes" / "no" right after the Money Elf asked for an OK answers the Money Elf, not the classifier.
+  if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "money" && deps.elves.some((e) => e.name === "money"))
+      return { elf: "money", via: "followup", confidence: 0.9 };
+  }
+  // "list it", "post it", "yes" while an item with a floor is waiting to be listed: the Stuff Elf opens the deal
+  // and answers with the ref code. Not while Home is mid-post ("post it" is the sublet's approval there).
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && !hasPhotos(batch) && wantsListing(text)) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    const homeMidPost =
+      lastElf === "home" && (await deps.store.getSubletPost(opts.moveId))?.status === "drafted";
+    if (!homeMidPost && (await pendingListings(deps.store, opts.moveId)).length)
+      return { elf: "stuff", via: "deal", confidence: 0.95 };
+    // "what's the ref code?" once it is listed: Stuff reads it back.
+    if (
+      REF_ASK.test(text) &&
+      (await deps.store.listDeals(opts.moveId)).some((d) => d.mode === "sell_item" && isOpen(d.state))
+    )
+      return { elf: "stuff", via: "deal", confidence: 0.95 };
+  }
   // "2" after a list of picks is a pick, not a price. "search again" and a forwarded
   // listing link stay with Home when it spoke last, even with no number to pick.
   if (
@@ -120,6 +223,26 @@ export async function route(
     const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
     const hasPicks = !isHuntFollowUp(text) || (await deps.store.listListings(opts.moveId)).length > 0;
     if (lastElf === "home" && hasPicks) return { elf: "home", via: "followup", confidence: 0.95 };
+  }
+  // A date or address the Home Elf just asked for, or "done with internet" on its checklist, goes back to Home.
+  if (opts.moveId && deps.elves.some((e) => e.name === "home") && text.trim()) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const pending = await deps.store.getCursor(moveinAskKey(opts.moveId));
+      const onList =
+        !pending &&
+        parseMoveinFollowUp(text) != null &&
+        (await deps.store.listMoveinTasks(opts.moveId)).length > 0;
+      if (pending || onList) return { elf: "home", via: "followup", confidence: 0.95 };
+    }
+  }
+  // Room photos while Home is writing the owner's sublet post are for the post, not for sale.
+  if (opts.moveId && hasPhotos(batch) && deps.elves.some((e) => e.name === "home")) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "home") {
+      const post = await deps.store.getSubletPost(opts.moveId);
+      if (post && post.status !== "approved") return { elf: "home", via: "followup", confidence: 0.95 };
+    }
   }
   // Photos and bare prices are the Stuff Elf's job; no model call needed.
   if (hasPhotos(batch) && deps.elves.some((e) => e.name === "stuff"))
@@ -136,6 +259,14 @@ export async function route(
     (keywordRoute(text, deps.elves)?.elf ?? "stuff") === "stuff"
   ) {
     return { elf: "stuff", via: "price", confidence: 0.9 };
+  }
+  // One text that asks for two Elves' work ("sell the couch and find me a room"): the Crew Lead calls both.
+  if (opts.role === undefined || opts.role === "owner") {
+    const both = delegatesFor(
+      text,
+      deps.elves.filter((e) => e.name === "stuff" || e.name === "home"),
+    );
+    if (both.length === 2) return { elf: "crew_lead", via: "delegate", confidence: 0.9 };
   }
   if (!text.trim()) return { elf: "crew_lead", via: "default", confidence: 0.5 };
 

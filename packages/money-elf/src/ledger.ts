@@ -92,7 +92,7 @@ export interface PendingAction {
   createdAt: string;
 }
 
-/** One Nessie record written for the chosen plan (Move Plans, decision #54). */
+/** One Nessie record written for the chosen plan (Move Plans, decision #67). */
 export interface PlanLine {
   lineId: string;
   kind: "deposit" | "withdrawal";
@@ -105,7 +105,7 @@ export interface PlanLine {
   status: "pending" | "completed" | "cancelled";
 }
 
-/** A move's plans: the latest drafts, the chosen plan and its Nessie records. Drafts never go to Nessie (#56). */
+/** A move's plans: the latest drafts, the chosen plan and its Nessie records. Drafts never go to Nessie (#69). */
 export interface PlanState {
   budgetCents: number;
   moveOutDate: string;

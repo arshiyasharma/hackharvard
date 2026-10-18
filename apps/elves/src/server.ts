@@ -1,4 +1,5 @@
 import { type Db, pingDb } from "@elves/db";
+import { moveReport } from "@elves/elves";
 import type { MoveMemory } from "@elves/memory";
 import { ELF_LABELS, type Store } from "@elves/shared";
 import { Hono } from "hono";
@@ -15,8 +16,11 @@ export function createServer(deps: {
     signature: string | null,
   ) => Promise<{ status: number; body: Record<string, unknown> }>;
   info: Record<string, unknown>;
+  /** The Money Elf's live Ledger page (signed links); the route is off (404) when unset. */
+  ledger?: (req: Request) => Promise<Response | null>;
 }) {
   const app = new Hono();
+  app.get("/ledger/*", async (c) => (deps.ledger ? await deps.ledger(c.req.raw) : null) ?? c.notFound());
   const started = Date.now();
 
   app.get("/", (c) =>
@@ -73,6 +77,12 @@ export function createServer(deps: {
       deps.memory.notes(moveId),
     ]);
     return c.json({ kind: deps.memory.kind, threads, facts, notes });
+  });
+  /** The Move Report, rebuilt from items and deals on every request. */
+  app.get("/report/:moveId", async (c) => {
+    const move = await deps.store.getMove(c.req.param("moveId"));
+    if (!move) return c.json({ error: "not found" }, 404);
+    return c.json(moveReport(await deps.store.listItems(move.id), await deps.store.listDeals(move.id)));
   });
   app.get("/b/:moveId", async (c) => {
     const move = await deps.store.getMove(c.req.param("moveId"));

@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { allElves, keywordRoute, route, spaceOwnerKey } from "@elves/elves";
+import { allElves, keywordRoute, moveinAskKey, route, spaceOwnerKey } from "@elves/elves";
 import { FakeLLM } from "@elves/llm";
 import type { InboundMessage } from "@elves/photon";
 import type { Batch } from "@elves/pipeline";
-import { type ElfName, MemoryStore } from "@elves/shared";
+import { type ElfName, MemoryStore, subletPostDefaults } from "@elves/shared";
 
 let seq = 0;
 const batchOf = (
   text: string | null,
   parentMessageId: string | null = null,
-  attachments: { id: string }[] = [],
+  attachments: { id: string; mimeType?: string; name?: string }[] = [],
 ): Batch => {
   const m: InboundMessage = {
     id: `m${++seq}`,
@@ -53,15 +53,12 @@ const FIXTURES: [string, ElfName][] = [
   ["can we split the truck cost", "money"],
   ["is the deposit in escrow", "money"],
   ["this feels like a scam", "money"],
-  ["book storage june to august", "moveday"],
-  ["need a u-haul for the 1st", "moveday"],
-  ["do i need a moving permit", "moveday"],
-  ["hire movers for saturday", "moveday"],
-  ["what's your eta", "moveday"],
-  ["where are you, i'm at the address", "moveday"],
+  ["book storage june to august", "home"],
+  // Move-day is gone: trucks, movers and move-day logistics fall to the Crew Lead, which says the crew can't.
+  ["need a u-haul for the 1st", "crew_lead"],
+  ["hire movers for saturday", "crew_lead"],
+  ["what's your eta", "crew_lead"],
   ["can i sublet my room", "home"],
-  ["my landlord needs 30 days notice", "home"],
-  ["check this clause in the lease", "home"],
   ["looking for a room in allston under 1200", "home"],
   ["need a place for the summer, budget 900", "home"],
   ["find me a sublet in somerville under 1500", "home"],
@@ -79,11 +76,71 @@ describe("keyword routing", () => {
 });
 
 describe("route()", () => {
+  test("a bare yes or no right after the Money Elf asked goes back to the Money Elf", async () => {
+    const store = new MemoryStore();
+    const deps = { store, llm: new FakeLLM(), elves: allElves };
+    const b = batchOf("yes");
+    await store.setThreadOwner(spaceOwnerKey(b.spaceId), "money");
+    expect(await route(b, deps, { firstContact: false, moveId: "mv_1" })).toMatchObject({
+      elf: "money",
+      via: "followup",
+    });
+    expect((await route(batchOf("no"), deps, { firstContact: false, moveId: "mv_1" })).elf).toBe("money");
+    // Another Elf spoke last: the Money Elf rule doesn't apply.
+    await store.setThreadOwner(spaceOwnerKey(b.spaceId), "home");
+    expect((await route(batchOf("yes"), deps, { firstContact: false, moveId: "mv_1" })).elf).not.toBe(
+      "money",
+    );
+  });
+
+  test("Move Plans texts go to the Money Elf; a bare letter only right after it sent plans", async () => {
+    const store = new MemoryStore();
+    const deps = { elves: allElves, llm: new FakeLLM(), store };
+    const r = (t: string) => route(batchOf(t), deps, { firstContact: false, moveId: "mv_1" });
+    for (const t of [
+      "plan my move under $300",
+      "keep this move under $400",
+      "go with plan B",
+      "what plan am I on?",
+      "drop the plan",
+    ])
+      expect((await r(t)).elf).toBe("money");
+    expect((await r("B")).elf).not.toBe("money");
+    await store.setThreadOwner(spaceOwnerKey(batchOf("B").spaceId), "money");
+    expect(await r("B")).toMatchObject({ elf: "money", via: "followup" });
+    expect((await r("go with c")).elf).toBe("money");
+  });
+
+  test("a poll tap goes back to the Elf that sent the poll, before any other rule", async () => {
+    const tap: Batch = {
+      ...batchOf(null),
+      messages: [
+        {
+          ...batchOf(null).messages[0]!,
+          pollVote: { selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }] },
+        },
+      ],
+    };
+    const deps = { store: new MemoryStore(), llm: new FakeLLM(), elves: allElves };
+    expect(await route(tap, deps, { firstContact: true })).toMatchObject({ elf: "money", via: "poll" });
+    const stranger: Batch = {
+      ...tap,
+      messages: [{ ...tap.messages[0]!, pollVote: { selectedOptions: [{ id: "opt_1", text: "Yes" }] } }],
+    };
+    expect((await route(stranger, deps, { firstContact: false })).via).not.toBe("poll");
+  });
+
   const store = new MemoryStore();
   const deps = { store, llm: new FakeLLM(), elves: allElves };
-  test("first contact always goes to the Crew Lead", async () => {
+  test("first contact goes to the Crew Lead, except a dashboard ask", async () => {
     const r = await route(batchOf("sell my couch"), deps, { firstContact: true });
     expect(r).toMatchObject({ elf: "crew_lead", via: "first_contact" });
+    // Except asking for the dashboard, which the Money Elf answers even as the first text.
+    for (const t of ["show me the dashboard", "show me the ledger"])
+      expect(await route(batchOf(t), deps, { firstContact: true })).toMatchObject({
+        elf: "money",
+        via: "first_contact",
+      });
   });
   test("a reply in an Elf's thread goes to that Elf", async () => {
     await store.setThreadOwner("out_stuff", "stuff");
@@ -121,9 +178,93 @@ describe("route()", () => {
     await fresh.setThreadOwner(spaceOwnerKey("s1"), "crew_lead");
     expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
   });
+  test("status is the Home Elf's from any thread; what can you do is the Crew Lead's", async () => {
+    expect(await route(batchOf("status"), deps, { firstContact: false, moveId: "mv1" })).toMatchObject({
+      elf: "home",
+      via: "scope",
+    });
+    expect(
+      await route(batchOf("what can you do?"), deps, { firstContact: false, moveId: "mv1" }),
+    ).toMatchObject({
+      elf: "crew_lead",
+      via: "scope",
+    });
+  });
+  test("one text that asks for Stuff and Home at once goes to the Crew Lead, which calls both", async () => {
+    expect(
+      await route(batchOf("sell my couch and find me a room in allston under 1200"), deps, {
+        firstContact: false,
+      }),
+    ).toMatchObject({ elf: "crew_lead", via: "delegate" });
+    // one Elf's work still goes straight to that Elf
+    expect(
+      await route(batchOf("find me a room in allston under 1200"), deps, { firstContact: false }),
+    ).toMatchObject({
+      elf: "home",
+    });
+  });
+  test("'list it' with an item waiting on approval goes to Stuff, which opens the deal", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    await fresh.upsertItem({ moveId: move.id, name: "couch", category: "couch", floorPriceCents: 6000 });
+    const opts = { firstContact: false, moveId: move.id };
+    expect(await route(batchOf("list it"), d, opts)).toMatchObject({ elf: "stuff", via: "deal" });
+    expect(await route(batchOf("yes"), d, opts)).toMatchObject({ elf: "stuff", via: "deal" });
+    expect(await route(batchOf("what ref code do i tell the buyer"), d, opts)).toMatchObject({
+      elf: "stuff",
+      via: "deal",
+    });
+    // nothing waiting: a bare yes is not Stuff's
+    const none = await fresh.createMove({ ownerHandle: "+2", ownerSpaceId: "s2", platform: "script" });
+    expect((await route(batchOf("list it"), d, { firstContact: false, moveId: none.id })).via).not.toBe(
+      "deal",
+    );
+  });
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
-    expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
+    expect(r).toMatchObject({ elf: "home", via: "keyword" });
+  });
+  test("a room photo goes to Home while it is writing the owner's sublet post", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    const opts = { firstContact: false, moveId: move.id };
+    const photo = () => batchOf(null, null, [{ id: "att1" }]);
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "home");
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "stuff", via: "photo" });
+    await fresh.saveSubletPost({ ...subletPostDefaults(move.id), rentCents: 150000, status: "collecting" });
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.saveSubletPost({ ...subletPostDefaults(move.id), status: "approved" });
+    expect(await route(photo(), d, opts)).toMatchObject({ elf: "stuff", via: "photo" });
+  });
+  test("the answer to Home's move-in question, and checklist follow-ups, go back to Home", async () => {
+    const fresh = new MemoryStore();
+    const d = { store: fresh, llm: new FakeLLM(), elves: allElves };
+    const move = await fresh.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "script" });
+    const opts = { firstContact: false, moveId: move.id };
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "home");
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.setCursor(moveinAskKey(move.id), "date");
+    expect(await route(batchOf("june 1"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.setCursor(moveinAskKey(move.id), "address");
+    expect(await route(batchOf("12 oak st, allston"), d, opts)).toMatchObject({
+      elf: "home",
+      via: "followup",
+    });
+    await fresh.setCursor(moveinAskKey(move.id), "");
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "crew_lead" });
+    await fresh.upsertMoveinTask({
+      moveId: move.id,
+      key: "internet",
+      label: "Internet",
+      dueAt: "2026-05-22",
+    });
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    expect(await route(batchOf("got the keys"), d, opts)).toMatchObject({ elf: "home", via: "followup" });
+    await fresh.setThreadOwner(spaceOwnerKey("s1"), "stuff");
+    expect(await route(batchOf("what's left?"), d, opts)).toMatchObject({ elf: "crew_lead" });
   });
   test("a photo goes to the Stuff Elf unless it is first contact", async () => {
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({

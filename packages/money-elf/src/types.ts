@@ -146,4 +146,6 @@ export interface MoneyResult {
   images?: MoneyImage[];
   /** New: a poll sent in the sender's chat after the reply (approvals). */
   poll?: MoneyPoll;
+  /** New: an iMessage mini app card to send the sender (the Moving Ledger dashboard), via Spectrum. */
+  miniApp?: { url: string };
 }

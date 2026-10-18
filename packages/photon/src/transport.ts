@@ -14,6 +14,8 @@ export interface InboundMessage {
   text: string | null;
   attachments: { id: string; mimeType?: string; name?: string }[];
   reaction: { emoji: string; action: string } | null;
+  /** A tap on a poll we sent (`poll.vote`): the options picked, with our own option ids. */
+  pollVote?: { selectedOptions: { id: string; text: string }[] } | null;
   parentMessageId: string | null;
   receivedAt: string;
   raw?: unknown;
@@ -34,11 +36,40 @@ export interface AttachmentFile {
   filename?: string;
 }
 
+/** An image to send as its own message (uploaded first, then sent by attachment id). */
+export interface OutboundImage {
+  bytes: Uint8Array;
+  contentType: string;
+  filename?: string;
+}
+
+/** A native poll; option ids are ours and come back on InboundMessage.pollVote. */
+export interface OutboundPoll {
+  question: string;
+  options: { id: string; text: string }[];
+  selectionMode: "single" | "multiple";
+}
+
+/** A space the service opened itself (nobody texted in): where a dedicated line can message someone first. */
+export interface OpenedSpace {
+  spaceId: string;
+  /** The agent user to send as in that space: the dedicated line. */
+  senderId: string;
+  /** The dedicated line's own handle (its phone number), when the transport knows it. */
+  senderHandle: string | null;
+}
+
 export interface Transport {
   readonly name: string;
   /** Yields inbound messages until the signal aborts. Implementations must be restart-safe. */
   inbound(signal: AbortSignal): AsyncIterable<InboundMessage>;
   send(reply: OutboundReply, idempotencyKey: string): Promise<{ id: string }>;
+  /**
+   * Open (or find) the direct space between the dedicated line and `handle` on `platform`, so the crew can text
+   * someone who has never written in. Rejects when the project has no dedicated line: the shared pool only
+   * answers people who texted first.
+   */
+  openSpace(handle: string, platform: string): Promise<OpenedSpace>;
   react(
     target: { spaceId: string; senderId: string; messageId: string },
     emoji: string,
@@ -48,6 +79,18 @@ export interface Transport {
   read(messageId: string, key: string): Promise<void>;
   /** Download an inbound attachment's bytes, or null when the provider no longer has it. */
   fetchAttachment(id: string): Promise<AttachmentFile | null>;
+  /** Optional: send an image. Transports without it make the service skip images. */
+  sendImage?(
+    target: { spaceId: string; senderId: string },
+    image: OutboundImage,
+    key: string,
+  ): Promise<{ id: string }>;
+  /** Optional: send a native poll. Transports without it make the service skip polls (the text still asks). */
+  sendPoll?(
+    target: { spaceId: string; senderId: string },
+    poll: OutboundPoll,
+    key: string,
+  ): Promise<{ id: string }>;
 }
 
 function flattenContent(c: PhotonContent): PhotonContent[] {
@@ -67,6 +110,7 @@ export function normalizePhotonMessage(m: PhotonMessage): InboundMessage | null 
   const texts: string[] = [];
   const attachments: InboundMessage["attachments"] = [];
   let reaction: InboundMessage["reaction"] = null;
+  let pollVote: InboundMessage["pollVote"] = null;
   for (const p of parts) {
     if (p.type === "text" && typeof (p as { text?: unknown }).text === "string") {
       texts.push((p as { text: string }).text);
@@ -83,10 +127,22 @@ export function normalizePhotonMessage(m: PhotonMessage): InboundMessage | null 
     } else if (p.type === "reaction") {
       const r = p as { reaction: string; action: string };
       reaction = { emoji: r.reaction, action: r.action };
+    } else if (
+      p.type === "poll.vote" &&
+      Array.isArray((p as { selectedOptions?: unknown }).selectedOptions)
+    ) {
+      const picked = (p as unknown as { selectedOptions: { id?: unknown; text?: unknown }[] })
+        .selectedOptions;
+      pollVote = {
+        selectedOptions: picked
+          .filter((o) => typeof o.id === "string")
+          .map((o) => ({ id: o.id as string, text: typeof o.text === "string" ? o.text : "" })),
+      };
     }
     // message.read / space.typing.update / unknown: nothing to handle
   }
-  if (texts.length === 0 && attachments.length === 0 && !reaction) return null;
+  if (texts.length === 0 && attachments.length === 0 && !reaction && !pollVote?.selectedOptions.length)
+    return null;
   return {
     id: m.id,
     spaceId: m.space.id,
@@ -99,6 +155,7 @@ export function normalizePhotonMessage(m: PhotonMessage): InboundMessage | null 
     text: texts.length ? texts.join("\n") : null,
     attachments,
     reaction,
+    pollVote,
     parentMessageId: m.parentMessageId ?? null,
     receivedAt: m.timestamps?.receivedAt ?? m.createdAt,
     raw: m,

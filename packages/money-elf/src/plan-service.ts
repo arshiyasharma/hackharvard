@@ -1,5 +1,5 @@
 /**
- * Move Plans, wired to the Ledger and Nessie (decisions #53–#56).
+ * Move Plans, wired to the Ledger and Nessie (decisions #66–#69).
  *
  * draft: run the simulator on the move's listed items and today's projection, keep the drafts locally.
  * choose: the owner's pick (that's their yes; nothing moves). Cancels the previous plan's Nessie records, then
@@ -308,7 +308,7 @@ export class PlanService {
       payload: {
         planId: plan.id,
         label,
-        // For the Deal Engine to act on later; the Money Elf never edits a listing (#55).
+        // For the Deal Engine to act on later; the Money Elf never edits a listing (#68).
         choices: plan.choices.map((c) => ({
           itemId: c.itemId,
           action: c.action,

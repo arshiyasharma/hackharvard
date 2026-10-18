@@ -10,6 +10,7 @@
     "@elves/listings": "workspace:*",
     "@elves/llm": "workspace:*",
     "@elves/memory": "workspace:*",
+    "@elves/money-elf": "workspace:*",
     "@elves/photon": "workspace:*",
     "@elves/pipeline": "workspace:*",
     "@elves/shared": "workspace:*",

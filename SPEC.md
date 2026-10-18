@@ -1,6 +1,6 @@
 # Elves: product and build spec
 
-**Elves is a moving crew you text.** You text one number on iMessage or SMS, and a crew of AI agents ("Elves") runs your move. They sell the furniture, book the truck and storage, find you a sublet, deal with the lease, settle the money, and keep your stuff out of the landfill. There is no app to open. Every moving chore already ends in a text thread, so the crew works there too.
+**Elves is a moving crew you text.** You text one number on iMessage or SMS, and a crew of AI agents ("Elves") runs your move. They sell the furniture, book the truck and storage, find you a sublet, sublet your room, settle the money, and keep your stuff out of the landfill. There is no app to open. Every moving chore already ends in a text thread, so the crew works there too.
 
 > Moving is 15 chores and every one of them ends in a text message. Elves is the crew that answers them.
 
@@ -50,7 +50,7 @@ The design doc had ten Elves, one per Photon line. We **folded them into five** 
 | **Stuff Elf** | `stuff` | Everything the owner owns or wants | Sell, Buy, Donate / Last Call | **Sell built:** photo → vision → item, price range, floor, list price, "yes, list it" approval. Buy and Donate are keyword stubs |
 | **Money Elf** | `money` | Every dollar that moves | Escrow, Ledger, splits, scam check. **Nessie is the ledger** | Stub (fixed reply and board update) |
 | **Move-day Elf** | `moveday` | Getting the stuff from A to B | Room Scan (new), Haul quotes, Move Map. **Takes over after the Home Elf has planned everything**, then runs move day | Stub. Room Scan is specced but not built |
-| **Home Elf** | `home` | The place you leave, the place you go, the gap between | Lease, Hunt, Move-in week | **Hunt built:** a real-browser housing search (Craigslist, Airbnb, Booking.com, SpareFoot; Apartments.com, Zillow and FB Marketplace behind flags), scam flags, ranking, top three by text. Lease and Move-in are stubs |
+| **Home Elf** | `home` | The place you leave, the place you go, the gap between | Sublet out, Hunt, Move-in week | **Built:** a real-browser housing search (Craigslist, Airbnb, Booking.com, SpareFoot; Apartments.com, Zillow and FB Marketplace behind flags), scam flags, ranking, top three by text; the sublet post and applicant deals, with every viewing time put to the owner before it is booked; the move-in checklist. It does not read leases |
 
 **Money Elf: Nessie is the ledger.** Every dollar in the move is recorded in Nessie (Capital One's API): sale proceeds, escrow holds and releases, the U-Haul and storage purchases, and roommate splits. The Ledger the owner sees is built from those Nessie transactions. See [Money](#4-money-scam-shield-sustainability).
 
@@ -241,7 +241,7 @@ The demo is 90 seconds of action on the judge's own phone:
 | 0–15 s | Couch photo + "moving out Aug 29". The Crew Lead replies with a plan, and the board link follows |
 | 15–40 s | "Is the couch still available? $80?" The Stuff Elf counters at the floor, offers slots and confirms |
 | 40–50 s | The escrow hold shows on the Ledger |
-| 50–70 s | A lease question. The Home Elf gives a verdict and drafts the landlord notice |
+| 50–70 s | A sublet applicant picks a viewing time. The Home Elf asks the owner "Book it?" and books only on yes |
 | 70–85 s | (Optional) The Move-day Elf calls the judge as a storage facility and posts the summary |
 | 85–90 s | A lamp, "leaving tomorrow". Last Call: free relist, pickup booked, Move Report shows pounds diverted |
 

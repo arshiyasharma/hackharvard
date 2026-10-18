@@ -5,6 +5,7 @@ import { assertTransition, canTransition, isOpen } from "./machine.ts";
 import { decide, type PartyPosition, type Terms } from "./negotiate.ts";
 import { type ModePolicy, policyFor } from "./policy.ts";
 import { shield } from "./shield.ts";
+import { price } from "./voice.ts";
 
 /** Letter-digit-letter-digit, no look-alikes (no I/O/0/1/B/8/S/5): "K7Q2". */
 const LETTERS = "ACDEFHJKMNPRTWXY";
@@ -18,14 +19,6 @@ export function newDealCode(rand: () => number = Math.random): string {
 
 export function codesIn(text: string): string[] {
   return [...text.toUpperCase().matchAll(CODE_RE)].map((m) => m[1]!);
-}
-
-const fmt = (cents: number) =>
-  `$${(cents / 100).toFixed(cents % 100 === 0 ? 0 : 2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
-export function price(cents: number | null, unit: "each" | "month" = "each"): string {
-  if (cents == null) return "make an offer";
-  if (cents === 0) return "free";
-  return unit === "month" ? `${fmt(cents)}/mo` : fmt(cents);
 }
 
 /** A text the engine wants sent. The Elf may redraft `text` in its own voice from `facts`. */
@@ -99,7 +92,7 @@ export async function openDeal(
 export interface Attribution {
   deal: Deal;
   move: Move;
-  via: "code" | "match";
+  via: "code" | "match" | "only";
 }
 
 const STOP = new Set(
@@ -138,6 +131,81 @@ export async function attributeInbound(
       hits.push({ deal, move, via: "match" });
   }
   return hits.length === 1 ? hits[0]! : null;
+}
+
+/**
+ * Open deals a stranger texting `agentId` could be asking about: things the owner on that pool number is offering
+ * (selling an item, subletting a room), oldest first. Buying deals are for sellers, who quote a ref code.
+ */
+export async function listingCandidates(
+  store: Store,
+  agentId: string,
+): Promise<{ deal: Deal; move: Move }[]> {
+  const out: { deal: Deal; move: Move }[] = [];
+  const owned = new Map<string, Move | null>();
+  for (const deal of await store.listOpenDeals()) {
+    if (policyFor(deal.mode).dir !== 1) continue;
+    if (!owned.has(deal.moveId)) {
+      const move = await store.getMove(deal.moveId);
+      const owners = move ? (await store.listParticipants(move.id)).filter((p) => p.role === "owner") : [];
+      owned.set(deal.moveId, move && owners.some((o) => o.agentUserId === agentId) ? move : null);
+    }
+    const move = owned.get(deal.moveId);
+    if (move) out.push({ deal, move });
+  }
+  return out.sort((a, b) => a.deal.createdAt.localeCompare(b.deal.createdAt));
+}
+
+/** The listings whose titles share a word with `text`. */
+function namedDeals<T extends { deal: Deal }>(text: string, pool: T[]): T[] {
+  const said = words(text);
+  return pool.filter((x) => [...words(x.deal.title)].some((w) => said.has(w) || said.has(`${w}s`)));
+}
+
+export type Inquiry =
+  | { kind: "join"; attribution: Attribution }
+  | { kind: "ask"; move: Move; options: Deal[] };
+
+/**
+ * A stranger's first text on a pool number. Nearly every text there is a buyer, so: a ref code wins; else the one
+ * listing their words name; else the only open listing; else we ask which one, listing just the ones their words
+ * matched ("table" -> the coffee table and the dining table) or everything on offer when they named nothing.
+ * `allowMatch: false` (the sender already runs their own move) honours only a ref code.
+ */
+export async function inquiryFor(
+  store: Store,
+  msg: { text: string | null; agentId: string },
+  opts: { allowMatch: boolean },
+): Promise<Inquiry | null> {
+  const byCode = await attributeInbound(store, msg, { allowMatch: false });
+  if (byCode) return { kind: "join", attribution: byCode };
+  if (!opts.allowMatch) return null;
+  const all = await listingCandidates(store, msg.agentId);
+  if (!all.length) return null;
+  // One owner per pool number in practice; if several moves sit on it, ask about the oldest listing's move.
+  const moveId = all[0]!.move.id;
+  const pool = all.filter((x) => x.move.id === moveId);
+  const named = namedDeals(msg.text ?? "", pool);
+  if (named.length === 1) return { kind: "join", attribution: { ...named[0]!, via: "match" } };
+  if (pool.length === 1) return { kind: "join", attribution: { ...pool[0]!, via: "only" } };
+  return { kind: "ask", move: pool[0]!.move, options: (named.length ? named : pool).map((x) => x.deal) };
+}
+
+/** The listings offered to one stranger space in the last "which one?" question, or all open ones on the move. */
+async function inquiryOptions(store: Store, moveId: string, spaceId: string): Promise<Deal[]> {
+  const events = await store.listEvents(moveId);
+  const asked = [...events]
+    .reverse()
+    .find((e) => e.type === "inquiry.asked" && e.payload.spaceId === spaceId);
+  const ids = Array.isArray(asked?.payload.dealIds) ? (asked.payload.dealIds as string[]) : null;
+  const open = (await store.listDeals(moveId)).filter((d) => policyFor(d.mode).dir === 1 && isOpen(d.state));
+  const shown = ids ? ids.map((id) => open.find((d) => d.id === id)).filter((d): d is Deal => !!d) : open;
+  return shown.length ? shown : open;
+}
+
+/** "Which one are you asking about?" with the options by name and asking price. Never floors or other buyers. */
+export async function whichListing(store: Store, moveId: string, spaceId: string): Promise<Deal[]> {
+  return inquiryOptions(store, moveId, spaceId);
 }
 
 /** Put a counterparty in a deal: a participant row for their space and a party row for this deal. */
@@ -183,7 +251,26 @@ export async function partyForText(
   who: { handle: string; platform: string; agentUserId: string | null },
 ): Promise<DealParty | null> {
   const parties = await store.listDealPartiesBySpace(spaceId);
-  if (!parties.length) return null;
+  if (!parties.length) {
+    // A stranger we asked "which one?": their reply picks a listing by number, ref code or name.
+    const known = await store.getParticipantBySpace(spaceId);
+    if (!known || known.role === "owner") return null;
+    const options = await inquiryOptions(store, known.moveId, spaceId);
+    const num = text.trim().match(/^#?(\d{1,2})[.)]?$/);
+    let pick: Deal | undefined = num ? options[Number(num[1]) - 1] : undefined;
+    for (const code of codesIn(text)) {
+      const deal = await store.getDealByCode(code);
+      if (deal && deal.moveId === known.moveId && isOpen(deal.state)) pick = deal;
+    }
+    if (!pick) {
+      const named = namedDeals(
+        text,
+        options.map((deal) => ({ deal })),
+      );
+      if (named.length === 1) pick = named[0]!.deal;
+    }
+    return pick ? (await joinDeal(store, pick, { spaceId, ...who })).party : null;
+  }
   const moveId = parties[0]!.moveId;
   for (const code of codesIn(text)) {
     const deal = await store.getDealByCode(code);
@@ -273,6 +360,7 @@ async function agree(
     agreedCents: cents,
     lastCounterCents: cents,
     offeredSlots: slots,
+    slot: null,
     ownerAskMessageId: null,
   });
   if (deal.state !== "negotiating") deal = await setState(store, deal, "negotiating");
@@ -283,9 +371,7 @@ async function agree(
       partyId: party.id,
       dealId: deal.id,
       kind: "agreed",
-      text: slots.length
-        ? `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} ${cap(p.meetNoun)} times: ${slotList(slots)}. Which works?`
-        : `${lead}${at === "free" ? "It's yours." : `Deal at ${at}.`} When could you do the ${p.meetNoun}?`,
+      text: p.voice.agreed(at, slots.length ? slotList(slots) : null, p.meetNoun, lead),
       facts: publicFacts(deal, p, {
         agreedPrice: at,
         slots: slots.map((s) => s.label),
@@ -296,7 +382,7 @@ async function agree(
       to: "owner",
       dealId: deal.id,
       kind: "agreed",
-      text: `${cap(who(p))} agreed to ${at} for the ${deal.title}; offering ${p.meetNoun} times now.`,
+      text: `${cap(who(p))} agreed to ${at} for the ${deal.title}; offering ${p.meetNoun} times now.${p.ownerConfirmsSlot ? " I'll check the time they pick with you before booking." : ""}`,
       facts: { title: deal.title, agreedPrice: at, counterparty: who(p), slots: slots.map((s) => s.label) },
     },
   ];
@@ -309,14 +395,75 @@ async function agree(
         type: "deal.agreed",
         payload: { dealId: deal.id, partyId: party.id, cents, slots: slots.map((s) => s.id) },
       },
-      ...(cents > 0
-        ? [{ type: "ledger.hold", payload: { dealId: deal.id, partyId: party.id, cents } }]
-        : []),
+      ...(cents > 0 ? [{ type: "ledger.hold", payload: { dealId: deal.id, partyId: party.id, cents } }] : []),
     ],
   };
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Book `slot` for a party: the deal is scheduled and both sides hear it. */
+async function book(
+  store: Store,
+  move: Move,
+  deal: Deal,
+  party: DealParty,
+  slot: Slot,
+  cents: number,
+): Promise<TurnResult> {
+  const p = policyFor(deal.mode);
+  const events: EngineEvent[] = [];
+  const messages: EngineMessage[] = [];
+  party = await store.upsertDealParty({
+    ...party,
+    status: "scheduled",
+    slot,
+    offeredSlots: [],
+  });
+  deal = await setState(store, deal, "scheduled", {
+    winnerPartyId: party.id,
+    slot,
+    agreedCents: cents,
+  });
+  events.push({
+    type: "deal.scheduled",
+    payload: { dealId: deal.id, partyId: party.id, slot, cents },
+  });
+  events.push({
+    type: "pickup.scheduled",
+    payload: {
+      dealId: deal.id,
+      partyId: party.id,
+      subjectId: deal.subjectId,
+      title: deal.title,
+      slot,
+    },
+  });
+  // The address is the owner's only when the counterparty comes to them; a lister never hears it.
+  const address = p.voice.comesToUs ? move.fromAddress : null;
+  messages.push(
+    {
+      to: "counterparty",
+      partyId: party.id,
+      dealId: deal.id,
+      kind: "booked",
+      text: p.voice.booked(slot.label, address, cents > 0 ? price(cents, p.unit) : null, p.meetNoun),
+      facts: publicFacts(deal, p, {
+        slot: slot.label,
+        address,
+        agreedPrice: price(cents, p.unit),
+      }),
+    },
+    {
+      to: "owner",
+      dealId: deal.id,
+      kind: "booked",
+      text: p.voice.bookedOwner(who(p), deal.title, slot.label, price(cents, p.unit)),
+      facts: { title: deal.title, slot: slot.label, agreedPrice: price(cents, p.unit) },
+    },
+  );
+  return { deal, party, messages, events };
+}
 
 /**
  * A party leaves (walked, blocked). Unless someone else holds the booking, the deal goes back to the inbound
@@ -410,7 +557,7 @@ export async function counterpartyTurn(input: {
             partyId: party.id,
             dealId: deal.id,
             kind: "escrow_only",
-            text: `All payments go through the Elves escrow link I send at the ${p.meetNoun}; no Venmo, Zelle or cash apps. Still interested at ${price(party.lastCounterCents ?? deal.askCents, p.unit)}?`,
+            text: p.voice.escrowOnly(price(party.lastCounterCents ?? deal.askCents, p.unit), p.meetNoun),
             facts: publicFacts(deal, p, {
               rule: "escrow only",
               price: price(party.lastCounterCents ?? deal.askCents, p.unit),
@@ -435,7 +582,7 @@ export async function counterpartyTurn(input: {
       partyId: party.id,
       dealId: deal.id,
       kind: "gone",
-      text: `Sorry, the ${deal.title} is gone.`,
+      text: p.voice.gone(deal.title),
       facts: { title: deal.title, gone: true },
     });
     return done();
@@ -499,7 +646,7 @@ export async function counterpartyTurn(input: {
           to: "owner",
           dealId: deal.id,
           kind: "walked",
-          text: `A ${who(p)} walked away from the ${deal.title}; it's back on the market.`,
+          text: p.voice.walkedOwner(who(p), deal.title),
           facts: { title: deal.title },
         },
         ...r.messages,
@@ -547,20 +694,14 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "handed_off",
-          text:
-            cents > 0
-              ? `Enjoy the ${deal.title}! Payment (${price(cents)}) runs through Elves escrow.`
-              : `Enjoy the ${deal.title}!`,
+          text: p.voice.handedOff(deal.title, cents, p.unit),
           facts: { title: deal.title, price: price(cents) },
         },
         {
           to: "owner",
           dealId: deal.id,
           kind: "handed_off",
-          text:
-            cents > 0
-              ? `Handed off: the ${deal.title} went for ${price(cents)}. Payment runs through escrow; I'll mark it paid when it clears.`
-              : `Handed off: the ${deal.title} went free to a good home.`,
+          text: p.voice.handedOffOwner(deal.title, cents, p.unit),
           facts: { title: deal.title, price: price(cents), outcome },
         },
       );
@@ -586,7 +727,7 @@ export async function counterpartyTurn(input: {
           kind: "reschedule",
           text: slots.length
             ? `No worries. Other times: ${slotList(slots)}. Which works?`
-            : "No worries. When could you come instead?",
+            : `No worries. ${p.voice.rescheduleOpen}`,
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         },
         {
@@ -612,67 +753,51 @@ export async function counterpartyTurn(input: {
           kind: "slot_taken",
           text: slots.length
             ? `That one just got taken. How about ${slotList(slots)}?`
-            : "That one just got taken. When else could you come?",
+            : `That one just got taken. ${p.voice.slotTakenOpen}`,
           facts: publicFacts(deal, p, { slots: slots.map((s) => s.label) }),
         });
         return done();
       }
       const cents = party.agreedCents ?? standing ?? 0;
-      party = await store.upsertDealParty({
-        ...party,
-        status: "scheduled",
-        slot: intent.slot,
-        offeredSlots: [],
-      });
-      deal = await setState(store, deal, "scheduled", {
-        winnerPartyId: party.id,
-        slot: intent.slot,
-        agreedCents: cents,
-      });
-      events.push({
-        type: "deal.scheduled",
-        payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents },
-      });
-      events.push({
-        type: "pickup.scheduled",
-        payload: {
-          dealId: deal.id,
-          partyId: party.id,
-          subjectId: deal.subjectId,
-          title: deal.title,
-          slot: intent.slot,
-        },
-      });
-      const where = move.fromAddress
-        ? ` Address: ${move.fromAddress}.`
-        : " I'll text the address before then.";
-      messages.push(
-        {
-          to: "counterparty",
-          partyId: party.id,
-          dealId: deal.id,
-          kind: "booked",
-          text: `Booked: ${intent.slot.label}.${where}${cents > 0 ? ` ${price(cents, p.unit)}, paid through Elves escrow.` : ""}`,
-          facts: publicFacts(deal, p, {
-            slot: intent.slot.label,
-            address: move.fromAddress,
-            agreedPrice: price(cents, p.unit),
-          }),
-        },
-        {
-          to: "owner",
-          dealId: deal.id,
-          kind: "booked",
-          text: `Booked: ${who(p)} picks up the ${deal.title} ${intent.slot.label} for ${price(cents, p.unit)}. It comes off the truck estimate.`,
-          facts: { title: deal.title, slot: intent.slot.label, agreedPrice: price(cents, p.unit) },
-        },
-      );
-      return done();
+      if (p.ownerConfirmsSlot) {
+        // A viewing is the owner's time: hold the pick and ask, book only on their yes.
+        party = await store.upsertDealParty({ ...party, status: "awaiting_owner", slot: intent.slot });
+        events.push({
+          type: "deal.owner_asked",
+          payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents },
+        });
+        messages.push(
+          {
+            to: "counterparty",
+            partyId: party.id,
+            dealId: deal.id,
+            kind: "checking",
+            text: p.voice.slotPending(intent.slot.label, p.meetNoun),
+            facts: publicFacts(deal, p, { slot: intent.slot.label, checkingWithOwner: true }),
+          },
+          {
+            to: "owner",
+            dealId: deal.id,
+            kind: "ask",
+            askFor: party.id,
+            text: p.voice.askSlot(who(p), deal.title, intent.slot.label, price(cents, p.unit), p.meetNoun),
+            facts: {
+              title: deal.title,
+              slot: intent.slot.label,
+              agreedPrice: price(cents, p.unit),
+              question: "book it? yes or no",
+            },
+          },
+        );
+        return done();
+      }
+      const r = await book(store, move, deal, party, intent.slot, cents);
+      return { ...r, events: [...events, ...r.events] };
     }
 
     case "accept": {
       if (party.status === "awaiting_owner") {
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
         return done();
       }
       const r = await agree(store, move, deal, party, standing ?? 0, clock, "");
@@ -716,6 +841,18 @@ export async function counterpartyTurn(input: {
             counter: price(d.cents, p.unit),
           }),
         });
+        if (p.voice.countered)
+          messages.push({
+            to: "owner",
+            dealId: deal.id,
+            kind: "counter",
+            text: p.voice.countered(who(p), deal.title, price(intent.cents, p.unit), price(d.cents, p.unit)),
+            facts: {
+              title: deal.title,
+              theirOffer: price(intent.cents, p.unit),
+              counter: price(d.cents, p.unit),
+            },
+          });
         return done();
       }
       if (d.kind === "ask_owner") {
@@ -731,14 +868,21 @@ export async function counterpartyTurn(input: {
           type: "deal.owner_asked",
           payload: { dealId: deal.id, partyId: party.id, offer: intent.cents, hold: d.hold },
         });
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
         if (changed)
           messages.push({
             to: "owner",
             dealId: deal.id,
             kind: "ask",
             askFor: party.id,
-            text: `A ${who(p)} offers ${price(intent.cents, p.unit)} for the ${deal.title} (your ${p.limitLabel} ${price(deal.limitCents, p.unit)}; I'm holding at ${price(d.hold, p.unit)}). Take ${price(intent.cents, p.unit)}? Reply yes, no, or a number.`,
+            text: p.voice.ask(
+              who(p),
+              deal.title,
+              price(intent.cents, p.unit),
+              p.limitLabel,
+              price(deal.limitCents, p.unit),
+              price(d.hold, p.unit),
+            ),
             facts: {
               title: deal.title,
               offer: price(intent.cents, p.unit),
@@ -772,11 +916,14 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "booked_reminder",
-          text: `You're booked for ${party.slot.label}.${move.fromAddress ? ` Address: ${move.fromAddress}.` : ""}`,
-          facts: publicFacts(deal, p, { slot: party.slot.label, address: move.fromAddress }),
+          text: p.voice.bookedReminder(party.slot.label, p.voice.comesToUs ? move.fromAddress : null),
+          facts: publicFacts(deal, p, {
+            slot: party.slot.label,
+            address: p.voice.comesToUs ? move.fromAddress : null,
+          }),
         });
       } else if (party.status === "awaiting_owner") {
-        messages.push(holdingMessage(deal, party));
+        messages.push(holdingMessage(p, deal, party));
       } else {
         const at = price(standing, p.unit);
         messages.push({
@@ -784,9 +931,7 @@ export async function counterpartyTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: first ? "greet" : "info",
-          text: first
-            ? `Hi! The ${deal.title} is available${at === "free" ? " for free" : `, ${at}`}. Want it?`
-            : `It's ${at === "free" ? "free" : at}. Want it?`,
+          text: first ? p.voice.greet(deal.title, at, standing) : p.voice.info(at, standing),
           facts: publicFacts(deal, p, { price: at, firstMessage: first }),
         });
       }
@@ -795,13 +940,13 @@ export async function counterpartyTurn(input: {
   }
 }
 
-function holdingMessage(deal: Deal, party: DealParty): EngineMessage {
+function holdingMessage(p: ModePolicy, deal: Deal, party: DealParty): EngineMessage {
   return {
     to: "counterparty",
     partyId: party.id,
     dealId: deal.id,
     kind: "checking",
-    text: "Let me check with the owner and get back to you.",
+    text: p.voice.checking,
     facts: { title: deal.title, checkingWithOwner: true },
   };
 }
@@ -877,6 +1022,19 @@ export async function ownerTurn(input: {
   if (!target) return null;
   const decision = readOwnerDecision(text);
   if (!decision) return null;
+  // A held viewing time takes a yes or a no; a number is not an answer to it.
+  if (target.party.slot) {
+    if (decision.kind === "price") return null;
+    return slotAnswer(
+      store,
+      move,
+      target.deal,
+      target.party,
+      target.party.slot,
+      decision.kind === "yes",
+      clock,
+    );
+  }
 
   let { deal, party } = target;
   const p = policyFor(deal.mode);
@@ -887,7 +1045,7 @@ export async function ownerTurn(input: {
 
   if (decision.kind === "yes" && offer != null) {
     party = await store.upsertDealParty({ ...party, ownerApprovedCents: offer });
-    const r = await agree(store, move, deal, party, offer, clock, "Good news: the owner said yes. ");
+    const r = await agree(store, move, deal, party, offer, clock, p.voice.ownerYesLead);
     // The owner already knows; replace the engine's owner summary with a direct answer.
     const messages = r.messages.filter((m) => m.to !== "owner");
     messages.push({
@@ -905,7 +1063,7 @@ export async function ownerTurn(input: {
     // The owner named a number at or past the buyer's offer: that is a yes to the buyer's offer.
     if (offer != null && p.dir * P <= p.dir * offer) {
       party = await store.upsertDealParty({ ...party, ownerApprovedCents: offer });
-      const r = await agree(store, move, deal, party, offer, clock, "Good news: the owner said yes. ");
+      const r = await agree(store, move, deal, party, offer, clock, p.voice.ownerYesLead);
       const messages = r.messages.filter((m) => m.to !== "owner");
       messages.push({
         to: "owner",
@@ -937,7 +1095,7 @@ export async function ownerTurn(input: {
           partyId: party.id,
           dealId: deal.id,
           kind: "counter",
-          text: `I checked with the owner: ${price(P, p.unit)} is the best they can do.`,
+          text: p.voice.ownerCounter(price(P, p.unit)),
           facts: publicFacts(deal, p, { counter: price(P, p.unit), checkedWithOwner: true }),
         },
         {
@@ -964,15 +1122,80 @@ export async function ownerTurn(input: {
         partyId: party.id,
         dealId: deal.id,
         kind: "owner_no",
-        text: `I checked with the owner and can't go that low; ${price(hold, p.unit)} is the lowest.`,
+        text: p.voice.ownerNo(price(hold, p.unit)),
         facts: publicFacts(deal, p, { lowest: price(hold, p.unit), checkedWithOwner: true }),
       },
       {
         to: "owner",
         dealId: deal.id,
         kind: "owner_no",
-        text: `Got it. I told them ${price(hold, p.unit)} is the lowest for the ${deal.title}.`,
+        text: p.voice.ownerNoSummary(price(hold, p.unit), deal.title),
         facts: { title: deal.title, holding: price(hold, p.unit) },
+      },
+    ],
+  };
+}
+
+/** The owner's yes or no on a time the counterparty picked: book it, or offer them the other times. */
+async function slotAnswer(
+  store: Store,
+  move: Move,
+  deal: Deal,
+  party: DealParty,
+  slot: Slot,
+  yes: boolean,
+  clock: EngineClock,
+): Promise<TurnResult> {
+  const p = policyFor(deal.mode);
+  const events: EngineEvent[] = [
+    {
+      type: "deal.owner_answered",
+      payload: { dealId: deal.id, partyId: party.id, decision: { kind: yes ? "yes" : "no" }, slot },
+    },
+  ];
+  const cents = party.agreedCents ?? 0;
+  const taken = yes && !isFree(slot, await bookedSlots(store, move.id, party.id));
+  if (yes && !taken) {
+    const r = await book(store, move, deal, { ...party, ownerAskMessageId: null }, slot, cents);
+    return { ...r, events: [...events, ...r.events] };
+  }
+  // Declined (or booked by someone else meanwhile): the other times still on offer, else fresh ones without it.
+  let others = party.offeredSlots.filter((s) => s.id !== slot.id);
+  if (!others.length || taken)
+    others = (await freshSlots(store, move, clock, party.id)).filter((s) => s.id !== slot.id);
+  party = await store.upsertDealParty({
+    ...party,
+    status: "agreed",
+    slot: null,
+    offeredSlots: others,
+    ownerAskMessageId: null,
+  });
+  const list = others.length ? slotList(others) : null;
+  return {
+    deal,
+    party,
+    events,
+    messages: [
+      {
+        to: "counterparty",
+        partyId: party.id,
+        dealId: deal.id,
+        kind: taken ? "slot_taken" : "slot_declined",
+        text: taken
+          ? list
+            ? `That one just got taken. How about ${list}?`
+            : `That one just got taken. ${p.voice.slotTakenOpen}`
+          : p.voice.slotDeclined(list, p.meetNoun),
+        facts: publicFacts(deal, p, { slots: others.map((s) => s.label) }),
+      },
+      {
+        to: "owner",
+        dealId: deal.id,
+        kind: taken ? "slot_taken" : "slot_declined",
+        text: taken
+          ? `${slot.label} was booked by someone else in the meantime; I'm offering the ${who(p)} other times.`
+          : `OK, not ${slot.label}. I'm offering the ${who(p)} other ${p.meetNoun} times and will check with you again.`,
+        facts: { title: deal.title, slot: slot.label },
       },
     ],
   };
@@ -1095,6 +1318,10 @@ export async function lastCallSweep(
     const out = moveOutInstant(move?.moveOutAt ?? null, tz);
     if (!move || !out) continue;
     const hoursLeft = (out.getTime() - clock.now.getTime()) / 3_600_000;
+    // A listing opened after the stated move-out (the date slipped, or the owner listed late) has no countdown
+    // to run: without this, a brand-new deal was dumped by the next sweep and "list it" looked like it did nothing.
+    const created = new Date(deal.createdAt).getTime();
+    if (created > out.getTime() && created <= clock.now.getTime()) continue;
     const stage = dueLastCall(deal, hoursLeft);
     if (!stage) continue;
 

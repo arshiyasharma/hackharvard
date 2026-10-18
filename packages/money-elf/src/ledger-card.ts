@@ -1,9 +1,14 @@
 /**
- * The Ledger card: an image sent inline in iMessage when the owner asks to see the Ledger.
- * Photon 2.0 has no app cards (decision #32), so a picture is the native-looking option that needs no tap.
+ * The Ledger as pictures, drawn in the dashboard's design system (decision #64): warm neutrals, ink with one lime
+ * accent, Inter, hairline panels.
  *
- * Drawn as SVG at phone width (2x), rendered to PNG with resvg and a bundled Inter font, so the card looks
- * the same on a laptop and in the Linux container (which has no system fonts).
+ *   - The card (`ledgerCardSvg`): a tall image sent inline in the Photon 2.0 thread when the owner asks for the
+ *     Ledger. Photon 2.0 has no app cards (decision #32), so a picture is the native option that needs no tap.
+ *   - The preview (`ledgerPreviewSvg`): a 3:2 image, the page's og:image, which is what the iMessage mini app
+ *     card shows in the bubble before it's tapped open. A tall image would be cropped there.
+ *
+ * Drawn as SVG and rendered to PNG with resvg and a bundled Inter font, so the images look the same on a laptop
+ * and in the Linux container (which has no system fonts).
  */
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -14,23 +19,17 @@ import { pct } from "./plans.ts";
 import { netPhrase } from "./projection.ts";
 import { projectionChart } from "./projection-chart.ts";
 
-const W = 1080;
-const PAD = 64;
 export const C = {
-  bg: "#F5F2EB",
-  card: "#FFFFFF",
-  ink: "#1D1B18",
-  muted: "#6F6A61",
-  line: "#E7E2D8",
-  fund: "#1F7A4D",
-  fundBg: "#E5F3EA",
-  owed: "#A05A00",
-  owedBg: "#FBEEDC",
-  escrow: "#2457A6",
-  escrowBg: "#E4ECF8",
-  bar: "#E7E2D8",
-  wait: "#FFF6D6",
-  waitLine: "#E9C95A",
+  canvas: "#F3F2EE",
+  surface: "#FFFFFF",
+  ink: "#0E0F0C",
+  muted: "#77786F",
+  line: "#E4E3DD",
+  fill: "#F3F2EE",
+  lime: "#D4F26A",
+  good: "#137A47",
+  okInk: "#F6F6F2",
+  okMuted: "#A3A49C",
 };
 
 export function esc(s: string): string {
@@ -49,211 +48,345 @@ export function capFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+type Weight = 400 | 500 | 600 | 700;
+
 export function text(
   x: number,
   y: number,
   s: string,
   size: number,
-  weight: 400 | 600 | 700,
+  weight: Weight,
   fill: string,
   anchor = "start",
+  tracking = 0,
 ) {
-  return `<text x="${x}" y="${y}" font-family="Inter" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}">${esc(s)}</text>`;
+  const ls = tracking ? ` letter-spacing="${(tracking * size).toFixed(2)}"` : "";
+  return `<text x="${x}" y="${y}" font-family="Inter" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}"${ls}>${esc(s)}</text>`;
 }
+
+/** Rough Inter advance width, for placing text after text (resvg can't measure for us). */
+function width(s: string, size: number, weight: Weight): number {
+  // Inter's figures are tabular and wider than its average letter.
+  const figures = (s.match(/[0-9$]/g) ?? []).length;
+  const per = weight >= 600 ? 0.53 : 0.5;
+  return (figures * 0.64 + (s.length - figures) * per) * size;
+}
+
+/** The Elves Ledger mark at (x, y), `s` px square: a ledger page, three entries, the last one highlighted. */
+function mark(x: number, y: number, s: number): string {
+  const u = s / 24;
+  const bar = (bx: number, by: number, w: number, fill: string, op = 1) =>
+    `<rect x="${x + bx * u}" y="${y + by * u}" width="${w * u}" height="${2 * u}" rx="${u}" fill="${fill}" opacity="${op}"/>`;
+  return `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${6 * u}" fill="${C.ink}"/>${bar(6, 7, 12, C.canvas, 0.55)}${bar(6, 11, 8, C.canvas, 0.55)}${bar(6, 15, 10, C.lime)}`;
+}
+
+/** Mark plus "Elves Ledger", baseline-aligned at y. */
+function wordmark(x: number, y: number, size: number): string {
+  const s = size * 1.5;
+  return `${mark(x, y - s * 0.78, s)}${text(x + s + size * 0.55, y, "Elves", size, 600, C.ink)}${text(x + s + size * 0.55 + width("Elves ", size, 600), y, "Ledger", size, 600, C.muted)}`;
+}
+
+/** A lime tag ("Projected") followed by text, baseline at y. Returns the SVG. */
+function tag(x: number, y: number, label: string, size: number): { svg: string; w: number } {
+  const w = width(label, size, 600) + size * 1.2;
+  const h = size * 1.9;
+  return {
+    svg: `<rect x="${x}" y="${y - h * 0.7}" width="${w}" height="${h}" rx="${size * 0.5}" fill="${C.lime}"/>${text(x + size * 0.65, y, label, size, 600, C.ink)}`,
+    w,
+  };
+}
+
+function panel(x: number, y: number, w: number, h: number, r: number, fill = C.surface, stroke = C.line) {
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}"${stroke ? ` stroke="${stroke}" stroke-width="2"` : ""}/>`;
+}
+
+/** Where the projection lands, as the line after the lime tag. */
+function landing(v: LedgerView): { tag: string; rest: string; bold: string } | null {
+  const p = v.projection;
+  if (p.expectedCents > 0)
+    return {
+      tag: "Projected",
+      bold: netPhrase(p.projectedNetCents),
+      rest: `${p.projectedNetCents < 0 ? "once all is back" : "net"}, by ${fmtDate(p.settledBy ?? v.asOf.slice(0, 10))}`,
+    };
+  if (v.pendingActions.length)
+    return { tag: "Waiting", bold: `${v.pendingActions.length} on your OK`, rest: "" };
+  return null;
+}
+
+// ---------- the tall card (Photon 2.0 thread) ----------
+
+const W = 1080;
+const PAD = 56;
 
 /** The card as SVG. Height grows with the number of rows. */
 export function ledgerCardSvg(v: LedgerView): string {
   const parts: string[] = [];
-  let y = PAD + 40;
-  parts.push(text(PAD, y + 24, "Moving Ledger", 60, 700, C.ink));
-  y += 72;
+  const p = v.projection;
+  const inner = W - 2 * PAD;
+  let y = PAD + 44;
+
+  parts.push(wordmark(PAD, y, 32));
   parts.push(
-    text(
-      PAD,
-      y + 12,
-      `${v.ownerName} move · ${fmtDate(v.asOf.slice(0, 10))} · live from Nessie`,
-      30,
-      400,
-      C.muted,
-    ),
+    `<circle cx="${W - PAD - width("Live from Nessie", 24, 500) - 18}" cy="${y - 8}" r="7" fill="${C.good}"/>`,
   );
-  y += 56;
+  parts.push(text(W - PAD, y, "Live from Nessie", 24, 500, C.muted, "end"));
+  y += 92;
 
-  // Three headline tiles.
-  const tiles = [
-    { label: "Moving Fund", cents: v.fundCents, fg: C.fund, bg: C.fundBg },
-    { label: "Owed to you", cents: v.owedCents, fg: C.owed, bg: C.owedBg },
-    { label: "In escrow", cents: v.escrowCents, fg: C.escrow, bg: C.escrowBg },
-  ];
-  const gap = 24;
-  const tw = (W - 2 * PAD - 2 * gap) / 3;
-  tiles.forEach((t, i) => {
-    const x = PAD + i * (tw + gap);
-    parts.push(`<rect x="${x}" y="${y}" width="${tw}" height="168" rx="28" fill="${t.bg}"/>`);
-    parts.push(text(x + 28, y + 58, t.label, 28, 600, t.fg));
-    parts.push(text(x + 28, y + 132, fmtUsd(t.cents), 56, 700, t.fg));
-  });
-  y += 168 + 56;
+  // The headline number and where it lands.
+  parts.push(text(PAD, y, "Net cost so far", 28, 500, C.muted));
+  y += 112;
+  const ahead = p.netNowCents < 0;
+  parts.push(
+    text(PAD - 4, y, fmtUsd(Math.abs(p.netNowCents)), 120, 600, ahead ? C.good : C.ink, "start", -0.045),
+  );
+  if (ahead)
+    parts.push(
+      text(PAD + width(fmtUsd(Math.abs(p.netNowCents)), 120, 600) - 10, y, "ahead", 34, 500, C.good),
+    );
+  y += 58;
+  parts.push(text(PAD, y, `${fmtUsd(p.outCents)} out  ·  ${fmtUsd(p.backCents)} back`, 28, 400, C.muted));
+  const land = landing(v);
+  if (land) {
+    y += 70;
+    const t = tag(PAD, y, land.tag, 24);
+    parts.push(t.svg);
+    let x = PAD + t.w + 18;
+    parts.push(text(x, y, land.bold, 30, 600, C.ink));
+    x += width(land.bold, 30, 600) + 12;
+    if (land.rest) parts.push(text(x, y, land.rest, 28, 400, C.muted));
+  }
+  y += 44;
 
-  // Move Plans: the chosen plan's likely cost, its odds, and its path with the real net cost on top.
+  // The projection chart.
+  if (p.expectedCents > 0) {
+    const h = 300;
+    parts.push(panel(PAD, y, inner, h, 32));
+    parts.push(
+      projectionChart(
+        p,
+        { x: PAD + 36, y: y + 28, w: inner - 72, h: h - 56 },
+        { line: C.ink, grid: C.muted, text: C.ink, muted: C.muted, bg: C.surface },
+        { size: 24, family: "Inter" },
+      ),
+    );
+    y += h + 28;
+  }
+
+  // Move Plans (decision #66): the chosen plan's likely cost, its odds, and its path with the real net cost on top.
   const plan = v.plans?.chosen;
   if (v.plans && plan) {
-    parts.push(text(PAD, y, "MOVE PLAN", 26, 700, C.muted));
-    y += 50;
+    const h = 400;
+    parts.push(panel(PAD, y, inner, h, 32));
+    parts.push(text(PAD + 36, y + 58, `Plan ${plan.label} · ${plan.name}`, 24, 500, C.muted));
     parts.push(
       text(
-        PAD,
-        y,
-        `Plan ${plan.label} · ${netPhrase(plan.stats.p50Cents)} likely · ${pct(plan.stats.chanceUnderBudget)} under ${fmtUsd(v.plans.budgetCents)}`,
+        PAD + 36,
+        y + 106,
+        `${netPhrase(plan.stats.p50Cents)} likely · ${pct(plan.stats.chanceUnderBudget)} under ${fmtUsd(v.plans.budgetCents)}`,
         34,
         600,
         C.ink,
       ),
     );
-    y += 24;
     parts.push(
       planPath(
         plan,
         v.plans.budgetCents,
         v.plans.history,
         v.plans.moveOutDate,
-        { x: PAD + 8, y, w: W - 2 * PAD - 16, h: 280 },
+        { x: PAD + 36, y: y + 130, w: inner - 72, h: h - 158 },
         cardColors(),
-        { size: 26, family: "Inter" },
+        { size: 24, family: "Inter" },
       ),
     );
-    y += 280 + 56;
+    y += h + 28;
   }
 
-  // The projection: net cost today, where it lands once expected money comes back, and the step chart.
-  const pr = v.projection;
-  if (pr.expectedCents > 0) {
-    parts.push(text(PAD, y, "MOVE COST PROJECTION", 26, 700, C.muted));
-    y += 50;
-    parts.push(
-      text(
-        PAD,
-        y,
-        pr.projectedNetCents < 0
-          ? `${netPhrase(pr.netNowCents)} out now, ${netPhrase(pr.projectedNetCents)} by ${fmtDate(pr.settledBy ?? v.asOf.slice(0, 10))}`
-          : `${netPhrase(pr.netNowCents)} out now, ${netPhrase(pr.projectedNetCents)} net by ${fmtDate(pr.settledBy ?? v.asOf.slice(0, 10))}`,
-        34,
-        600,
-        C.ink,
-      ),
-    );
-    y += 24;
-    const chart = projectionChart(
-      pr,
-      { x: PAD + 8, y, w: W - 2 * PAD - 16, h: 280 },
-      { line: C.fund, grid: C.muted, text: C.ink, muted: C.muted, bg: C.card },
-      { size: 26, family: "Inter" },
-    );
-    parts.push(chart);
-    y += 280 + 48;
-    if (pr.hasEstimates) {
-      parts.push(text(PAD, y - 12, "Hollow dots are estimated dates.", 24, 400, C.muted));
-      y += 32;
-    }
-  }
-
-  const section = (title: string) => {
-    parts.push(text(PAD, y, title.toUpperCase(), 26, 700, C.muted));
-    y += 24;
-  };
-  const row = (left: string, right: string, sub?: string, rightFill: string = C.ink) => {
-    parts.push(text(PAD, y + 40, clip(capFirst(left), 34), 36, 600, C.ink));
-    parts.push(text(W - PAD, y + 40, right, 36, 700, rightFill, "end"));
-    if (sub) parts.push(text(PAD, y + 82, clip(sub, 52), 28, 400, C.muted));
-    y += sub ? 104 : 68;
-  };
-  const rule = () => {
-    parts.push(`<rect x="${PAD}" y="${y + 8}" width="${W - 2 * PAD}" height="2" fill="${C.line}"/>`);
-    y += 40;
-  };
-
+  // Anything waiting for the owner's OK: the one inverted panel.
   if (v.pending[0]) {
-    const msg = clip(`Waiting on your OK: ${v.pending[0]}`, 54);
-    parts.push(
-      `<rect x="${PAD}" y="${y}" width="${W - 2 * PAD}" height="92" rx="22" fill="${C.wait}" stroke="${C.waitLine}" stroke-width="2"/>`,
-    );
-    parts.push(text(PAD + 28, y + 57, msg, 29, 600, C.ink));
-    y += 92 + 44;
+    const h = 150;
+    parts.push(panel(PAD, y, inner, h, 32, C.ink, ""));
+    parts.push(`<circle cx="${PAD + 42}" cy="${y + 47}" r="7" fill="${C.lime}"/>`);
+    parts.push(text(PAD + 60, y + 56, "Needs your OK", 24, 600, C.okInk));
+    parts.push(text(W - PAD - 34, y + 56, `${v.pendingActions.length} waiting`, 24, 500, C.okMuted, "end"));
+    parts.push(text(PAD + 34, y + 110, clip(capFirst(v.pending[0]), 52), 30, 500, C.okInk));
+    y += h + 28;
   }
 
-  if (v.owes.length) {
-    section("Who owes you");
-    for (const o of v.owes.slice(0, 5)) {
-      if (o.loan) {
-        const pct = o.loan.totalCents ? o.loan.paidCents / o.loan.totalCents : 0;
-        row(o.name, fmtUsd(o.owedCents), undefined, C.owed);
-        const bw = W - 2 * PAD;
-        parts.push(`<rect x="${PAD}" y="${y - 6}" width="${bw}" height="18" rx="9" fill="${C.bar}"/>`);
-        parts.push(
-          `<rect x="${PAD}" y="${y - 6}" width="${Math.max(18, Math.round(bw * pct))}" height="18" rx="9" fill="${C.fund}"/>`,
-        );
-        parts.push(
-          text(
-            PAD,
-            y + 52,
-            `Loan: ${fmtUsd(o.loan.paidCents)} of ${fmtUsd(o.loan.totalCents)} paid · ${fmtUsd(o.loan.monthlyCents)}/month`,
-            28,
-            400,
-            C.muted,
-          ),
-        );
-        y += 84;
-      } else {
-        row(o.name, fmtUsd(o.owedCents), "Payment request sent", C.owed);
-      }
-    }
-    rule();
-  }
+  // Balances, 2 x 2.
+  const cell = inner / 2;
+  const stats = [
+    ["Moving Fund", v.fundCents],
+    ["Owed to you", v.owedCents],
+    ["In escrow", v.escrowCents],
+    ["Deposits out", v.depositsOutCents],
+  ] as const;
+  const sh = 140;
+  parts.push(panel(PAD, y, inner, sh * 2, 32));
+  parts.push(`<rect x="${PAD + cell}" y="${y}" width="2" height="${sh * 2}" fill="${C.line}"/>`);
+  parts.push(`<rect x="${PAD}" y="${y + sh}" width="${inner}" height="2" fill="${C.line}"/>`);
+  stats.forEach(([label, cents], i) => {
+    const x = PAD + (i % 2) * cell + 32;
+    const top = y + Math.floor(i / 2) * sh;
+    parts.push(text(x, top + 50, label, 24, 500, C.muted));
+    parts.push(text(x, top + 108, fmtUsd(cents), 48, 600, C.ink, "start", -0.03));
+  });
+  y += sh * 2 + 52;
 
-  if (v.escrow.length) {
-    section("Held in escrow");
-    for (const e of v.escrow.slice(0, 3))
-      row(e.item, fmtUsd(e.cents), `Paid by ${e.buyer}; released when pickup's confirmed`, C.escrow);
-    rule();
-  }
+  // Lists: each a hairline panel of rows.
+  const list = (title: string, rows: { left: string; sub?: string; right: string; good?: boolean }[]) => {
+    if (!rows.length) return;
+    parts.push(text(PAD + 4, y, title, 26, 600, C.ink));
+    y += 24;
+    const rh = 104;
+    parts.push(panel(PAD, y, inner, rh * rows.length, 32));
+    rows.forEach((r, i) => {
+      const top = y + i * rh;
+      if (i)
+        parts.push(`<rect x="${PAD + 32}" y="${top}" width="${inner - 64}" height="2" fill="${C.line}"/>`);
+      parts.push(text(PAD + 32, top + (r.sub ? 46 : 62), clip(capFirst(r.left), 36), 30, 500, C.ink));
+      if (r.sub) parts.push(text(PAD + 32, top + 82, clip(r.sub, 48), 24, 400, C.muted));
+      parts.push(text(W - PAD - 32, top + 62, r.right, 30, 600, r.good ? C.good : C.ink, "end"));
+    });
+    y += rh * rows.length + 56;
+  };
 
-  if (v.deposits.length) {
-    section("Deposits out");
-    for (const d of v.deposits.slice(0, 3))
-      row(
-        d.what,
-        fmtUsd(d.cents),
-        d.dueBackAt ? `Due back ${fmtDate(d.dueBackAt)}` : "Due-back date not set",
-      );
-    rule();
-  }
-
-  if (v.recent.length) {
-    section("Recent");
-    for (const a of v.recent.slice(0, 5)) {
-      const sign = a.direction === "in" ? "+" : "-";
-      const where = a.account === "fund" ? "Moving Fund" : a.account === "escrow" ? "Escrow" : "You";
-      row(
-        a.label,
-        `${sign}${fmtUsd(a.amountCents)}`,
-        `${where} · ${fmtDate(a.date)}`,
-        a.direction === "in" ? C.fund : C.ink,
-      );
-    }
-  }
+  list(
+    "Who owes you",
+    v.owes.slice(0, 4).map((o) => ({
+      left: o.name,
+      sub: o.loan
+        ? `Payment plan · ${fmtUsd(o.loan.paidCents)} of ${fmtUsd(o.loan.totalCents)} paid`
+        : "Payment request sent",
+      right: fmtUsd(o.owedCents),
+    })),
+  );
+  list("Held and due back", [
+    ...v.escrow.slice(0, 2).map((e) => ({
+      left: `${e.item} sale`,
+      sub: `In escrow · paid by ${e.buyer}`,
+      right: fmtUsd(e.cents),
+    })),
+    ...v.deposits.slice(0, 2).map((d) => ({
+      left: `${d.what} deposit`,
+      sub: d.dueBackAt ? `Due back ${fmtDate(d.dueBackAt)}` : "No due-back date yet",
+      right: fmtUsd(d.cents),
+    })),
+  ]);
+  list(
+    "Recent",
+    v.recent.slice(0, 4).map((a) => ({
+      left: a.label,
+      sub: `${a.account === "fund" ? "Moving Fund" : a.account === "escrow" ? "Escrow" : "Your account"} · ${fmtDate(a.date)}`,
+      right: `${a.direction === "in" ? "+" : "−"}${fmtUsd(a.amountCents)}`,
+      good: a.direction === "in",
+    })),
+  );
 
   if (!v.owes.length && !v.escrow.length && !v.deposits.length && !v.recent.length) {
-    parts.push(text(PAD, y + 40, "Nothing on the Ledger yet.", 36, 600, C.muted));
-    y += 80;
+    parts.push(text(PAD, y + 10, "Nothing on the Ledger yet.", 32, 600, C.ink));
+    y += 70;
   }
 
-  y += 24;
   parts.push(
-    text(PAD, y + 20, `${v.records} Nessie records · tap the link for the live Ledger`, 26, 400, C.muted),
+    text(
+      W / 2,
+      y + 4,
+      `Read live from ${v.records} Nessie records · open the link for the dashboard`,
+      22,
+      400,
+      C.muted,
+      "middle",
+    ),
   );
-  const H = Math.round(y + 20 + PAD);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${C.bg}"/><rect x="24" y="24" width="${W - 48}" height="${H - 48}" rx="44" fill="${C.card}"/>${parts.join("")}</svg>`;
+  const H = Math.round(y + 4 + PAD);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${C.canvas}"/>${parts.join("")}</svg>`;
 }
+
+// ---------- the bubble preview (the mini app card's og:image) ----------
+
+const PW = 1200;
+const PH = 800;
+
+/** The 3:2 preview: the headline number, where it lands, three balances and the chart. */
+export function ledgerPreviewSvg(v: LedgerView): string {
+  const p = v.projection;
+  const X = 72;
+  const parts: string[] = [];
+  parts.push(wordmark(X, 112, 36));
+  parts.push(text(PW - X, 112, `Live · ${fmtDate(v.asOf.slice(0, 10))}`, 28, 500, C.muted, "end"));
+
+  // Left: the number.
+  parts.push(text(X, 232, "Net cost so far", 32, 500, C.muted));
+  const ahead = p.netNowCents < 0;
+  parts.push(
+    text(X - 6, 380, fmtUsd(Math.abs(p.netNowCents)), 156, 600, ahead ? C.good : C.ink, "start", -0.045),
+  );
+  const land = landing(v);
+  if (land) {
+    const t = tag(X, 462, land.tag, 28);
+    parts.push(t.svg);
+    parts.push(text(X + t.w + 20, 462, land.bold, 36, 600, C.ink));
+    if (land.rest)
+      parts.push(
+        text(
+          X + t.w + 34 + width(land.bold, 36, 600),
+          462,
+          land.rest.replace(/^net, /, ""),
+          30,
+          400,
+          C.muted,
+        ),
+      );
+  } else {
+    parts.push(
+      text(X, 462, ahead ? "ahead, and nothing else due back" : "Nothing else is due back", 32, 500, C.muted),
+    );
+  }
+
+  // Right: three balances, hairline-separated.
+  const rx = 760;
+  const rows = [
+    ["Moving Fund", v.fundCents],
+    ["Owed to you", v.owedCents],
+    ["Held and due back", v.escrowCents + v.depositsOutCents],
+  ] as const;
+  rows.forEach(([label, cents], i) => {
+    const top = 196 + i * 96;
+    if (i) parts.push(`<rect x="${rx}" y="${top - 18}" width="${PW - X - rx}" height="2" fill="${C.line}"/>`);
+    parts.push(text(rx, top + 26, label, 26, 500, C.muted));
+    parts.push(text(PW - X, top + 30, fmtUsd(cents), 38, 600, C.ink, "end", -0.02));
+  });
+
+  // Bottom: the chart in a panel.
+  const top = 520;
+  const h = PH - top - 56;
+  parts.push(panel(X, top, PW - 2 * X, h, 28));
+  const chart =
+    p.expectedCents > 0
+      ? projectionChart(
+          p,
+          { x: X + 32, y: top + 18, w: PW - 2 * X - 64, h: h - 36 },
+          { line: C.ink, grid: C.muted, text: C.ink, muted: C.muted, bg: C.surface },
+          { size: 22, family: "Inter" },
+        )
+      : "";
+  parts.push(
+    chart ||
+      text(
+        X + 36,
+        top + h / 2 + 12,
+        v.records ? "Nothing else is expected back." : "Nothing on the Ledger yet.",
+        30,
+        500,
+        C.muted,
+      ),
+  );
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PW}" height="${PH}" viewBox="0 0 ${PW} ${PH}"><rect width="${PW}" height="${PH}" fill="${C.canvas}"/>${parts.join("")}</svg>`;
+}
+
+// ---------- rendering ----------
 
 let fontFiles: string[] | null = null;
 function fonts(): string[] {
@@ -262,23 +395,29 @@ function fonts(): string[] {
   const root = dirname(req.resolve("@expo-google-fonts/inter/package.json"));
   fontFiles = [
     "400Regular/Inter_400Regular.ttf",
+    "500Medium/Inter_500Medium.ttf",
     "600SemiBold/Inter_600SemiBold.ttf",
     "700Bold/Inter_700Bold.ttf",
   ].map((f) => join(root, f));
   return fontFiles;
 }
 
-/** Any card SVG as PNG bytes, with the bundled Inter font (no system fonts, same on macOS and Linux). */
-export async function renderSvgPng(svg: string, width = W): Promise<Uint8Array<ArrayBuffer>> {
+/** Any card SVG as PNG bytes, with the bundled Inter font (Move Plans renders its own card with this too). */
+export async function renderSvgPng(svgSource: string, w = W): Promise<Uint8Array<ArrayBuffer>> {
   const { Resvg } = await import("@resvg/resvg-js");
-  const r = new Resvg(svg, {
+  const r = new Resvg(svgSource, {
     font: { fontFiles: fonts(), loadSystemFonts: false, defaultFontFamily: "Inter" },
-    fitTo: { mode: "width", value: width },
+    fitTo: { mode: "width", value: w },
   });
   return new Uint8Array(r.render().asPng());
 }
 
 /** The card as PNG bytes, ready to upload as a Photon attachment. */
-export async function renderLedgerPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
-  return renderSvgPng(ledgerCardSvg(v));
+export function renderLedgerPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
+  return renderSvgPng(ledgerCardSvg(v), W);
+}
+
+/** The 3:2 bubble preview as PNG bytes (the dashboard's og:image). */
+export function renderLedgerPreviewPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
+  return renderSvgPng(ledgerPreviewSvg(v), PW);
 }

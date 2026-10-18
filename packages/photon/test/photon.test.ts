@@ -36,6 +36,19 @@ const base = (over: Partial<PhotonMessage> = {}): PhotonMessage => ({
 });
 
 describe("normalizePhotonMessage", () => {
+  test("keeps a poll tap (poll.vote) with our option ids, even with no text", () => {
+    const n = normalizePhotonMessage(
+      base({
+        content: {
+          type: "poll.vote",
+          selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }],
+        } as unknown as PhotonMessage["content"],
+      }),
+    );
+    expect(n?.text).toBeNull();
+    expect(n?.pollVote).toEqual({ selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }] });
+  });
+
   test("text from a human to the agent", () => {
     const n = normalizePhotonMessage(base());
     expect(n).not.toBeNull();
@@ -192,5 +205,141 @@ describe("Photon2Transport.send", () => {
     await t.send({ spaceId: "s1", senderId: "a", text: "again", parentMessageId: "m2" }, "reply:m2:0");
     expect(bodies.length).toBe(3);
     expect(bodies[2]!.parentMessageId).toBeUndefined();
+  });
+});
+
+describe("Transport.openSpace: texting someone who never wrote in", () => {
+  test("ScriptTransport records the opened space; a reply pushed into it arrives on the dedicated line", async () => {
+    const { ScriptTransport } = await import("@elves/photon");
+    const t = new ScriptTransport();
+    const opened = await t.openSpace("+16175550142", "script");
+    expect(opened).toEqual({
+      spaceId: t.spaceFor("+16175550142"),
+      senderId: t.dedicatedId,
+      senderHandle: t.dedicatedHandle,
+    });
+    expect(t.opened.get(opened.spaceId)).toEqual({
+      handle: "+16175550142",
+      platform: "script",
+      senderId: t.dedicatedId,
+    });
+    const reply = t.push("+16175550142", "yes it's available");
+    expect(reply.spaceId).toBe(opened.spaceId);
+    expect(reply.agentId).toBe(t.dedicatedId);
+    expect(reply.agentHandle).toBe(t.dedicatedHandle);
+    // the owner's own space is untouched
+    expect(t.push("+14255269066", "hi").agentId).toBe(t.agentId);
+  });
+
+  function photonFake(opts: { agents: Record<string, unknown>[] }) {
+    const calls: { method: string; path: string; body?: Record<string, unknown>; key?: string }[] = [];
+    const fakeFetch: FetchLike = async (input, init) => {
+      const u = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : undefined;
+      calls.push({ method, path: u.pathname + u.search, body, key: headers["idempotency-key"] });
+      if (u.pathname.endsWith("/users") && method === "GET")
+        return new Response(JSON.stringify({ items: opts.agents }), { status: 200 });
+      if (u.pathname.endsWith("/users") && method === "POST")
+        return new Response(
+          JSON.stringify({
+            id: "pho_usr_lister",
+            handle: body?.handle,
+            kind: "human",
+            platform: body?.platform,
+          }),
+          { status: 200 },
+        );
+      if (u.pathname.endsWith("/spaces") && method === "POST")
+        return new Response(
+          JSON.stringify({
+            id: "pho_spc_new",
+            kind: "direct",
+            participantIds: body?.participantIds,
+            platform: "imessage",
+          }),
+          { status: 201 },
+        );
+      if (u.pathname.endsWith("/platforms/resources"))
+        return new Response(
+          JSON.stringify({
+            resources: [
+              {
+                resourceId: "res_ded",
+                type: "imessage_dedicated",
+                state: "active",
+                abilities: [],
+                detail: {},
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      return new Response(JSON.stringify({ code: "NOT_FOUND" }), { status: 404 });
+    };
+    return { calls, client: new PhotonClient({ projectId: "p", apiKey: "k", fetch: fakeFetch }) };
+  }
+  const shared = {
+    id: "pho_usr_pool",
+    handle: "+16289979661",
+    kind: "agent",
+    platform: "imessage",
+    details: { type: "shared" },
+  };
+  const dedicated = {
+    id: "pho_usr_line",
+    handle: "+16285550100",
+    kind: "agent",
+    platform: "imessage",
+    details: { type: "dedicated", resourceId: "res_ded" },
+  };
+
+  test("Photon2Transport discovers the dedicated agent once, creates the user and the space, and sends as the line", async () => {
+    const { calls, client } = photonFake({ agents: [shared, dedicated] });
+    const t = new Photon2Transport({ client, logger: createLogger("t", "error") });
+    const opened = await t.openSpace("+16175550142", "imessage");
+    expect(opened).toEqual({
+      spaceId: "pho_spc_new",
+      senderId: "pho_usr_line",
+      senderHandle: "+16285550100",
+    });
+    expect(calls.map((c) => `${c.method} ${c.path.split("?")[0]}`)).toEqual([
+      "GET /v1/projects/p/users",
+      "POST /v1/projects/p/users",
+      "POST /v1/projects/p/spaces",
+    ]);
+    expect(calls[1]!.body).toEqual({ handle: "+16175550142", platform: "imessage" });
+    expect(calls[2]!.body).toEqual({
+      participantIds: ["pho_usr_line", "pho_usr_lister"],
+      platform: "imessage",
+    });
+    expect(calls[2]!.key).toBe("space:pho_usr_line:pho_usr_lister");
+    // the second space reuses the resolved line: no second discovery call
+    await t.openSpace("+16175550199", "imessage");
+    expect(calls.filter((c) => c.method === "GET").length).toBe(1);
+  });
+
+  test("a configured PHOTON_DEDICATED_AGENT_ID wins over discovery and still learns the line's handle", async () => {
+    const { calls, client } = photonFake({ agents: [shared, dedicated] });
+    const t = new Photon2Transport({
+      client,
+      dedicatedAgentId: "pho_usr_line",
+      logger: createLogger("t", "error"),
+    });
+    const opened = await t.openSpace("+16175550142", "imessage");
+    expect(opened.senderId).toBe("pho_usr_line");
+    expect(opened.senderHandle).toBe("+16285550100");
+    expect(calls[2]!.body).toEqual({
+      participantIds: ["pho_usr_line", "pho_usr_lister"],
+      platform: "imessage",
+    });
+  });
+
+  test("with only the shared pool, openSpace rejects and says why", async () => {
+    const { calls, client } = photonFake({ agents: [shared] });
+    const t = new Photon2Transport({ client, logger: createLogger("t", "error") });
+    await expect(t.openSpace("+16175550142", "imessage")).rejects.toThrow(/no dedicated Photon line/);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 });
