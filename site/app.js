@@ -405,6 +405,23 @@
     });
   });
 
+  /* ---------- Nessie modules: a pain point each, with a little picture ---------- */
+  var VIS = {
+    plan: function () { return '<div class="v-plan">' + [["A", "Best odds", 92], ["B", "Runner-up", 82], ["C", "Least effort", 56]].map(function (p) { return '<div class="r' + (p[0] === "B" ? " on" : "") + '"><i>' + p[0] + "</i><span>" + p[1] + "</span><b>" + p[2] + '%</b><u style="--k:' + p[2] / 100 + '"></u></div>'; }).join("") + "</div>"; },
+    books: function () { return '<div class="v-books"><span>wd_3</span><span>pu_8</span><span>dp_4</span><span>es_2</span><em>live</em></div>'; },
+    coming: function () { return '<div class="v-coming"><div><span>Sam $80</span><i class="on"></i></div><div><span>Priya $113</span><i></i></div><div><span>Deposit $400</span><i class="on"></i></div><small>Projected $114 → $227</small></div>'; },
+    net: function () { return '<svg class="v-net" viewBox="0 0 220 70" aria-hidden="true"><path d="M6 12 H70 V26 H130 V44 H190 V60 H214" fill="none" stroke="#0e0f0c" stroke-width="2" stroke-linejoin="round"/><line x1="6" y1="62" x2="214" y2="62" stroke="#9a9ba3" stroke-dasharray="3 4"/><circle cx="6" cy="12" r="4" fill="#0e0f0c"/><circle cx="70" cy="19" r="3.4" fill="#fff" stroke="#0e0f0c" stroke-width="1.5"/><circle cx="130" cy="35" r="3.4" fill="#fff" stroke="#0e0f0c" stroke-width="1.5"/><circle cx="214" cy="60" r="5" fill="#2EA8FF" stroke="#0e0f0c" stroke-width="1.6"/></svg><div class="v-tag"><b>Projected $114</b> by Dec 1</div>'; },
+    split: function () { return '<div class="v-split"><b>$100</b><div><span>$33.34</span><span>$33.33</span><span>$33.33</span></div><small>$40 a month · paid back from the Moving Fund</small></div>'; },
+    engine: function () { return '<div class="v-engine">' + ["Listed", "Counter", "Slot", "Escrow", "Paid"].map(function (s, i) { return "<span" + (i === 3 ? ' class="on"' : "") + ">" + s + "</span>"; }).join("<i></i>") + "</div>"; },
+    lastcall: function () { return '<div class="v-last"><span>$35</span><i></i><span>$28</span><i></i><span>$21</span><i></i><span class="free">free</span></div>'; },
+    budget: function () { return '<div class="v-budget"><div class="bar"><u style="--k:.74"></u></div><div class="meta"><span>$222 of $300 planned</span><b>82% under</b></div><small>truck · deposit · storage · gas · movers</small></div>'; },
+  };
+  function modulesHTML(mods) {
+    return '<div class="bento">' + mods.map(function (m, i) {
+      return '<article class="mod s' + m.sz + (m.dark ? " dark" : "") + '"><h3 class="pain">' + esc(m.pain) + '</h3><p class="sol"><b>' + esc(m.t) + "</b> " + esc(m.s) + '</p><div class="vis">' + VIS[m.vis]() + '</div><details><summary>More</summary><p>' + esc(m.more) + "</p></details>" + (m.go ? '<button type="button" class="try" data-go="' + m.go + '">Try it live</button>' : "") + "</article>";
+    }).join("") + "</div>";
+  }
+
   /* ---------- tracks: one at a time ---------- */
   var sel = $("#trackSelect"), trEl = $("#track");
   TRACKS.forEach(function (t) { sel.appendChild(new Option(t.name, t.id)); });
@@ -415,7 +432,8 @@
     trEl.innerHTML =
       '<p class="why-track"><small>Why ' + esc(t.name) + "</small>" + esc(t.why) + "</p>" +
       '<div class="track-actions"><button class="btn small primary" type="button" id="see">See it in the thread</button><ul class="apis" aria-label="What we used">' + t.apis.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>" +
-      '<div class="tiles">' + t.tiles.map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + "</div>";
+      (t.modules ? modulesHTML(t.modules) : '<div class="tiles">') + (t.modules ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (t.modules ? "" : "</div>");
+    $$("[data-go]", trEl).forEach(function (b) { b.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var tb = $('#led [data-tab="' + b.dataset.go + '"]'); if (tb) setTimeout(function () { tb.click(); }, reduce ? 0 : 450); }); });
     $("#see").addEventListener("click", function () {
       started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
       setTimeout(function () { pickScene(t.scene); }, reduce ? 0 : 500);

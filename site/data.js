@@ -8,8 +8,8 @@ window.SITE = {
   interviewYouTubeId: "h2k7D7NcFDU", // the interview Short (youtube.com/shorts/h2k7D7NcFDU)
   // Photos that float beside sections (not a section of their own). Hidden on narrow screens.
   floatPhotos: [], // photos pinned beside sections (unused now; the photos scroll under the team)
-  nightPhotos: ["assets/night/booth.jpg", "assets/night/desk.jpg"], // scroll under the team; add more files here // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
-  nightCaptions: ["the crew", "the war room"], // one per photo
+  nightPhotos: ["assets/night/booth.jpg", "assets/night/table.jpg", "assets/night/desk.jpg", "assets/night/snack.jpg", "assets/night/pizza.jpg"], // scroll under the team; add more files here // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
+  nightCaptions: ["the crew", "the table", "the war room", "snack run", "dinner break"], // one per photo
   // Team portraits for "Call Elfie": drop photos into assets/team/ and list them here (photo is optional).
   team: [
     { name: "Gavin Zhou", role: "", photo: "" },
@@ -508,4 +508,19 @@ window.DEAL = {
     { k: "Ours", own: true, t: "Scam Shield is in the Deal Engine", s: "The shield runs on every counterparty message.", more: "Because every buyer, applicant and lister goes through our Deal Engine, Scam Shield sees each message: off-escrow asks, gift cards, checks, codes, overpayments. The floor and ceiling are enforced in code at the same place." },
     { k: "Ours", own: true, t: "Plans advise, never act", s: "Smart Plan moves no money and edits no listing.", more: "Picking a plan writes pending, future-dated records and never moves money. It never edits a listing price and never goes below your floor. Expected money stays out of the totals." }
   );
+})();
+
+/* Nessie: modular, one pain point each. sz is the width on a 6-column grid. go opens that tab in the live ledger. */
+(function () {
+  var N = window.TRACKS.filter(function (t) { return t.id === "nessie"; })[0];
+  N.modules = [
+    { sz: 4, dark: true, vis: "plan", go: "sp", pain: "Will I stay under budget?", t: "Three plans. 2,000 simulated moves each.", s: "Your odds, before you spend a dollar.", more: "Each plan decides what to sell and when to drop it, what to donate or haul, the truck size and whether to hire movers. You see a likely cost, a 10 to 90% band and the odds of finishing under your budget. The plan you pick is written to Nessie as pending, future-dated records that settle as things sell, and they never count toward your totals." },
+    { sz: 2, vis: "books", pain: "Which number is right?", t: "The books can't drift.", s: "Read back from Nessie every 5 seconds.", more: "Totals aren't remembered, they're read from tagged Nessie records. Every row on the Activity tab opens its record id." },
+    { sz: 3, vis: "coming", go: "cb", pain: "What if nobody pays on time?", t: "Stress-test the money owed to you.", s: "Switch off a payment. Make everyone two weeks late.", more: "The Coming back page lists every payment still due: roommate shares, deposits, sale money in escrow. Toggle any off, or assume everyone pays late, and the projected net cost and settle date recompute on the spot." },
+    { sz: 3, vis: "net", go: "ov", pain: "Where does this move actually land?", t: "Net cost today, and where it ends.", s: "Every expected payment steps the line down.", more: "Net cost so far comes from Nessie. Each expected payment is a step on the chart that ends in a Projected number and a settle date. Hollow dots are estimated dates." },
+    { sz: 3, vis: "split", pain: "Roommate math.", t: "Splits that aren't just divide by three.", s: "To the penny, uneven, or without you.", more: "$100 three ways is $33.34, $33.33, $33.33. Split without yourself, set uneven shares, put a roommate on a $40-a-month plan, or pay one back out of the Moving Fund. Paying more than owed counts only what was owed. Every request waits for your yes." },
+    { sz: 3, vis: "engine", pain: "Selling to strangers without getting burned.", t: "Our Deal Engine opens the escrow.", s: "It negotiates. Nessie holds the money.", more: "The engine holds your floor, counters buyers and books pickup slots. An agreed price opens an escrow hold in Nessie, two signals release it into the Moving Fund, and a no-show past 24 hours is refunded after your yes. Built by Yasasree." },
+    { sz: 2, vis: "lastcall", pain: "Stuff nobody bought.", t: "Prices fall on a schedule.", s: "20% at 72 h, 25% more at 48 h.", more: "Each cut is texted with the percent, the old and new price and the hours left, then the item goes free at 24 hours. Whatever sells lands in the ledger as money in." },
+    { sz: 4, vis: "budget", pain: "Costs that creep up.", t: "One budget for every expense.", s: "Set it once. Every cost counts against it.", more: "The Money Elf asks your budget the moment the ledger opens. Truck, deposit, storage, gas and movers roll into one net cost, plan odds are measured against it, and if an item runs late and the odds drop 10 points you get one nudge with fresh plans." },
+  ];
 })();

@@ -196,6 +196,8 @@ The Photon page rewards "AI that lives with us": agents that participate, not ut
 - Activity: every Nessie movement, tap for the record id.
 - A never-expiring signed link (HMAC), a short ledger picture sent in the thread, 404 on a bad token.
 
+**On the site, the Nessie track is eight modules, one pain point each (no repeats):** "Will I stay under budget?" (Smart Plan, 2,000 runs per plan), "What if nobody pays on time?" (the Coming back page), "Where does this move actually land?" (expected payments against net cost), "Roommate math" (splits to the penny, uneven, plans, paybacks), "Selling to strangers without getting burned" (the Deal Engine opens the escrow), "Stuff nobody bought" (Last Call), "Costs that creep up" (one budget for every expense), "Which number is right?" (read back from Nessie every 5 seconds). Four of them have a *Try it live* button that opens the real ledger simulator on the right tab.
+
 ### 5.2 Why this is a strong Nessie entry
 - **Depth of API use**: purchases, deposits, withdrawals, accounts, customers, pending and settled states, tagged records, read-back.
 - **A real product reason** for each call (a split, an escrow, a plan).
