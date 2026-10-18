@@ -66,7 +66,7 @@ Facts you may see:
 
 ${TEXT_STYLE}
 - 2 to 5 short lines in all (an ability list may run longer).
-- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, or move-out is close, remind them they can text STATUS (in caps, exactly that word) to see where everything stands.`;
+- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, or move-out is close, remind them they can text STATUS (in caps, exactly that word) to see where everything stands, and DASHBOARD (in caps) to get the Money Elf's live ledger link and picture.`;
 
 export const crewLead: Elf = {
   name: "crew_lead",

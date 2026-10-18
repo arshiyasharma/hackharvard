@@ -175,7 +175,7 @@ The first text, for example:
 
 🚫 The crew can't book trucks, U-Hauls or movers, plan the route or run move day, post listings on Facebook, Craigslist or anywhere else for you, read leases or contact your landlord, pay, send or request money for you or give legal or financial advice.
 
-Text STATUS anytime to see where everything stands.
+Text STATUS anytime to see where everything stands, or DASHBOARD to see your money.
 ```
 
 The hunt's picks:
@@ -251,7 +251,7 @@ $60 held in escrow
 A viewing Fri 6pm for the room: reply yes or no
 ```
 
-**The crew reminds you.** "Text STATUS anytime to see where everything stands." closes the first text (the crew intro), the "what can you do?" list, and the "Locked in" message after you confirm the brief. In the last seven days before move-out, every Crew Lead reply ends with the days left and that line ("5 days to move-out. Text STATUS anytime…"), so the reminder is loudest right before the move. (`STATUS_HINT` in `crew.ts`, `statusNudge` in `status.ts`.)
+**The crew reminds you.** "Text STATUS anytime to see where everything stands, or DASHBOARD to see your money." closes the first text (the crew intro), the "what can you do?" list, and the "Locked in" message after you confirm the brief. In the last seven days before move-out, every Crew Lead reply ends with the days left and that line ("5 days to move-out. Text STATUS anytime…"), so the reminder is loudest right before the move. Texting DASHBOARD goes straight to the Money Elf, which replies with the live ledger picture and the never-expiring dashboard link. (`STATUS_HINT` in `crew.ts`, `statusNudge` in `status.ts`.)
 
 ### The ideal run: every scenario, in order
 

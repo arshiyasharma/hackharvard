@@ -81,6 +81,8 @@ const TABLE: [string, ElfName][] = [
   ["what's my balance", "money"],
   ["how's my money", "money"],
   ["show me my dashboard", "money"],
+  ["DASHBOARD", "money"],
+  ["dashboard", "money"],
   ["show me the ledger", "money"],
   ["the truck was actually $260", "money"],
   ["is this a scam", "money"],

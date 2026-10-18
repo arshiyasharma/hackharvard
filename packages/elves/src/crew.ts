@@ -15,7 +15,7 @@ export function abilityLine(a: Ability): string {
 }
 
 /** The one line every reminder uses, so the owner learns the word once. Also exported from status.ts. */
-export const STATUS_HINT = "Text STATUS anytime to see where everything stands.";
+export const STATUS_HINT = "Text STATUS anytime to see where everything stands, or DASHBOARD to see your money.";
 
 /**
  * What the crew can and cannot do: the one list the Crew Lead's text prompt, its first message, the onboarding
