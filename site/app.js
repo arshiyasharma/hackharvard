@@ -462,7 +462,7 @@
   /* ---------- tracks: one at a time ---------- */
   var sel = $("#trackSelect"), trEl = $("#track");
   TRACKS.forEach(function (t) { sel.appendChild(new Option(t.name, t.id)); });
-  var ACC = { photon: ["#0a84ff", "#e7f1ff", "Photon"], nessie: ["#1b8fe0", "#dcecff", "Nessie"], sustain: ["#2fb36b", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
+  var ACC = { photon: ["#0a84ff", "#e3efff", "Photon"], nessie: ["#7b5cff", "#ece6ff", "Nessie"], sustain: ["#1f9d5c", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
   function showTrack(id) {
     var t = TRACKS.filter(function (x) { return x.id === id; })[0];
     var stp = null, steps = t.story || (t.modules ? nessieOrdered(t.modules) : null); var ac = ACC[id], tp = $("#trackPanel"); tp.classList.toggle("compact", !!steps); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];

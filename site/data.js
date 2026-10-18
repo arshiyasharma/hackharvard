@@ -600,3 +600,22 @@ window.DEAL = {
   };
   N.modules.forEach(function (m) { if (NP[m.vis]) m.pts = NP[m.vis]; });
 })();
+
+/* Photon points, tightened. */
+(function () {
+  var P = window.TRACKS.filter(function (t) { return t.id === "photon"; })[0];
+  var T = {
+    "Agents": ["House-hunt, marketplace and money agents in one project", "A Crew Lead, on one number", "One big task, no splitting it up for the user", "They call each other, and ask you"],
+    "Channels": ["iMessage pool, SMS and voice: one project", "Socket.IO stream, saved cursor, no replays", "Text, images, polls, reactions, typing, receipts", "Dedicated-line ready. WhatsApp, Telegram, email next"],
+    "You approve": ["Viewings, escrow, refunds, plans wait for your yes", "By text, poll tap or dashboard button", "Your lowest price stays private", "A thumbs-up counts; stale taps do nothing"],
+    "Memory": ["Rebuilt every turn from move, items and brief", "Transcript summary, facts, Elf notes", "Call, thread and dashboard share it", "We weighed Mastra, then built our own on Postgres"],
+    "Voice": ["Answers a real call on the Photon number", "Hears your move, plays it back with blanks", "Five questions max, then one yes", "Same memory as text, then a recap text", "Prompts scored against simulated callers"],
+    "Delight": ["One Elf name and one emoji per text", "Short blocks; quick texts batched", "Typing and read receipts throughout", "HELP, STATUS, DASHBOARD, SMART PLAN", "Ledger and plans arrive as pictures"],
+    "Trust": ["Poll refused: reply yes. Thread refused: flat send", "No model key: template replies", "Nessie down: \"nothing moved\"", "Scam Shield; card numbers never stored"],
+    "APIs": ["Nessie: accounts, deposits, purchases, pending records", "Claude: routing, drafting, vision", "Retell: the call", "Browserbase and Stagehand: a real-browser house hunt", "Supabase and Railway: state and hosting"],
+    "Skills": ["Docs unfinished, so we read the live OpenAPI spec", "Saved as project skills: photon, run-elves-on-phone", "Idempotent sends, chunked replies, replay-safe memory", "614 tests, 640 on Postgres"],
+    "Traction": ["15+ interviewed, 30+ signed up", "Live: Railway, Postgres, real phones, real Nessie", "Boston's September 1 is a built-in launch day", "Swap the Elves: weddings, home purchases, visas"],
+    "1.0 vs 2.0": ["Built the 1.0 mini app first: second number, registered users", "Called Vincent at 1 a.m. about the router", "Chose 2.0 for the agent", "Dashboard, Smart Plan, Move Report: pictures plus a live link"],
+  };
+  P.story.forEach(function (s) { if (T[s.label]) s.pts = T[s.label]; });
+})();
