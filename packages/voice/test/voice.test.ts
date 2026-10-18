@@ -74,7 +74,7 @@ describe("ingestCall", () => {
 
     const facts = (await memory.listFacts(move.id)).map((f) => f.text);
     expect(facts.some((t) => t.includes("couch"))).toBe(true);
-    for (const elf of ["crew_lead", "stuff", "home", "moveday", "money"] as const)
+    for (const elf of ["crew_lead", "stuff", "home", "money"] as const)
       expect(await memory.note(move.id, elf, "call_brief")).toBeTruthy();
     const stuff = (await memory.note(move.id, "stuff", "call_brief")) as { toSell: string[] };
     expect(stuff.toSell.sort()).toEqual(["couch", "desk"]);

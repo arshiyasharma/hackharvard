@@ -351,8 +351,8 @@ async function writeBriefs(
   const briefs: Partial<Record<ElfName, Record<string, unknown>>> = {
     crew_lead: { ...base, summary, conflicts: b.conflicts, asks: b.asks },
     stuff: { ...base, toSell: b.selling, keeping: b.keeping, toBuy: b.toBuy, moveOut: b.moveOut },
-    home: { ...base, moveOut: b.moveOut, moveIn: b.moveIn, from: b.from, to: b.to, asks: asks(HOME_WORDS) },
-    moveday: {
+    // Home took over what Move-day had: the keep list, who's helping, and move-day asks.
+    home: {
       ...base,
       moveOut: b.moveOut,
       moveIn: b.moveIn,
@@ -360,7 +360,7 @@ async function writeBriefs(
       to: b.to,
       keeping: b.keeping,
       roommates: b.roommates,
-      asks: asks(MOVE_WORDS),
+      asks: [...new Set([...asks(HOME_WORDS), ...asks(MOVE_WORDS)])],
     },
     money: { ...base, roommates: b.roommates, asks: asks(MONEY_WORDS) },
   };

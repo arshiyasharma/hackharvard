@@ -56,7 +56,7 @@ describe.each(backends)("Store contract (%s)", (_name, open) => {
     expect((await store.getMoveByOwnerHandle(handle("owner1")))?.id).toBe(move.id);
     expect(await store.getMove("mv_nope")).toBeUndefined();
     const board = await store.getBoard(move.id);
-    expect(board.map((b) => b.elf)).toEqual(["crew_lead", "stuff", "money", "moveday", "home"]);
+    expect(board.map((b) => b.elf)).toEqual(["crew_lead", "stuff", "money", "home"]);
     expect(board[0]).toMatchObject({ status: "working", currentTask: "Getting the move set up" });
     expect(board[1]).toMatchObject({ status: "idle", currentTask: "Standing by" });
   });

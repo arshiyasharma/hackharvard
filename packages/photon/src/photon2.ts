@@ -65,6 +65,8 @@ export class Photon2Transport implements Transport {
   private readonly log: Logger;
   /** Spaces where Photon refused a threaded reply (409 SPACE_NOT_SENDABLE); later sends go flat. */
   readonly noThreads = new Set<string>();
+  /** Spaces where Photon refused a reaction (the shared pool does); they are not asked again. */
+  readonly noReactions = new Set<string>();
   /** Bounded set of handled message ids so overlapping polls or replays are idempotent. */
   private seen = new Set<string>();
   private seenOrder: string[] = [];
@@ -259,7 +261,14 @@ export class Photon2Transport implements Transport {
     }
   }
   async react(target: { spaceId: string; senderId: string; messageId: string }, emoji: string, key: string) {
-    await this.client.react({ ...target, reaction: emoji }, key);
+    if (this.noReactions.has(target.spaceId)) throw new Error(`reactions refused in ${target.spaceId}`);
+    try {
+      await this.client.react({ ...target, reaction: emoji }, key);
+    } catch (err) {
+      if (err instanceof PhotonApiError && err.status === 409 && err.code === "SPACE_NOT_SENDABLE")
+        this.noReactions.add(target.spaceId);
+      throw err;
+    }
   }
   async typing(spaceId: string, senderId: string, on: boolean) {
     await this.client.setTyping(spaceId, senderId, on);

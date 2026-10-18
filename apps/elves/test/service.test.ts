@@ -3,6 +3,7 @@ import { moveOutInstant } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
 import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
+import { CREW_ABILITIES } from "@elves/elves";
 import { ScriptTransport } from "@elves/photon";
 import { createLogger, MemoryStore, type Store } from "@elves/shared";
 import { createService } from "../src/service.ts";
@@ -111,21 +112,49 @@ describe("service end to end (script transport)", () => {
     await transport.settled();
     await service.pipeline.idle();
     transport.push(owner, "also");
-    transport.push(owner, "can you book storage");
-    transport.push(owner, "for june to august");
+    transport.push(owner, "how does the escrow work");
+    transport.push(owner, "for the ledger");
     await transport.settled();
     await service.pipeline.idle();
-    // second batch: one Move-day reply (stub Elves don't send the board link)
-    const haul = transport.sent.filter((s) => s.text.startsWith("Move-day Elf"));
+    // every text gets its own 👍, not only the last of the batch
+    expect(transport.reactions.length).toBe(4);
+    // second batch: one Money reply (stub Elves don't send the board link)
+    const haul = transport.sent.filter((s) => s.text.startsWith("Money Elf"));
     expect(haul.length).toBe(1);
     expect(transport.sent.length).toBe(2);
     const move = (await store.listMoves())[0]!;
-    expect((await store.getBoard(move.id)).find((b) => b.elf === "moveday")?.status).toBe("working");
-    // a reply inside the Move-day thread stays with Move-day
+    expect((await store.getBoard(move.id)).find((b) => b.elf === "money")?.status).toBe("working");
+    // a reply inside the Money thread stays with Money
     transport.push(owner, "june 2 to aug 30", { parentMessageId: haul[0]!.id });
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[2]!.text.startsWith("Move-day Elf")).toBe(true);
+    expect(transport.sent[2]!.text.startsWith("Money Elf")).toBe(true);
+    stop();
+  });
+
+  test("the first text lists what the crew can do; ability, status and out-of-scope asks get exact answers", async () => {
+    const { transport, store, service, stop } = boot(null);
+    const say = async (text: string) => {
+      const before = transport.sent.length;
+      transport.push(owner, text);
+      await transport.settled();
+      await service.pipeline.idle();
+      return transport.sent.slice(before).map((s) => s.text).join("\n");
+    };
+    const first = await say("hi");
+    expect(first).toStartWith("Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
+    for (const a of CREW_ABILITIES) expect(first).toContain(a.text);
+    expect(first).toContain("The crew can't book trucks, U-Hauls or movers");
+    expect(first).not.toContain("Text me anything");
+
+    expect(await say("what can you do?")).toStartWith("Here's what the crew can do:");
+    expect(await say("can you book me a u-haul for saturday")).toContain(
+      "The crew can't book trucks, U-Hauls or movers.",
+    );
+    expect(await say("moving out nov 1")).toContain("Nov 1");
+    const move = (await store.listMoves())[0]!;
+    await store.updateMove(move.id, { moveInAt: "2026-11-03", toAddress: "12 Elm St" });
+    expect(await say("status")).toStartWith("You're moving out Nov 1 and in Nov 3 at 12 Elm St.");
     stop();
   });
 

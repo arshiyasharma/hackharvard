@@ -53,12 +53,11 @@ const FIXTURES: [string, ElfName][] = [
   ["can we split the truck cost", "money"],
   ["is the deposit in escrow", "money"],
   ["this feels like a scam", "money"],
-  ["book storage june to august", "moveday"],
-  ["need a u-haul for the 1st", "moveday"],
-  ["do i need a moving permit", "moveday"],
-  ["hire movers for saturday", "moveday"],
-  ["what's your eta", "moveday"],
-  ["where are you, i'm at the address", "moveday"],
+  ["book storage june to august", "home"],
+  // Move-day is gone: trucks, movers and move-day logistics fall to the Crew Lead, which says the crew can't.
+  ["need a u-haul for the 1st", "crew_lead"],
+  ["hire movers for saturday", "crew_lead"],
+  ["what's your eta", "crew_lead"],
   ["can i sublet my room", "home"],
   ["my landlord needs 30 days notice", "home"],
   ["check this clause in the lease", "home"],
@@ -123,7 +122,7 @@ describe("route()", () => {
   });
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
-    expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
+    expect(r).toMatchObject({ elf: "home", via: "keyword" });
   });
   test("a photo goes to the Stuff Elf unless it is first contact", async () => {
     expect(await route(batchOf(null, null, [{ id: "att1" }]), deps, { firstContact: false })).toMatchObject({

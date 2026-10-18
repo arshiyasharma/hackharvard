@@ -1,4 +1,5 @@
 export * from "./contract.ts";
+export * from "./crew.ts";
 export { crewLead } from "./crew-lead.ts";
 export * from "./deal.ts";
 export * from "./facts.ts";
@@ -8,6 +9,7 @@ export * from "./home-followups.ts";
 export * from "./home-rank.ts";
 export * from "./intake.ts";
 export * from "./router.ts";
+export * from "./status.ts";
 export { stuffElf } from "./sell.ts";
 export { stubElves } from "./stubs.ts";
 

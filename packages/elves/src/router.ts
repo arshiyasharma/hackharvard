@@ -3,6 +3,7 @@ import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
 import type { ElfName, Role, Store } from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { parsePriceCents } from "./intake.ts";
@@ -13,6 +14,7 @@ export type RouteVia =
   | "thread"
   | "deal"
   | "followup"
+  | "scope"
   | "photo"
   | "price"
   | "llm"
@@ -79,10 +81,21 @@ export async function route(
   }
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
 
+  // "status" and "what can you do?" are the Crew Lead's, from any thread.
+  const asked = batchText(batch);
+  if (
+    (opts.role ?? "owner") === "owner" &&
+    !hasPhotos(batch) &&
+    (isStatusAsk(asked) || isCapabilitiesQuestion(asked)) &&
+    deps.elves.some((e) => e.name === "crew_lead")
+  )
+    return { elf: "crew_lead", via: "scope", confidence: 1 };
+
   for (const m of [...batch.messages].reverse()) {
     if (m.parentMessageId) {
       const owner = await deps.store.getThreadOwner(m.parentMessageId);
-      if (owner) return { elf: owner, via: "thread", confidence: 1 };
+      if (owner && deps.elves.some((e) => e.name === owner))
+        return { elf: owner, via: "thread", confidence: 1 };
     }
   }
 

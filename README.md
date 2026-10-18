@@ -1,18 +1,18 @@
 # Elves — a moving crew you text
 
-HackHarvard 2026. Ten specialist agents ("Elves") live in your iMessage/SMS thread on Photon 2.0 lines and run a move end to end: sell the furniture, book the truck and storage, handle the lease, settle the money, keep things out of the landfill. This repo is the service behind the number.
+HackHarvard 2026. A Crew Lead and three specialist agents ("Elves": Home, Stuff, Money) live in your iMessage/SMS thread on Photon 2.0 lines and run a move end to end: sell the furniture, find the next place and storage, handle the lease, settle the money, keep things out of the landfill. This repo is the service behind the number.
 
 Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including Room Scan: [`docs/elves-spec.md`](docs/elves-spec.md). Original design and the W1–W23 plan: [`docs/`](docs/). **This README is the state of `team-stable`.** SPEC §2, §3 and §6 still describe an older snapshot (Deal Engine "not on this branch", Buy and Donate as stubs, 202 tests, migrations stopping at `0003`). When they disagree with the table below, trust this README, then the code.
 
 ## State of this branch
 
-`bun test` is 240 tests across 19 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 256 tests across 21 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
 | Area | On `team-stable` | Still empty |
 | --- | --- | --- |
-| Crew Lead | Built. First text, plan, dates, items, routing, board link once `PUBLIC_URL` is set. | Mini-app polish. The board page exists; it is not a live mini app. |
+| Crew Lead | Built. The first text opens with the crew's exact ability list, "what can you do?" repeats it, "status" gets one paragraph, and anything the crew doesn't do gets "the crew can't do that" plus the closest thing it can do (see "The crew" below). Then plan, dates, items, routing, board link once `PUBLIC_URL` is set. | Mini-app polish. The board page exists; it is not a live mini app. |
 | Stuff · Sell | Built. Photo → vision → item, floor, list price, "yes, list it" opens a `sell_item` deal. Buyers text this number. | Nobody posts the listing to a marketplace. The owner pastes the ref into their own post. |
 | Stuff · Buy | Opens a `buy_item` deal after an explicit yes. Needs a forwarded link and a max price. The ceiling is the deal's limit. | No comps. No message to the seller. The seller has to text this number and quote the ref. The canned "I'll check comps" line is no longer what runs when the text is a real buy. |
 | Stuff · Donate | "Donate the lamp" then "yes" marks that item `donated`, closes its open sell deal, and emits `pickup.requested`. | No Goodwill, 311, or bulk-pickup API. A bare "last call" / "recycle" question with no item is still the canned green reply. |
@@ -21,7 +21,7 @@ Branch from here when you want the crew that actually runs. The rows marked **em
 | Money · Nessie | The engine emits `ledger.hold` when a price is agreed, `escrow.requested` and `ledger.release` on hand-off, and `ledger.refund` if that party walks before hand-off. | **Nessie is not integrated.** No `MoneyRails`, no Nessie client, no Moving Fund, no Escrow account, no Ledger page. The Money Elf is a canned reply. Real dollars are not moved. |
 | Home · Hunt | Built. One missing fact at a time (budget → area → dates), then Craigslist and Airbnb. Scam flags, rank, top 3. "more" / "tell me about 2" / "skip" / "save". "search again" bypasses the 3-minute cache. A forwarded listing URL is ranked with the picks. | Booking, SpareFoot, Apartments, Zillow, and Facebook are off the default allowlist (blocks). Save drafts a text the owner sends; Home does not contact the lister. |
 | Home · Sublet | "Sublet my room for $1500" opens `sublet_out`. "Reach out to 2" after picks opens `find_sublet` and still tells the owner to send the note. | Lease PDF reading is the canned lease reply. Move-in week is the canned checklist reply. No landlord is contacted. |
-| Move-day | A booked slot emits `pickup.scheduled` with `subjectId` and the title, and the owner is told the item comes off the truck estimate. | **The Move-day Elf is empty.** Room Scan, U-Haul size and price, box list, Move Map, ETAs, and return-time planning are not built. Nothing reads `pickup.scheduled` yet. |
+| Move-day | **Folded into Home on 2026-10-17; there is no Move-day Elf.** Storage is a Home search; a booked pickup still emits `pickup.scheduled`; the call brief Move-day used to get now goes to Home. | Trucks, U-Haul, movers, Room Scan, the Move Map and ETAs are out of scope by design: the Crew Lead says the crew can't. Old `moveday` board rows are hidden. |
 | Owner yes | Inbound 👍 / heart / ✅ with no text counts as "yes" on the owner's question, and on a pending buy or donate. | Outbound 👍 fails on the shared Photon pool (`409`). Replies stay plain text. There is no tapback override for a scam flag. |
 | Memory and store | Postgres (Supabase) via `Bun.sql`. Working memory, transcript, facts, notes. Migrations `0001`–`0006` run on boot. | `0005_workflows.sql` still creates `deal_runs` and `last_call_runs`. The Mastra package that used them was deleted. Nothing writes those tables. |
 
@@ -37,6 +37,26 @@ Branch from here when you want the crew that actually runs. The rows marked **em
 4. Lease PDF and move-in are still canned. U-Haul quotes and the Move Map are still canned.
 
 Do not reintroduce `packages/workflows` or `@mastra/core`. SPEC already records that decision. Leave `0005_workflows.sql` in place so existing databases still migrate.
+
+## The crew: a Crew Lead and three Elves
+
+One list in code says what the crew can do: `CREW_ABILITIES` and `CREW_LIMITS` in [`packages/elves/src/crew.ts`](packages/elves/src/crew.ts). The Crew Lead's iMessage/SMS prompt (`SYSTEM` in [`crew-lead.ts`](packages/elves/src/crew-lead.ts)) and its first text read it; change an ability there, not in the prompt. The Retell voice agent's prompt lives only in the Retell portal, not in this repo.
+
+| Elf | What it does | What it never does |
+| --- | --- | --- |
+| **Home** | Finds a place to move into, a hotel for the gap, or storage (Craigslist, Airbnb, Booking.com, SpareFoot), flags scams, texts the top 3. Sublets your place: rent, dates, area, room photos, writes the post for you. Keeps the move checklist (utilities, internet, renters insurance, address change, keys). | Books a viewing without your yes. Reads leases or contacts landlords. Posts anything for you. |
+| **Stuff** | Prices an item from a photo and writes the listing line. Negotiates with buyers who text the number, never under your lowest price. Last Call: price drop 48 hours before move-out, free at 24 hours, then asks about donating. | Posts to Facebook Marketplace or anywhere else; you paste the post. |
+| **Money** | The move's ledger on Nessie: sales, escrow holds and releases, money set aside for the move. | Pays, sends or requests money for you. |
+
+**The crew cannot:** book trucks, U-Hauls or movers; plan the route or run move day; post listings for you; read leases or contact landlords; pay, send or request money for you; give legal or financial advice; anything not about the move.
+
+On this branch the Home sublet post and the move checklist are advertised but not built yet (they are on `gavin`); Hunt and the `sublet_out` deal are.
+
+- **First text:** `crewIntro()` word for word ("Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:", one line per ability, then what the crew can't do), then the Crew Lead's reply. Never "text me anything".
+- **"what can you do?" / "help":** `abilitiesReply()`. **"status" / "where are we?":** `statusReport()` in [`status.ts`](packages/elves/src/status.ts), one paragraph off the store: dates, sublet, housing picks, Stuff listed/sold/pickups, ledger, and anything waiting on your yes. Both route to the Crew Lead from any thread.
+- **Out of scope:** `outOfScope()` gives the fixed "The crew can't …" sentence plus the closest thing it can do; the prompt's scope rules catch the rest and forbid improvising an ability.
+
+**👍 on every text.** As soon as a batch arrives, `service.ts` sends the read receipt, then a 👍 tapback on each text in it, then typing. On the shared iMessage pool Photon refuses reactions with `409 SPACE_NOT_SENDABLE` (read receipts and typing work), so the likes only show up on a **dedicated iMessage line**: `bun run photon provision-dedicated` (`bun run photon status` showed `dedicatedLineAvailableNow: true` on 2026-10-17; it may need the Photon business plan), then hand out that number and set `PHOTON_DEDICATED_AGENT_ID`.
 
 ## Run it
 
@@ -126,7 +146,7 @@ Every Elf is `handle(ctx) → { replies, boardPatch, events, movePatch }`. The s
 | Threaded reply | `parentMessageId` | every Elf reply | shared pool refuses (409 `SPACE_NOT_SENDABLE`); the transport falls back to a flat send and remembers the space |
 | Read receipt | `POST /messages/{id}/read` | after the batch is read | yes |
 | Typing | `POST /spaces/{spaceId}/typing` | around model calls | yes |
-| Reaction | `POST /messages` `content.type=reaction` | on every inbound | refused on the shared pool (same 409); logged, not retried |
+| Reaction | `POST /messages` `content.type=reaction` with `parentMessageId` = the inbound message | after the read receipt, a 👍 on every text in the batch (not on SMS, not on a tapback) | refused on the shared pool (409); the transport stops asking that space after the first refusal. Works on a dedicated line |
 | Shared-line assignments | `GET/POST /platforms/imessage/assignments` | `scripts/photon.ts` | yes |
 | Lines | `GET /platforms/resources` | `scripts/photon.ts status` | yes |
 

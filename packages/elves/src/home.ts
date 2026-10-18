@@ -56,6 +56,8 @@ export const HUNT_SKILL: Skill = {
   id: "hunt",
   keywords: [
     "find a sublet",
+    "storage",
+    "storage unit",
     "find me a place",
     "looking for a room",
     "need a place",

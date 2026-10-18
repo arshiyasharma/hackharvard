@@ -4,6 +4,7 @@ import {
   type Elf,
   type ElfContext,
   type ElfResult,
+  hasPhotos,
   lastMessageId,
   memoryPreamble,
 } from "./contract.ts";
@@ -17,25 +18,48 @@ import {
   itemStatus,
   postLine,
 } from "./intake.ts";
+import {
+  abilitiesReply,
+  crewIntro,
+  crewScopePrompt,
+  isCapabilitiesQuestion,
+  isStatusAsk,
+  outOfScope,
+} from "./crew.ts";
+import { statusReport } from "./status.ts";
 
-const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts. Four specialist Elves work under you: Stuff (selling, buying, donating), Money (payments, escrow, splits), Move-day (trucks, storage, the Move Map) and Home (lease, finding a place, move-in week). You run the owner's group chat.
+const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts on iMessage or SMS. You run the owner's chat and hand work to three specialist Elves. You are not a general assistant: you only talk about this move and only offer what the crew can actually do.
+
+${crewScopePrompt()}
+
+Your job each turn:
+1. Capture what the owner told you (dates, addresses, items) and confirm it in their own words.
+2. Say which Elf is on what, in one line. Mention ONLY the Elves listed under elvesWithWork in the facts; if that list is empty, mention no Elf. Never invent work for an Elf.
+3. Ask for at most ONE missing thing (see "Asking" below).
+
+Scope rules (these override everything else):
+- If the facts include cantDo, the owner asked for something the crew does not do. Open with cantDo.cant word for word, then cantDo.instead. Never offer to do it anyway, never say "I'll look into it", and never suggest an outside company or app by name.
+- If the owner asks for anything else that is not in the list above, say plainly in one line that the crew can't do that, then name the closest thing it can do from the list. Never improvise a new ability, and never promise one "later".
+- If the owner asks what you can do, list the abilities above, one short line each, then the line about what the crew can't do.
+- Never promise to move money, post to a marketplace, book a viewing or a pickup, or agree a price without the owner's yes. Every Elf drafts and asks; the owner decides.
+
+Asking: if the move-out date is unknown, ask for it. Otherwise, if an item has a photo but no floor (see items), ask for the lowest price they'd take for it. Otherwise, if an item for sale has no photo, ask for a photo and the lowest price. Never ask for a photo or a floor an item already has. Never ask about trucks, movers or anything the crew doesn't do.
+
+Facts you may see:
+- firstContact: the crew intro with the full ability list is sent right above your reply, so do not introduce yourself or list the abilities again; just respond to what they said.
+- identifiedFromPhotos: say in one line what the photo shows (material, color, condition) and the fair price range; the Stuff Elf has it.
+- justApproved: confirm those items are listed at their list price and that buyers will text this number.
+- photosUnreadable: ask them to send the photo again.
 
 Write the reply as a text message:
 - Plain text only. No markdown, no bullet symbols, no headers. At most one emoji, usually none.
-- 2 to 4 short lines. Each line is one sentence.
-- Confirm what you captured (dates, items, addresses) in the owner's own words.
-- Say which Elf is on what, in one line. Mention ONLY the Elves listed under elvesWithWork in the facts; if that list is empty, mention no Elf. Never invent work for an Elf.
-- If identifiedFromPhotos is non-empty, say in one line what the photo shows (material, color, condition) and the fair price range; the Stuff Elf has it.
-- Ask for at most ONE missing thing. If the move-out date is unknown, ask for it. Otherwise, if an item has a photo but no floor (see items), ask for the lowest price they'd take for it. Otherwise, if an item for sale has no photo, ask for a photo and the lowest price. Never ask for a photo or a floor an item already has.
-- If justApproved is non-empty, confirm those items are listed at their list price and that buyers will text this number.
-- Never promise to move money, post to a marketplace, or book anything without the owner's OK.
-- If this is the first contact, open with one line saying you're their moving crew and they can text you anything about the move.
-- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory.`;
+- 2 to 4 short lines, one sentence each (an ability list may run longer).
+- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, tell them to text "status".`;
 
 export const crewLead: Elf = {
   name: "crew_lead",
   description:
-    "Orchestration: greetings, the plan, move-out and move-in dates, addresses, roommates, coverage, general questions about the move, anything ambiguous",
+    'Orchestration: greetings, what the crew can do, "status", the plan, move-out and move-in dates, addresses, roommates, general questions about the move, anything ambiguous, and anything the crew does not do (trucks, movers, U-Haul, move day, leases, landlords, paying anyone)',
   keywords: [
     "hi",
     "hello",
@@ -59,6 +83,17 @@ export const crewLead: Elf = {
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
     const text = batchText(ctx.batch);
+    // "what can you do?" and "status" have exact answers.
+    if (!ctx.firstContact && !hasPhotos(ctx.batch)) {
+      const parent = lastMessageId(ctx.batch);
+      if (isStatusAsk(text))
+        return {
+          replies: [{ text: await statusReport(ctx.store, ctx.move), parentMessageId: parent }],
+          events: [{ type: "status.sent", payload: {} }],
+        };
+      if (isCapabilitiesQuestion(text))
+        return { replies: [{ text: abilitiesReply(), parentMessageId: parent }] };
+    }
     const now = ctx.now();
     const heuristic = extractFactsHeuristic(text, now);
     const extraction = (async () => {
@@ -105,7 +140,13 @@ export const crewLead: Elf = {
       for (const it of justApproved)
         events.push({
           type: "listing.approved",
-          payload: { itemId: it.id, name: it.name, listPriceCents: it.listPriceCents, dealId: it.dealId, code: it.dealCode },
+          payload: {
+            itemId: it.id,
+            name: it.name,
+            listPriceCents: it.listPriceCents,
+            dealId: it.dealId,
+            code: it.dealCode,
+          },
         });
     }
     if (facts.moveOutDate && facts.moveOutDate !== ctx.move.moveOutAt) {
@@ -169,8 +210,10 @@ export const crewLead: Elf = {
     if (facts.items.some((i) => i.intent === "donate")) stuffWork.push("donation pickup");
     if (facts.items.some((i) => i.intent === "buy")) stuffWork.push("evaluate what to buy");
     if (stuffWork.length) elvesWithWork.push(`Stuff Elf: ${stuffWork.join("; ")}`);
+    const cantDo = outOfScope(text);
     const summary = {
       firstContact: ctx.firstContact,
+      cantDo: cantDo ? { cant: cantDo.cant, instead: cantDo.instead } : null,
       elvesWithWork,
       identifiedFromPhotos: intake.items.map(describeItem),
       photosUnreadable: intake.failed,
@@ -200,9 +243,12 @@ export const crewLead: Elf = {
       reply = templateReply(summary);
     }
     if (ctx.signal.aborted) return { replies: [] };
+    // The first text always opens with exactly what the crew can do, word for word, never "text me anything".
+    if (ctx.firstContact) reply = `${crewIntro()}\n\n${reply}`;
 
     const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
-    for (const a of justApproved) if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;
+    for (const a of justApproved)
+      if (!reply.includes(a.dealCode)) reply += `\nFor your post: ${postLine(a, poolNumber)}`;
     const replies: ElfResult["replies"] = [
       { text: reply, parentMessageId: lastMessageId(ctx.batch), onSent: anchorDeals(ctx, justApproved) },
     ];
@@ -229,6 +275,7 @@ export const crewLead: Elf = {
 
 function templateReply(s: {
   firstContact: boolean;
+  cantDo: { cant: string; instead: string } | null;
   moveOutDate: string | null;
   itemsMentionedNow: { name: string; intent: string }[];
   allItems: string[];
@@ -238,10 +285,7 @@ function templateReply(s: {
   items: { name: string; hasPhoto: boolean; floor: string | null; listPrice: string | null }[];
 }): string {
   const lines: string[] = [];
-  if (s.firstContact)
-    lines.push(
-      "Hey, this is your moving crew. Text me anything about the move and I'll put the right Elf on it.",
-    );
+  if (s.cantDo) lines.push(`${s.cantDo.cant} ${s.cantDo.instead}`);
   if (s.identifiedFromPhotos.length)
     lines.push(`From your photo: ${s.identifiedFromPhotos.join("; ")}. Stuff Elf has it.`);
   else if (s.photosUnreadable) lines.push("I couldn't read the photo you sent; can you send it again?");

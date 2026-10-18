@@ -293,22 +293,28 @@ export function createService(deps: ServiceDeps): Service {
       firstContact,
     });
 
-    // Acknowledge before any model call: reaction + typing + read receipt (best effort, never blocks).
+    // Acknowledge before any model call (best effort, never blocks): read receipt, then a 👍 on every text in the
+    // batch, then typing. SMS has no tapbacks, and a tapback on a tapback is noise, so those are skipped. On the
+    // shared iMessage pool Photon refuses reactions (409); the transport stops asking that space after the first.
     const ack = (async () => {
-      try {
-        await deps.transport.react(
-          { spaceId: last.spaceId, senderId: last.agentId, messageId: last.id },
-          "👍",
-          sendKey("react", last.id),
-        );
-        counters.reactions++;
-      } catch (err) {
-        log.debug("reaction not sent", { error: String(err) });
-      }
       try {
         await deps.transport.read(last.id, sendKey("read", last.id));
       } catch (err) {
         log.debug("read receipt not sent", { error: String(err) });
+      }
+      for (const m of batch.messages) {
+        if (m.platform === "sms" || (m.reaction && !m.text && !m.attachments.length)) continue;
+        try {
+          await deps.transport.react(
+            { spaceId: m.spaceId, senderId: m.agentId, messageId: m.id },
+            "👍",
+            sendKey("react", m.id),
+          );
+          counters.reactions++;
+        } catch (err) {
+          log.debug("reaction not sent", { error: String(err) });
+          break;
+        }
       }
       try {
         await deps.transport.typing(last.spaceId, last.agentId, true);

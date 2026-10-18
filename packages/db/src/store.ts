@@ -288,7 +288,10 @@ export class PostgresStore implements Store {
       boardRow,
     );
     const order = new Map(ELF_NAMES.map((e, i) => [e, i] as const));
-    return rows.sort((a, b) => (order.get(a.elf) ?? 99) - (order.get(b.elf) ?? 99));
+    // Rows for an Elf no longer on the crew (Move-day) stay in the table but leave the board.
+    return rows
+      .filter((r) => order.has(r.elf))
+      .sort((a, b) => (order.get(a.elf) ?? 99) - (order.get(b.elf) ?? 99));
   }
   async patchBoard(
     moveId: string,
