@@ -24,7 +24,7 @@ import { fmtDate, fmtUsd } from "./amounts.ts";
 import { capFirst, esc } from "./ledger-card.ts";
 import { type LedgerView, ledgerSummaryLine } from "./ledger-view.ts";
 import { type PlanColors, planGrid, planPath, planRace } from "./plan-chart.ts";
-import { ASSUMPTIONS, pct as pctOf } from "./plans.ts";
+import { ASSUMPTIONS, pct as pctOf, suggestBudgets } from "./plans.ts";
 import { ASSUMED_DAYS, netPhrase } from "./projection.ts";
 
 // ---------- icons (thin line glyphs, drawn inline so the page has no external assets) ----------
@@ -530,9 +530,14 @@ function smartLayer(v: LedgerView): string {
     `<div class="smart-top">${SPARK}<span class="smart-k">Beyond the ledger</span><span class="smart-chip">Smart Plan</span></div><h3>${esc(title)}</h3><p>${esc(sub)}</p>`;
   const foot = `<div class="smart-foot">2,000 simulated moves per plan · estimates from the assumptions table, not promises</div>`;
   if (!ps || (!ps.chosen && !ps.drafts.length)) {
-    return `<section class="smart" aria-label="Smart Plan">${head("Nessie records what happened. This plans what's next.", "Tell the Money Elf your budget and it tests three ways to finish the move.")}
+    const spent = Math.max(v.projection.netNowCents, 0);
+    const budgets = suggestBudgets(spent);
+    return `<section class="smart" aria-label="Smart Plan">${head(
+      spent ? `Your move has cost ${fmtUsd(spent)} so far. Where should it land?` : "Nessie records what happened. This plans what's next.",
+      "Pick a budget and the Money Elf tests three ways to finish the move, with the odds of each.",
+    )}
 <ul class="sp-steps"><li>Which things to sell, at what price, and when to drop it</li><li>Truck size, movers or not, donate or haul</li><li>Your odds of finishing under budget, and how much effort each way takes</li></ul>
-<div class="sp-pick"><span>Pick a budget, then paste it in Messages:</span>${[200, 400, 600].map((b) => `<button class="sp-chip" data-copy="plan my move under $${b}">$${b}</button>`).join("")}</div>
+<div class="sp-pick"><span>Pick a budget, then paste it in Messages:</span>${budgets.map((c) => `<button class="sp-chip" data-copy="plan my move under ${fmtUsd(c)}">${fmtUsd(c)}</button>`).join("")}</div>
 <button class="smart-cta" data-go="plan">See how it works ${ICON.chevronRight}</button>${foot}</section>`;
   }
   const rows = ps.drafts

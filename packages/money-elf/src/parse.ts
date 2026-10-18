@@ -63,6 +63,12 @@ export function parsePlanIntent(text: string, amounts: number[]): Intent | null 
   if (choose?.[1]) return { kind: "plan_choose", label: choose[1].toUpperCase() as "A" | "B" | "C" };
   if (/\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i.test(t))
     return { kind: "plan_cancel" };
+  if (
+    /\b(smart plan|my plan|move plan)\b/i.test(t) &&
+    /\b(what|what'?s|whats|show|tell|see|where|how|status|update|any)\b/i.test(t) &&
+    t.length <= 70
+  )
+    return { kind: "plan_status" };
   if (/\b(what|which)\s+plan\b|\bplan status\b|\bam i on (track|plan)\b|\bhow'?s (my|the) plan\b/i.test(t))
     return { kind: "plan_status" };
   if (

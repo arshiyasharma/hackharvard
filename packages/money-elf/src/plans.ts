@@ -461,3 +461,11 @@ export function rescorePlan(input: PlanInput, plan: Plan): Plan {
 export function pct(x: number): string {
   return `${Math.round(x * 100)}%`;
 }
+
+/** Three budgets to offer, from what the move has cost so far: a little over, comfortable, generous. */
+export function suggestBudgets(netNowCents: number): number[] {
+  const base = Math.max(netNowCents, 0);
+  if (!base) return [20000, 40000, 60000];
+  const up = (f: number) => Math.max(10000, Math.ceil((base * f) / 5000) * 5000);
+  return [...new Set([up(1.1), up(1.4), up(1.8)])];
+}

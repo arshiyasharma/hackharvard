@@ -105,7 +105,7 @@ const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
  * already reaches the Money Elf by keyword.
  */
 const MOVE_PLAN_ASK =
-  /\bplan (out )?(my|the|this) move\b|\bmove plans?\b|\bkeep (this|the|my) move under\b|\b(what|which) plan am i on\b|\bplan status\b|\b(go with|pick|choose|switch(?: me)? to|take|let'?s do)\s+plan\s+[abc]\b|\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i;
+  /\b(what'?s|whats|show me|tell me|see)\b[^.?!]{0,20}\b(smart plan|my plan)\b|\bsmart plan\b|\bplan (out )?(my|the|this) move\b|\bmove plans?\b|\bkeep (this|the|my) move under\b|\b(what|which) plan am i on\b|\bplan status\b|\b(go with|pick|choose|switch(?: me)? to|take|let'?s do)\s+plan\s+[abc]\b|\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i;
 /** A bare plan pick ("B", "go with C"): only right after the Money Elf sent plans. */
 const PLAN_PICK =
   /^\s*(?:plan\s+)?[abc]\s*[.!]?\s*$|^\s*(?:go with|pick|choose|switch(?: me)? to|take)\s+[abc]\s*[.!]?\s*$/i;

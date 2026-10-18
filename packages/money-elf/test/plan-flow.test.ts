@@ -194,7 +194,7 @@ describe("the dashboard's middle section is the Smart Plan layer", () => {
   test("before any plan it explains the layer and how to get a plan", async () => {
     const html = await page(["split the $360 storage unit with Sam", "yes"]);
     expect(html).toContain("Beyond the ledger");
-    expect(html).toContain("Nessie records what happened. This plans what's next.");
+    expect(html).toContain("Where should it land?");
     expect(html).toContain("Your odds of finishing under budget");
     expect(html).toContain('data-go="plan"');
     expect(html).toContain('data-copy="plan my move under $400"');
@@ -216,5 +216,55 @@ describe("the dashboard's middle section is the Smart Plan layer", () => {
     expect(between(html, 'id="tab-overview"', 'class="smart"')).toBe(true);
     expect(between(html, 'class="smart"', 'class="stats"')).toBe(true);
     expect(html.indexOf('data-tab="plan"')).toBeLessThan(html.indexOf('data-tab="back"'));
+  });
+});
+
+describe("asking about the smart plan in chat", () => {
+  test.each(["what's my smart plan", "whats my smart plan?", "show me my plan", "how's my plan", "tell me about the smart plan"])(
+    "%p is a plan question",
+    (t) => expect(parseRules(t, NOW).kind).toBe("plan_status"),
+  );
+
+  test("a payment plan and 'drop the plan' are not plan questions", () => {
+    expect(parseRules("can I do a payment plan", NOW).kind).toBe("loan");
+    expect(parseRules("drop the plan", NOW).kind).toBe("plan_cancel");
+  });
+
+  test("with nothing set up it says what the move has cost and asks the budget", async () => {
+    const { say } = setup();
+    await say("split the $360 storage unit with Sam");
+    await say("yes");
+    const r = reply(await say("what's my smart plan?"));
+    expect(r).toContain("No smart plan yet. So far the move has cost $");
+    expect(r).toContain("What budget should I plan for?");
+    expect(r).toMatch(/plan my move under \$\d+/);
+  });
+
+  test("with an empty ledger it says so", async () => {
+    const { say } = setup();
+    expect(reply(await say("what's my smart plan"))).toContain("nothing on the Ledger to plan around");
+  });
+
+  test("with drafts it shows them again and asks which; with a pick it gives the odds", async () => {
+    const { say } = setup();
+    await say("plan my move under $300");
+    const again = await say("what's my smart plan");
+    expect(reply(again)).toContain("You haven't picked a plan yet.");
+    expect(reply(again)).toContain("A · best odds · ");
+    expect(reply(again)).toContain("Reply A, B or C to pick one.");
+    expect(again.images?.[0]?.filename).toBe("plans.png");
+    await say("go with A");
+    expect(reply(await say("what's my smart plan"))).toMatch(/Plan A · .* under \$300/);
+  });
+
+  test("the dashboard asks as soon as there is something on the ledger, with budgets from what it has cost", async () => {
+    const { elf, move, say } = setup();
+    await say("split the $360 storage unit with Sam");
+    await say("yes");
+    const v = await buildLedgerView(elf.service, move);
+    const html = ledgerPageHtml(v, { imageUrl: "x.png", pageUrl: "x" });
+    expect(html).toContain("Your move has cost $");
+    expect(html).toContain("Where should it land?");
+    expect(html).toMatch(/data-copy="plan my move under \$\d+"/);
   });
 });

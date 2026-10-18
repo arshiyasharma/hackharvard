@@ -22,6 +22,7 @@ import {
   type PlanLabel,
   pct,
   rescorePlan,
+  suggestBudgets,
 } from "./plans.ts";
 import { netPhrase, projectMove } from "./projection.ts";
 import type { MoneyService, OpResult } from "./service.ts";
@@ -352,7 +353,25 @@ export class PlanService {
     const r = op();
     const state = await this.store.getPlans(move.id);
     if (!state?.chosen || !state.chosenLabel) {
-      r.lines.push(`You're not on a plan. Text "plan my move under $400" (your budget) for three.`);
+      if (state?.drafts.length) {
+        r.lines.push(`You haven't picked a plan yet. Here are the three under ${fmtUsd(state.budgetCents)}:`);
+        // One block, so the reply stays at three lines.
+        r.lines.push(state.drafts.map((p) => planLine(p, state.budgetCents)).join("\n"));
+        r.lines.push("Reply A, B or C to pick one.");
+        r.showPlans = true;
+        return r;
+      }
+      const pr = await this.input(move, [], 0, this.money.today());
+      const back = pr.expected.reduce((n, e) => n + e.cents, 0);
+      const suggest = suggestBudgets(pr.netNowCents)[1] as number;
+      r.lines.push(
+        pr.netNowCents > 0 || back > 0
+          ? `No smart plan yet. So far the move has cost ${fmtUsd(Math.max(pr.netNowCents, 0))}${back > 0 ? `, with ${fmtUsd(back)} expected back` : ""}.`
+          : "No smart plan yet, and nothing on the Ledger to plan around.",
+      );
+      r.lines.push(
+        `What budget should I plan for? Text "plan my move under ${fmtUsd(suggest)}", or your own number, and I'll show three ways to finish with the odds of each.`,
+      );
       return r;
     }
     const plan = items
