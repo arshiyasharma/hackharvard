@@ -6,13 +6,14 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 309 tests across 24 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 340 tests across 27 files, no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
 | Area | On `team-stable` | Still empty |
 | --- | --- | --- |
 | Crew Lead | Built. The onboarding call first: from the owner's first text until they confirm the brief, the Crew Lead only gathers (dates, from/to, what goes and what has to go, how it moves, people, lease, money, worries), plays the brief back, and dispatches the specialists on "yes" (`packages/elves/src/onboarding.ts`; board link goes out with the dispatch). The first text opens with the crew's exact ability list (below), "what can you do?" gets it again, "status" gets one paragraph, and anything off the list gets "the crew can't do that" plus the closest thing it can do. After that: dates, items, routing, approvals as before. | Mini-app polish. The board page exists; it is not a live mini app. With the fake model there is no onboarding call (the deterministic Crew Lead answers). |
+| Stuff (from `stuff-elf`, merged 2026-10-17) | Per-item approval, floors kept private from buyers, donate/give/keep, outcomes, Last Call, the Move Report (`impact.ts`), Buy verdict. See [`docs/stuff-elf-plan.md`](docs/stuff-elf-plan.md). | Nobody posts the listing anywhere; the owner pastes it. |
 | Stuff · Sell | Built. Photo → vision → item, floor, list price, "yes, list it" opens a `sell_item` deal. Buyers text this number. | Nobody posts the listing to a marketplace. The owner pastes the ref into their own post. |
 | Stuff · Buy | Opens a `buy_item` deal after an explicit yes. Needs a forwarded link and a max price. The ceiling is the deal's limit. | No comps. No message to the seller. The seller has to text this number and quote the ref. The canned "I'll check comps" line is no longer what runs when the text is a real buy. |
 | Stuff · Donate | "Donate the lamp" then "yes" marks that item `donated`, closes its open sell deal, and emits `pickup.requested`. | No Goodwill, 311, or bulk-pickup API. A bare "last call" / "recycle" question with no item is still the canned green reply. |
@@ -60,20 +61,11 @@ The prompt is `SYSTEM` in [`packages/elves/src/crew-lead.ts`](packages/elves/src
 - **"status" / "where are we?":** `statusReport()` in [`status.ts`](packages/elves/src/status.ts), one paragraph read straight off the store, nothing invented: dates and addresses; the checklist (open items with due dates, done items); the sublet post and applicants; housing picks; Stuff listed, sold and booked pickups; the ledger (held in escrow, released); and anything waiting on your yes (a low offer, a viewing time).
 - **Out of scope:** `outOfScope()` matches trucks and movers, move-day logistics, lease reading and landlords, posting for you, paying someone, and legal or financial advice. The reply is the fixed "The crew can't …" sentence plus the closest thing it can do. Anything else off the list is caught by the prompt's scope rules, which forbid improvising an ability.
 - **Approvals:** nothing is booked, posted, paid or agreed without the owner's yes.
+- **Calling two Elves at once:** a text whose keywords hit both Stuff and Home ("sell my couch and find me a room in Allston") routes to the Crew Lead (`via: "delegate"`), which calls `stuffElf.handle` then `homeElf.handle` on the same batch, sends both replies in order, and patches both board rows (`callElves` in `crew-lead.ts`). A text for one Elf still goes straight to it. Money is not wired this way yet.
 
 ### Crew Lead on a call (Retell)
 
-`VOICE_ONBOARDING_PROMPTS.story_first` and `VOICE_BEGIN_MESSAGE` in [`packages/elves/src/onboarding-voice.ts`](packages/elves/src/onboarding-voice.ts) are the same contract, spoken. The begin message gives the rundown first, one sentence per Elf, then what the crew doesn't do, then hands the caller the floor:
-
-> Hey, this is the crew lead at Elves, your moving crew. Quick rundown: The Home Elf finds you a place, a hotel for the gap or storage, and sends you the top three with scams flagged; sublets your place, writing the post and never booking a viewing without your yes; and keeps your move checklist, like utilities, internet and keys. The Stuff Elf prices your things from a photo for you to post; deals with buyers, never under your lowest price; and drops prices on what's left before move-out, then asks about donating. The Money Elf keeps the move's ledger of sales, escrow and money set aside. We don't book trucks or movers, run move day, post listings for you, read leases, or pay anyone. So, walk me through the move: when you're out, where you're going, and what's coming with you.
-
-The general prompt adds "What the crew can do" and "What the crew cannot do" sections and two rules: "what can you do?" gets the rundown, and anything off the list gets one sentence saying the crew doesn't do that, the closest thing it can do, and the ask kept in the brief. It stays under Retell's 1,100-word guidance (a test enforces it). Print everything to paste into the dashboard:
-
-```bash
-bun run scripts/retell-agent.ts
-```
-
-Dashboard setup (single prompt, agent speaks first, `submit_brief` custom function, `end_call`) is in [`docs/crew-lead-retell-prompts.md`](docs/crew-lead-retell-prompts.md).
+The voice agent's prompt lives only in the Retell portal, not in this repo; it says the same abilities and limits as `crew.ts`. The `submit_brief` webhook that receives the call is in `packages/voice`. Dashboard notes: [`docs/crew-lead-retell-prompts.md`](docs/crew-lead-retell-prompts.md).
 
 ## Run it
 

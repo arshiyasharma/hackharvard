@@ -12,7 +12,6 @@ export * from "./impact.ts";
 export * from "./home-sublet.ts";
 export * from "./intake.ts";
 export * from "./onboarding.ts";
-export * from "./onboarding-voice.ts";
 export * from "./router.ts";
 export * from "./status.ts";
 export { stuffElf } from "./sell.ts";
