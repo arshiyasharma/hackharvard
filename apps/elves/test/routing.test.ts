@@ -122,6 +122,7 @@ describe("each kind of text goes to the Elf whose job it is", () => {
   test("the rules that are not about words: status, what can you do, a pending yes", async () => {
     expect((await decide("status")).elf).toBe("home");
     expect((await decide("what can you do?")).elf).toBe("crew_lead");
+    for (const t of ["HELP", "help", "Help!"]) expect((await decide(t)).elf, t).toBe("crew_lead");
   });
 });
 

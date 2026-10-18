@@ -205,11 +205,11 @@ describe("statusReport", () => {
     // the nudge: nothing until the last week, then the days left and the STATUS line
     expect(statusNudge("2026-11-01", new Date("2026-10-20T12:00:00Z"))).toBeNull();
     expect(statusNudge("2026-11-01", new Date("2026-10-27T12:00:00Z"))).toBe(
-      "5 days to move-out. Text STATUS anytime to see where everything stands, or DASHBOARD to see your money.",
+      "5 days to move-out. Text STATUS anytime to see where everything stands, DASHBOARD to see your money, or HELP to see all your options.",
     );
     expect(statusNudge("2026-11-01", new Date("2026-11-01T12:00:00Z"))).toStartWith("Move-out is today.");
     expect(statusNudge("2026-11-01", new Date("2026-11-02T12:00:00Z"))).toBeNull();
     expect(statusNudge(null, new Date())).toBeNull();
-    expect(crewIntro()).toEndWith("Text STATUS anytime to see where everything stands, or DASHBOARD to see your money.");
+    expect(crewIntro()).toEndWith("Text STATUS anytime to see where everything stands, DASHBOARD to see your money, or HELP to see all your options.");
   });
 });

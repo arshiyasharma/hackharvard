@@ -240,7 +240,7 @@ describe("dispatchBrief", () => {
     expect(res.events?.map((e) => e.type)).toContain("brief.confirmed");
     expect(res.events?.filter((e) => e.type === "elf.dispatched").length).toBe(3);
     expect(res.replies[0]!.text).toContain("Stuff Elf: sell grey couch; donate desk; decide on mini fridge.");
-    expect(res.replies[0]!.text).toEndWith("Text STATUS anytime to see where everything stands, or DASHBOARD to see your money.");
+    expect(res.replies[0]!.text).toEndWith("Text STATUS anytime to see where everything stands, DASHBOARD to see your money, or HELP to see all your options.");
     expect(res.replies[0]!.text).toContain(
       "Home Elf: find a room in Somerville or Cambridge under $1100/mo.",
     );
