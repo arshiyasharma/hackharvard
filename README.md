@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 579 tests across 42 files (605 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 585 tests across 42 files (611 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -298,7 +298,7 @@ What needs a dedicated Photon line: the 👍 on each of your texts, threaded rep
 
 ### Money: a sale, end to end
 
-Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (158 tests) against `PostgresMoneyStore`.
+Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (164 tests) against `PostgresMoneyStore`.
 
 The Deal Engine already says what happened as events; `apps/elves/src/money-bridge.ts` turns them into the Money Elf's flow, and the service sends what comes out under the "💸 Money Elf" header:
 

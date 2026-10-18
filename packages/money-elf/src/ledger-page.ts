@@ -410,6 +410,8 @@ input:focus-visible+.switch{outline:2px solid var(--ink);outline-offset:2px}
 .sp-row .bar{grid-column:2/4;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}.sp-row .bar i{display:block;height:100%;background:var(--lime);border-radius:2px}
 .sp-row .sub{grid-column:2/4;font-size:12px;color:var(--ok-muted)}
 .sp-steps{margin:12px 0 0;padding:0;list-style:none;position:relative}.sp-steps li{display:flex;gap:10px;font-size:13.5px;padding:6px 0;color:var(--ok-ink)}.sp-steps li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--lime);margin-top:7px}
+.sp-pick{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:12.5px;color:var(--ok-muted);position:relative}
+.sp-chip{background:rgba(255,255,255,.1);color:var(--ok-ink);border-radius:8px;padding:6px 12px;font-weight:600;font-size:13px}
 .smart-cta{display:flex;width:100%;align-items:center;justify-content:center;gap:6px;margin-top:12px;background:var(--lime);color:var(--lime-ink);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;text-align:center;position:relative}
 .smart-foot{margin-top:10px;font-size:11.5px;color:var(--ok-muted);text-align:center;position:relative}
 .seg button.hot{color:var(--ink);font-weight:600}
@@ -484,6 +486,7 @@ $("#wi-chart").innerHTML=stepChartSvg({points:pts,estimated:est,width:340,height
 document.querySelectorAll("#wi-late,[data-count]").forEach(function(c){c.addEventListener("change",function(){touched=true;whatIf()})});
 // Approve / Not now: Approve asks for a second tap, then posts the decision.
 function toast(m){var t=$("#toast");t.textContent=m;t.classList.add("on");setTimeout(function(){t.classList.remove("on")},3200)}
+document.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click",function(){var t=b.dataset.copy;try{navigator.clipboard.writeText(t).then(function(){toast("Copied: "+t+". Paste it in Messages.")},function(){toast("Text the Money Elf: "+t)})}catch(e){toast("Text the Money Elf: "+t)}})});
 document.querySelectorAll("[data-decide]").forEach(function(btn){btn.addEventListener("click",function(){
 var card=btn.closest("[data-pending]"),choice=btn.dataset.decide;if(!D.decideUrl){toast("Reply yes in Messages to approve.");return}
 if(choice==="approve"&&!btn.classList.contains("confirm")){btn.classList.add("confirm");btn.textContent="Tap to confirm";busy=true;setTimeout(function(){if(btn.isConnected&&!btn.disabled){btn.classList.remove("confirm");btn.textContent=btn.dataset.verb;busy=false}},4000);return}
@@ -529,6 +532,7 @@ function smartLayer(v: LedgerView): string {
   if (!ps || (!ps.chosen && !ps.drafts.length)) {
     return `<section class="smart" aria-label="Smart Plan">${head("Nessie records what happened. This plans what's next.", "Tell the Money Elf your budget and it tests three ways to finish the move.")}
 <ul class="sp-steps"><li>Which things to sell, at what price, and when to drop it</li><li>Truck size, movers or not, donate or haul</li><li>Your odds of finishing under budget, and how much effort each way takes</li></ul>
+<div class="sp-pick"><span>Pick a budget, then paste it in Messages:</span>${[200, 400, 600].map((b) => `<button class="sp-chip" data-copy="plan my move under $${b}">$${b}</button>`).join("")}</div>
 <button class="smart-cta" data-go="plan">See how it works ${ICON.chevronRight}</button>${foot}</section>`;
   }
   const rows = ps.drafts

@@ -1,3 +1,4 @@
+import { buildLedgerView } from "../src/ledger-view.ts";
 import { describe, expect, test } from "bun:test";
 import { eventTypes, reply, setup } from "./helpers.ts";
 
@@ -157,5 +158,61 @@ describe("a question about the money is answered first, from the live ledger", (
     const r = await say("who owes me?");
     expect(r.replies[0]?.text.startsWith("📋 Sam owes")).toBe(true);
     expect(r.images?.length ?? 0).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("a deposit is counted once, however it is said", () => {
+  const totals = async (t: ReturnType<typeof setup>) => {
+    const entries = (await t.elf.service.store.listEntries(t.move.id)).filter((e) => e.kind === "deposit");
+    return { n: entries.length, cents: entries.reduce((s, e) => s + e.amountCents, 0), due: entries[0]?.dueBackAt };
+  };
+
+  test("with or without the dollar sign", async () => {
+    for (const text of ["i paid 400 for a sublet deposit", "I paid $400 for a sublet deposit", "i put down 400 deposit for the sublet"]) {
+      const t = setup();
+      await t.say(text);
+      expect((await totals(t)).cents, text).toBe(40000);
+    }
+  });
+
+  test("answering 'when is it due back?' with a date sets the date and adds nothing", async () => {
+    const t = setup();
+    await t.say("I paid $400 for a sublet deposit");
+    const r = await t.say("Dec 1");
+    expect(reply(r)).toContain("Got it: your $400 sublet deposit is due back 2026-12-01.");
+    expect(await totals(t)).toEqual({ n: 1, cents: 40000, due: "2026-12-01" });
+  });
+
+  test("saying the whole thing again with a date updates the first one instead of adding a second", async () => {
+    const t = setup();
+    await t.say("I paid $400 for a sublet deposit");
+    const r = await t.say("I paid $400 for a sublet deposit, due back Dec 1");
+    expect(reply(r)).toContain("is already on the Ledger, so I didn't add it again.");
+    expect(await totals(t)).toEqual({ n: 1, cents: 40000, due: "2026-12-01" });
+    const dup = await t.say("I paid $400 for a sublet deposit");
+    expect(reply(dup)).toContain('say "another $400 sublet deposit"');
+    expect((await totals(t)).n).toBe(1);
+  });
+
+  test("a second, different deposit, or one said to be another, is counted", async () => {
+    const t = setup();
+    await t.say("I paid $400 for a sublet deposit");
+    await t.say("I paid a $150 storage deposit");
+    await t.say("I paid another $400 sublet deposit");
+    expect((await totals(t)).cents).toBe(95000);
+  });
+
+  test("the dashboard and the card say the same number the Ledger holds", async () => {
+    const t = setup();
+    await t.say("I paid $400 for a sublet deposit, due back Dec 1");
+    const v = await buildLedgerView(t.elf.service, t.move);
+    expect(v.depositsOutCents).toBe(40000);
+    expect(v.projection.outCents).toBe(40000);
+    expect(v.projection.projectedNetCents).toBe(0);
+  });
+
+  test("a date alone with no deposit waiting is not a deposit", async () => {
+    const t = setup();
+    expect(reply(await t.say("Dec 1"))).toContain("not sure");
   });
 });

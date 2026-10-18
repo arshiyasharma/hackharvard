@@ -379,6 +379,12 @@ async function handle(
     case "deposit_paid":
       r = merge(r, await service.recordDeposit(move, intent));
       break;
+    case "deposit_due": {
+      const done = await service.depositDue(move, intent.dueBackAt);
+      if (done) r = merge(r, done);
+      else r.lines.push(...otherLines());
+      break;
+    }
     case "deposit_returned":
       r = merge(r, await service.depositReturned(move, intent.what));
       break;

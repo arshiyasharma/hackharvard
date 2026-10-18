@@ -14,7 +14,9 @@ export type Intent =
   | { kind: "approve" }
   | { kind: "decline" }
   | { kind: "split"; amountCents: number; what: string; shares: Share[] }
-  | { kind: "deposit_paid"; amountCents: number; what: string; dueBackAt: string | null }
+  | { kind: "deposit_paid"; amountCents: number; what: string; dueBackAt: string | null; again?: boolean }
+  /** The answer to "When is it due back?": a date on its own, for the deposit just logged. */
+  | { kind: "deposit_due"; dueBackAt: string }
   | { kind: "deposit_returned"; what: string | null }
   | { kind: "mark_paid"; person: string | null; what: string | null; amountCents: number | null }
   /** A payment plan for someone's share: asked by the roommate, or offered by the owner (person named). */
@@ -158,11 +160,21 @@ function namesIn(fragment: string): string[] {
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase());
 }
 
+/** A plain number with no $ ("400"), when it isn't part of a date or a phone number. */
+function bareAmount(t: string): number[] {
+  const m = t
+    .replace(/\d{1,2}\/\d{1,2}(\/\d{2,4})?|\d{4}-\d{2}-\d{2}|\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\d[\d\s().-]{8,}\d/gi, " ")
+    .match(/(?<![\d.])(\d{1,3}(?:,\d{3})+|\d{2,6})(?![\d])/);
+  return m?.[1] ? [Number(m[1].replace(/,/g, "")) * 100] : [];
+}
+
 /** Rule-based parser. `roommates` is the roster, used when the owner says "my roommates". */
 export function parseRules(text: string, now: Date, roommates: string[] = []): Intent {
   const t = text.trim();
   const lower = t.toLowerCase();
   const amounts = parseAmounts(t);
+  // A deposit is often typed without the dollar sign ("i paid 400 for a sublet deposit").
+  const depositAmounts = amounts.length ? amounts : bareAmount(t);
 
   const plan = parsePlanIntent(t, amounts);
   if (plan) return plan;
@@ -232,19 +244,32 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     return { kind: "split", amountCents: amounts[0], what, shares };
   }
 
+  if (t.length <= 40 && /^(it'?s |it is )?(due )?(back )?(by |on )?\S.*$/i.test(t)) {
+    const only = t.replace(/^(it'?s |it is )?(due )?(back )?(by |on )?/i, "");
+    const date = parseDate(t, now);
+    if (date && /^(\d{4}-\d{2}-\d{2}|[a-z]{3,9}\.? \d{1,2}(st|nd|rd|th)?|\d{1,2}\/\d{1,2}(\/\d{2,4})?)[.!]?$/i.test(only))
+      return { kind: "deposit_due", dueBackAt: date };
+  }
+
   if (
     /\bdeposit\b/i.test(t) &&
-    !amounts[0] &&
+    !depositAmounts[0] &&
     /\b(i )?(paid|put down|sent|gave|left)\b/i.test(t) &&
     !/\b(back|returned|refunded|came back)\b/i.test(t)
   )
     return { kind: "clarify", topic: "deposit_amount" };
 
-  if (/\bdeposit\b/i.test(t) && amounts[0] && /\b(paid|put down|sent|gave|left|put)\b/i.test(t)) {
+  if (/\bdeposit\b/i.test(t) && depositAmounts[0] && /\b(paid|put down|sent|gave|left|put)\b/i.test(t)) {
     const due = /\b(due back|back by|returned by|refund(ed)? by|get it back|back on)\b/i.test(t)
       ? parseDate(t, now)
       : null;
-    return { kind: "deposit_paid", amountCents: amounts[0], what: costLabel(t) ?? "deposit", dueBackAt: due };
+    return {
+      kind: "deposit_paid",
+      amountCents: depositAmounts[0],
+      what: costLabel(t) ?? "deposit",
+      dueBackAt: due,
+      ...(/\b(another|second|again|new)\b/i.test(t) ? { again: true } : {}),
+    };
   }
 
   if (

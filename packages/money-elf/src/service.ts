@@ -538,10 +538,28 @@ export class MoneyService {
   /** Log a deposit the owner already paid elsewhere (nothing moves through us, so no approval). */
   async recordDeposit(
     move: MoneyMove,
-    input: { amountCents: number; what: string; dueBackAt: string | null },
+    input: { amountCents: number; what: string; dueBackAt: string | null; again?: boolean },
   ): Promise<OpResult> {
     const out = empty();
     const owner = await this.owner(move);
+    // Saying it twice is not paying twice: the same deposit today is the one already logged.
+    const same = (await this.store.listEntries(move.id)).find(
+      (x) =>
+        x.kind === "deposit" &&
+        x.status === "pending" &&
+        x.what === input.what &&
+        x.amountCents === input.amountCents &&
+        x.date === this.today(),
+    );
+    if (same && !input.again) {
+      const label = input.what === "deposit" ? "deposit" : `${input.what} deposit`;
+      out.lines.push(`That ${fmtUsd(same.amountCents)} ${label} is already on the Ledger, so I didn't add it again.`);
+      if (input.dueBackAt && !same.dueBackAt) {
+        await this.store.updateEntry(same.id, { dueBackAt: input.dueBackAt });
+        out.lines.push(`I set it to come back by ${input.dueBackAt} and I'll remind you if it isn't.`);
+      } else out.lines.push(`If you paid a second one, say "another ${fmtUsd(input.amountCents)} ${label}".`);
+      return out;
+    }
     let e = await this.store.addEntry({
       moveId: move.id,
       date: this.today(),
@@ -563,6 +581,20 @@ export class MoneyService {
     out.lines.push(
       input.dueBackAt ? `I'll remind you if it isn't back by ${input.dueBackAt}.` : "When is it due back?",
     );
+    return out;
+  }
+
+  /** The due-back date for the deposit logged without one (the answer to "When is it due back?"). */
+  async depositDue(move: MoneyMove, dueBackAt: string): Promise<OpResult | null> {
+    const open = (await this.store.listEntries(move.id)).filter(
+      (e) => e.kind === "deposit" && e.status === "pending" && !e.dueBackAt,
+    );
+    const e = open[open.length - 1];
+    if (!e) return null;
+    await this.store.updateEntry(e.id, { dueBackAt });
+    const out = empty();
+    out.lines.push(`Got it: your ${fmtUsd(e.amountCents)} ${e.what} deposit is due back ${dueBackAt}.`);
+    out.lines.push("I'll remind you if it isn't back by then.");
     return out;
   }
 

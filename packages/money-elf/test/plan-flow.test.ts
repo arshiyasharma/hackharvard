@@ -197,6 +197,7 @@ describe("the dashboard's middle section is the Smart Plan layer", () => {
     expect(html).toContain("Nessie records what happened. This plans what's next.");
     expect(html).toContain("Your odds of finishing under budget");
     expect(html).toContain('data-go="plan"');
+    expect(html).toContain('data-copy="plan my move under $400"');
   });
 
   test("with drafts it shows the odds of each plan; picking one marks it", async () => {
