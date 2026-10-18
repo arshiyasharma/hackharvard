@@ -1,7 +1,7 @@
 (function () {
   "use strict";
   var SITE = window.SITE, AGENTS = window.AGENTS, SCENES = window.SCENES, WONT = window.WONT, TRACKS = window.TRACKS;
-  var STORY = window.STORY, CHIPS = window.CHIPS, STACK = window.STACK, UNIQUE = window.UNIQUE, FUTURE = window.FUTURE, NIGHT = window.NIGHT;
+  var ICONS = window.ICONS, DEAL = window.DEAL, STORY = window.STORY, CHIPS = window.CHIPS, STACK = window.STACK, UNIQUE = window.UNIQUE, FUTURE = window.FUTURE, NIGHT = window.NIGHT;
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
@@ -101,17 +101,29 @@
   var story = $("#story"), stage = $("#stage");
   var heroTitle = $("#heroTitle"), problemLine = $("#problemLine"), chipsEl = $("#chips"), treeEl = $("#tree");
   var capEl = $("#caption"), capHead = $("#capHead"), capSub = $("#capSub"), mtasks = $("#mtasks"), hint = $("#scrollHint");
+  var TN_COL = ["#0A84FF", "#2FB36B", "#F0A02B", "#E5484D"];
   var NODE = { crew: $("#n-crew"), home: $("#n-home"), stuff: $("#n-stuff"), money: $("#n-money") };
   var WIRE = { home: $("#w-home"), stuff: $("#w-stuff"), money: $("#w-money") };
   var TONE = { crew: "ink", home: "green", stuff: "amber", money: "lime" };
   ["crew", "home", "stuff", "money"].forEach(function (k) {
-    NODE[k].innerHTML = avatar(TONE[k]) + '<div class="nm">' + esc(STORY[k].name) + "</div>" + (k === "crew" ? "" : "<ul>" + STORY[k].tasks.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>");
+    NODE[k].innerHTML = avatar(TONE[k]) + '<div class="nm">' + esc(STORY[k].name) + "</div>" + "<ul>" + STORY[k].tasks.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
   });
-  var STARTS = [[6, 17], [76, 12], [13, 41], [86, 37], [5, 67], [90, 63], [21, 86], [71, 88], [33, 9], [57, 7], [10, 27], [92, 23], [29, 93], [60, 91], [3, 52], [95, 50]];
-  var chipNodes = CHIPS.map(function (label, i) {
-    var c = el("div", "chip", "<span>" + esc(label) + "</span>"); c.firstChild.style.setProperty("--dl", (-(i % 7) * 0.5) + "s");
-    chipsEl.appendChild(c); return c;
+  var STARTS = [[8, 20], [30, 12], [52, 9], [74, 14], [93, 24], [4, 44], [20, 36], [80, 40], [95, 56], [10, 66], [27, 78], [47, 86], [68, 80], [88, 78], [58, 62], [38, 60], [16, 90], [76, 62], [64, 26], [42, 28], [92, 90], [24, 56], [84, 8], [54, 94]];
+  var chipNodes = CHIPS.map(function (c, i) {
+    var node = el("div", "chip" + (i >= 14 && window.innerWidth < 700 ? " lesser" : ""));
+    var rot = ((i * 37) % 17) - 8, w = 150 + ((i * 53) % 62), dur = 3.2 + ((i * 7) % 9) * 0.45;
+    var inner;
+    if (c.toast) inner = el("div", "toast", '<i style="background:' + TN_COL[i % 4] + '"></i><div><b>' + esc(c.t) + "</b><span>" + esc(c.s) + "</span></div>");
+    else inner = el("div", "win", '<div class="bar" style="--c:' + c.c + '"><u></u><u></u><u></u><b>' + esc(c.t) + '</b></div><div class="body">' + c.l.map(function (x) { return "<span>" + esc(x) + "</span>"; }).join("") + '<em></em><em style="width:60%"></em></div>');
+    inner.style.setProperty("--rot", rot + "deg"); inner.style.setProperty("--w", w + "px"); inner.style.setProperty("--dur", dur + "s"); inner.style.setProperty("--dl", (-(i % 9) * 0.6) + "s");
+    node.appendChild(inner); chipsEl.appendChild(node); return node;
   });
+  // a browser tab strip across the top: far too many tabs
+  var strip = el("div", "tabstrip");
+  ["Craigslist", "Airbnb", "Zillow", "U-Haul", "Venmo", "Gmail", "Sheet v3", "Booking", "Marketplace", "Zelle", "Utilities", "311", "SpareFoot", "Notes", "Reddit: sublet?", "Landlord", "Maps", "Quote #4", "Facebook", "more tabs"].forEach(function (t, i) {
+    strip.appendChild(el("span", "tab", "<i style=\"background:" + TN_COL[i % 4] + "\"></i>" + esc(t)));
+  });
+  chipsEl.appendChild(strip);
   var W = 0, H = 0, target = { x: 0, y: 0 };
   function measure() {
     var sr = stage.getBoundingClientRect(); W = sr.width; H = sr.height;
@@ -151,9 +163,11 @@
       c.style.opacity = String(o);
       c.style.transform = "translate(" + x.toFixed(1) + "px," + y.toFixed(1) + "px) translate(-50%,-50%) scale(" + sc.toFixed(3) + ")";
     });
+    strip.style.opacity = String(1 - seg(p, 0.1, 0.22)); strip.style.transform = "translateY(" + (-seg(p, 0.1, 0.22) * 30) + "px)";
     // Crew Lead pops in, then the three Elves branch out one by one
     var crew = seg(p, 0.29, 0.37);
     NODE.crew.style.setProperty("--s", String(crew ? Math.max(0, easeBack(crew)) : 0)); NODE.crew.style.setProperty("--o", String(crew > 0 ? 1 : 0));
+    $$("li", NODE.crew).forEach(function (li, i) { li.style.setProperty("--lo", String(seg(p, 0.34 + i * 0.018, 0.375 + i * 0.018))); });
     var plan = { home: [0.38, 0.46], stuff: [0.52, 0.60], money: [0.66, 0.74] };
     Object.keys(plan).forEach(function (k) {
       var a = plan[k][0], b = plan[k][1];
@@ -228,6 +242,9 @@
   var main = new Phone($("#phone-main"));
   var tabs = $("#agent-tabs"), funcs = $("#funcs"), blurb = $("#agent-blurb"), wont = $("#wont"), line = $("#scene-line"), jump = $("#jumpLedger");
   var currentAgent = "crew", currentScene = null, started = false;
+  var panel = $("#crewPanel"), mascot = $("#mascot");
+  var SAYS = { crew: "Ask me anything about the move.", home: "I'll find you a place.", stuff: "Send me a photo.", money: "Every dollar, on the ledger." };
+  function paintAgent(k) { panel.dataset.tone = k; mascot.innerHTML = avatar(TONE[k]) + '<div class="say">' + esc(SAYS[k]) + "</div>"; }
   Object.keys(AGENTS).forEach(function (k) {
     var b = el("button", null, esc(AGENTS[k].name)); b.type = "button"; b.setAttribute("role", "tab"); b.dataset.agent = k;
     b.addEventListener("click", function () { pickAgent(k, true); }); tabs.appendChild(b);
@@ -235,7 +252,7 @@
   function pickAgent(k, play) {
     currentAgent = k;
     $$("button", tabs).forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.agent === k)); });
-    blurb.textContent = AGENTS[k].blurb; jump.hidden = k !== "money";
+    blurb.textContent = AGENTS[k].blurb; jump.hidden = k !== "money"; paintAgent(k);
     funcs.innerHTML = "";
     SCENES.filter(function (s) { return s.agent === k; }).forEach(function (s) {
       var li = el("li"), b = el("button", null, "<b>" + esc(s.title) + "</b><span>" + esc(s.line) + "</span><i></i>");
@@ -343,12 +360,14 @@
   /* ---------- tracks: one at a time ---------- */
   var sel = $("#trackSelect"), trEl = $("#track");
   TRACKS.forEach(function (t) { sel.appendChild(new Option(t.name, t.id)); });
+  var ACC = { photon: ["#0a84ff", "#e7f1ff", "Photon"], nessie: ["#0e0f0c", "#eef7c4", "Nessie"], sustain: ["#2fb36b", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
   function showTrack(id) {
     var t = TRACKS.filter(function (x) { return x.id === id; })[0];
+    var ac = ACC[id], tp = $("#trackPanel"); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];
     trEl.innerHTML =
       '<p class="why-track"><small>Why ' + esc(t.name) + "</small>" + esc(t.why) + "</p>" +
       '<div class="track-actions"><button class="btn small primary" type="button" id="see">See it in the thread</button><ul class="apis" aria-label="What we used">' + t.apis.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>" +
-      '<div class="tiles">' + t.tiles.map(function (x) { return '<details class="tilex"><summary><span class="k">' + esc(x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + "</div>";
+      '<div class="tiles">' + t.tiles.map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + "</div>";
     $("#see").addEventListener("click", function () {
       started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
       setTimeout(function () { pickScene(t.scene); }, reduce ? 0 : 500);
@@ -369,7 +388,7 @@
   function renderStack() {
     var terms = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     var rows = STACK.filter(function (s) { if (cat !== "All" && s.c !== cat) return false; var hay = (s.n + " " + s.c + " " + s.w + " " + s.p).toLowerCase(); return terms.every(function (t) { return hay.indexOf(t) >= 0; }); });
-    list.innerHTML = rows.length ? rows.map(function (s) { return '<li><span class="cat">' + esc(s.c) + "</span><b>" + hl(s.n, terms) + "</b><span>" + hl(s.w, terms) + "</span><small>" + hl(s.p, terms) + "</small></li>"; }).join("") : '<li class="empty-find">Nothing matches that. Try "Nessie", "voice" or "Postgres".</li>';
+    list.innerHTML = rows.length ? rows.map(function (s) { return '<li>' + icon(s.n) + '<span class="cat">' + esc(s.c) + "</span><b>" + hl(s.n, terms) + "</b><span>" + hl(s.w, terms) + "</span><small>" + hl(s.p, terms) + "</small></li>"; }).join("") : '<li class="empty-find">Nothing matches that. Try "Nessie", "voice" or "Postgres".</li>';
     count.textContent = rows.length + " of " + STACK.length;
   }
   q.addEventListener("input", renderStack); renderStack();
@@ -378,6 +397,112 @@
   var num = $("#number");
   if (SITE.number) num.textContent = SITE.number; else { num.classList.add("empty"); num.textContent = "The number goes here"; }
   $("#repo").href = SITE.repoUrl;
+
+
+  /* ---------- icons: brand marks from assets/icons, drawn monograms, or an elf face ---------- */
+  function icon(name) {
+    var d = ICONS[name] || ["mono:" + name.charAt(0), "#14151a"], k = d[0];
+    if (k.indexOf("mono:") === 0) return '<i class="ico mono" style="--c:' + d[1] + '" aria-hidden="true">' + esc(k.slice(5)) + "</i>";
+    if (k.indexOf("elf:") === 0) return '<i class="ico elfi" aria-hidden="true">' + avatar(k.slice(4)) + "</i>";
+    return '<i class="ico" style="--c:' + d[1] + ";--u:url(assets/icons/" + k + '.svg)" aria-hidden="true"></i>';
+  }
+  var rail = $("#rail"), seen = {};
+  STACK.forEach(function (s) {
+    var d = ICONS[s.n]; if (!d) return; var key = d[0] + d[1]; if (seen[key]) return; seen[key] = 1;
+    var t = el("div", "rtile", icon(s.n) + "<span>" + esc(s.n.replace(/ \(.*/, "").replace(" API", "")) + "</span>"); rail.appendChild(t);
+  });
+  (function () {
+    var down = false, sx = 0, sl = 0, hover = false, last = 0;
+    rail.addEventListener("pointerdown", function (e) { down = true; sx = e.clientX; sl = rail.scrollLeft; rail.classList.add("drag"); });
+    window.addEventListener("pointerup", function () { down = false; rail.classList.remove("drag"); });
+    window.addEventListener("pointermove", function (e) { if (down) rail.scrollLeft = sl - (e.clientX - sx); });
+    rail.addEventListener("pointerenter", function () { hover = true; }); rail.addEventListener("pointerleave", function () { hover = false; });
+    rail.addEventListener("touchstart", function () { hover = true; }, { passive: true }); rail.addEventListener("touchend", function () { setTimeout(function () { hover = false; }, 2500); });
+    if (reduce) return;
+    (function tick(ts) { if (!hover && !down && ts - last > 16) { rail.scrollLeft += 0.5; if (rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 1) rail.scrollLeft = 0; last = ts; } requestAnimationFrame(tick); })(0);
+  })();
+
+  /* ---------- the Deal Engine, step by step ---------- */
+  (function () {
+    var modes = $("#engModes"), line = $("#engLine"), card = $("#engCard"), mode = 0, step = 1;
+    var note = el("p", "modes-note"); modes.after(note);
+    DEAL.modes.forEach(function (m, i) { var b = el("button", null, esc(m[1])); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.addEventListener("click", function () { mode = i; $$("button", modes).forEach(function (x, k) { x.setAttribute("aria-pressed", String(k === i)); }); note.textContent = "Mode " + m[0] + ": " + m[2]; }); modes.appendChild(b); });
+    note.textContent = "Mode " + DEAL.modes[0][0] + ": " + DEAL.modes[0][2];
+    DEAL.steps.forEach(function (s, i) { var li = el("li"), b = el("button", null, "<div><b>" + esc(s.k) + "</b><span>" + esc(s.t) + "</span></div>"); b.type = "button"; b.addEventListener("click", function () { show(i); }); li.appendChild(b); line.appendChild(li); });
+    function show(i) {
+      step = i; var s = DEAL.steps[i];
+      $$("button", line).forEach(function (b, k) { b.setAttribute("aria-current", String(k === i)); b.classList.toggle("past", k < i); });
+      card.innerHTML = '<span class="ev">' + esc(s.ev) + "</span><h3>" + esc(s.t) + "</h3><ul>" + s.p.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>";
+    }
+    show(0);
+    if ("IntersectionObserver" in window && !reduce) new IntersectionObserver(function (es, o) { es.forEach(function (e) { if (e.isIntersecting) { o.disconnect(); var i = 0; (function adv() { show(i); if (++i < DEAL.steps.length) setTimeout(adv, 1100); else setTimeout(function () { show(0); }, 1400); })(); } }); }, { threshold: 0.5 }).observe(line);
+  })();
+
+  /* ---------- demo time: a call you can place ---------- */
+  (function () {
+    var call = $("#call"), go = $("#callGo"), end = $("#callEnd"), caps = $("#caps"), stat = $("#callStatus"), tm = $("#callTime"), steps = $$("#demoSteps li"), wave = $("#wave");
+    var phoneD = new Phone($("#phone-demo")), stageD = $(".demo-stage");
+    $$("i", wave).forEach(function (b, i) { b.style.setProperty("--n", i); b.style.setProperty("--h", 14 + ((i * 29) % 38)); });
+    $(".call-av").innerHTML = avatar("ink");
+    var SCRIPT = [
+      ["elf", "Hey, this is the Crew Lead at Elfie, your moving crew. So, walk me through the move: when you're out, where you're going, and what's coming with you."],
+      ["you", "Out of my Allston place November first. Into Somerville, nothing found yet. Selling the couch and desk, keeping the bed."],
+      ["elf", "Out of Allston November first, hard date? Into Somerville, nothing found yet. Couch and desk go, bed stays. Is it a truck or Sam's car, and what's happening with the lease?"],
+      ["you", "Hard date. Sam's car. Lease ends the same day."],
+      ["elf", "Here's what I've got: out of Allston November first, hard date, into Somerville. Couch and desk sell, bed stays, Sam drives, lease ends that day. Still open: your budget. Does that all sound right, or is there anything to change?"],
+      ["you", "Yes."],
+      ["elf", "Locked in. The crew gets started now, and you'll get a text with the plan and your crew board link."],
+    ];
+    var token = 0, secs = 0, timer = null;
+    var fmt = function (n) { return Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0"); };
+    function mark(n) { steps.forEach(function (li, i) { li.classList.toggle("on", i === n); li.classList.toggle("done", i < n); }); }
+    function reset() { token++; clearInterval(timer); call.dataset.state = "idle"; call.classList.remove("you"); caps.innerHTML = ""; stat.textContent = "Elfie · tap to call"; tm.textContent = "0:00"; go.hidden = false; end.hidden = true; stageD.classList.remove("recap"); mark(-1); phoneD.clear(); }
+    async function run() {
+      reset(); var t = token; go.hidden = true; end.hidden = false; call.dataset.state = "ringing"; stat.textContent = "Ringing…"; mark(0);
+      await sleep(reduce ? 0 : 1600); if (t !== token) return;
+      call.dataset.state = "live"; secs = 0; tm.textContent = "0:00"; timer = setInterval(function () { secs++; tm.textContent = fmt(secs); }, 1000);
+      for (var i = 0; i < SCRIPT.length; i++) {
+        var line = SCRIPT[i]; call.classList.toggle("you", line[0] === "you"); stat.textContent = line[0] === "elf" ? "Crew Lead is talking" : "You are talking";
+        if (i === 4) mark(1);
+        var c = el("div", "cap " + line[0], esc(line[1])); caps.appendChild(c); while (caps.children.length > 4) caps.firstChild.remove();
+        await sleep(reduce ? 0 : Math.min(5200, 1100 + line[1].length * 38)); if (t !== token) return;
+      }
+      clearInterval(timer); call.dataset.state = "idle"; call.classList.remove("you"); stat.textContent = "Call ended · " + fmt(secs); end.hidden = true; go.hidden = false; go.firstChild.textContent = "Call again";
+      mark(2); stageD.classList.add("recap");
+      await phoneD.play({ msgs: [
+        { from: "elf", agent: "crew", text: "✅ Locked in. Here's who's on what:\n\n🏠 Home: find you a place in Somerville\n📦 Stuff: price the couch and desk\n💸 Money: keep the ledger" },
+        { from: "elf", agent: "money", text: "I've set up your Moving Ledger in Nessie. Every dollar of the move goes on it, and nothing moves without your yes.\n\nWhat's your budget for the rest of the move?" },
+      ] });
+      if (t === token) mark(3);
+    }
+    go.addEventListener("click", run); end.addEventListener("click", reset);
+    phoneD.clear();
+  })();
+
+  /* ---------- unique: statements light up as you pass ---------- */
+  var uniq = $$("#uniq li");
+  if ("IntersectionObserver" in window && !reduce) {
+    var lit = new IntersectionObserver(function (es) { es.forEach(function (e) { e.target.classList.toggle("lit", e.isIntersecting); }); }, { rootMargin: "-38% 0px -38% 0px" });
+    uniq.forEach(function (n) { lit.observe(n); });
+  } else uniq.forEach(function (n) { n.classList.add("lit"); });
+
+  /* ---------- future: a road that fills as you walk down it ---------- */
+  var road = $("#next");
+  if ("IntersectionObserver" in window && !reduce) {
+    var ro = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); ro.unobserve(e.target); } }); }, { rootMargin: "0px 0px -15% 0px" });
+    $$("li", road).forEach(function (n) { ro.observe(n); });
+    var rp = function () { var r = road.getBoundingClientRect(); road.style.setProperty("--p", String(clamp((innerHeight * 0.6 - r.top) / r.height, 0, 1))); };
+    window.addEventListener("scroll", rp, { passive: true }); rp();
+  } else { $$("li", road).forEach(function (n) { n.classList.add("in"); }); road.style.setProperty("--p", "1"); }
+
+  /* ---------- team polaroids ---------- */
+  var teamEl = $("#team"), TG = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc"];
+  (SITE.team || []).forEach(function (m, i) {
+    var li = el("li"); li.style.setProperty("--r", ((i % 2 ? 1 : -1) * (1.2 + i * 0.5)) + "deg");
+    var pic = el("div", "pic"); pic.style.setProperty("--g", TG[i % 4]);
+    if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["ink", "green", "amber", "lime"][i % 4]);
+    li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : ""))); teamEl.appendChild(li);
+  });
 
   /* ---------- reveal ---------- */
   var rev = $$(".reveal");

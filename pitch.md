@@ -35,6 +35,19 @@ Problem in one breath (the interviews back this up; add the best quote from the 
 
 ---
 
+## 2.5 Our originals: say these to every judge, on every track
+
+These are the ideas we came up with ourselves. They are not wrappers around an API; they are the product. Every track pitch below leans on at least two of them.
+
+| Original | One line | Where it shows up |
+| --- | --- | --- |
+| **Deal Engine** | A Postgres state machine we built: four deal modes, negotiation that holds your floor, one shared calendar, Scam Shield, Last Call, and the ledger events that open and close escrow | Photon (strangers negotiate over one number), Nessie (negotiation becomes ledger entries), Cybersec (floors and Scam Shield enforced in code), Sustainability (Last Call) |
+| **Smart Plan** | Three plans, each simulated 2,000 times, with your odds of finishing under budget, written to Nessie as pending future-dated records | Photon (a picture and a pick in the thread), Nessie (the predictive layer), Cybersec (plans advise, never act), Sustainability (donate-or-haul is an option) |
+| **Last Call** | Prices fall 20% at 72 hours, 25% more at 48, free at 24, with the reason in every text | Sustainability, Nessie, Photon |
+| **Scam Shield + house-hunt scam rules** | Off-escrow, gift card, check, code and overpayment asks end the chat; listings are flagged | Cybersec and Fintech, Photon |
+| **Ask-which-Elf** | A numbered question when two Elves fit, and your original words go to the one you pick | Photon |
+| **One list of abilities** | One source writes the text prompt, the voice script, the refusals and the docs | Photon, Cybersec |
+
 ## 3. The four agents (do not let anyone overlook this)
 
 It looks like one agent in one chat. It is **four separate agents behind one number** (`packages/elves`, `packages/money-elf`), each implementing one `Elf` interface (`name`, `description`, `keywords`, `handle(ctx)`):
@@ -75,6 +88,8 @@ The Photon page rewards "AI that lives with us": agents that participate, not ut
 | **A delightful default: elevates the moment without demanding attention** | One header and one emoji per text (`🧭 Crew Lead`, `🏠 Home Elf`, `📦 Stuff Elf`, `💸 Money Elf`). Short blocks, never walls. Read receipt and typing indicator around every model call. Replies batch: three quick texts get one answer. The reminder line ("Text STATUS… DASHBOARD… or HELP…") teaches the three words that matter. |
 | **Thoughtful safety and fallback behaviors that earn trust** | See section 6: scam shield, refusals, never-reveal floors, no card numbers stored, nothing happens without a yes. Fallbacks: a poll refused on the shared pool falls back to "reply yes"; a threaded reply refused falls back to a flat send and remembers the space; no model key falls back to deterministic replies; a dead payments API says "nothing moved" and writes nothing half-way. |
 | **Voice: natural turn-taking, low latency, remembers the call when it moves back to text** | Retell agent with a single prompt and an explicit call flow (listen, mirror with blanks, stragglers, play back, yes). The `submit_brief` webhook writes the **same tables a text writes** (move fields, items, facts, transcript, a note per Elf), then the Crew Lead texts a recap on the same number. The call and the thread are one conversation. |
+| **Our Deal Engine, inside the thread** | Buyers, applicants and listers text the same Photon number from their own phones; our Postgres state machine matches them by ref code, holds your floor, books three slots on one calendar, and asks you only when it must |
+| **Smart Plan, in your messages** | "smart plan" returns a picture of three plans with odds; reply B to pick; the dashboard link switches plans and the chat confirms |
 
 ### 4.3 Judging criteria → our answer
 
@@ -236,6 +251,7 @@ The Photon page rewards "AI that lives with us": agents that participate, not ut
 - **Idempotent sends and approvals**: a replay or a double tap changes nothing; a stale approval is rejected.
 - **Failure is safe**: if Nessie is unreachable, "I couldn't reach the payments system just now, so nothing moved," with nothing half-written.
 - **Deposits counted once**; splits to the penny; totals cross-checked in tests and live.
+- **Our Deal Engine enforces it**: floors and ceilings, Scam Shield and the viewing hold all run in the engine we built, so no prompt can talk its way past them.
 - **Least authority**: the Money Elf never lists, prices or finds a place; Stuff and Home never split, hold escrow or track a deposit (enforced in routing and descriptions).
 
 ### 6.5 Demo (45 seconds)
@@ -255,6 +271,7 @@ The Photon page rewards "AI that lives with us": agents that participate, not ut
 - People don't want to waste; they run out of time, hands and a plan.
 
 ### 7.2 What Elves does about it
+- **Last Call is our Deal Engine's sweep**, not a reminder: it reprices every open deal on schedule and tells buyers already talking.
 - **A plan for every item at the start**: the onboarding asks what goes and what has to go, and each item is sell, donate, keep, or undecided.
 - **Last Call**: unsold items get cheaper on a schedule (20% at 72 h, 25% more at 48 h, free at 24 h) so they leave your place instead of sitting there; each text tells you how much and why and offers keep or donate.
 - **Donate in one text**: "donate the lamp" takes the listing off, marks it donated, finds pickups in your area (Boston 311 bulk pickup, Salvation Army, Goodwill, Habitat ReStore) and drafts the request for you to send.

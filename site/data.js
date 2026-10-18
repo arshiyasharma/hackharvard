@@ -5,9 +5,16 @@
 window.SITE = {
   // Fill these in; the page renders sensible empty states until you do.
   number: "", // e.g. "+1 628 997 9661", shown in "Demo time" and "Try it" when set
-  interviewYouTubeId: "", // the id of the interview Short, e.g. "abc123XYZ"
+  interviewYouTubeId: "h2k7D7NcFDU", // the interview Short (youtube.com/shorts/h2k7D7NcFDU)
   nightPhotos: [], // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
   nightCaptions: [], // optional, one per photo, e.g. ["Fri 11pm", "Sat 3am"]
+  // Team portraits for "Text the crew": drop photos into assets/team/ and list them here (photo is optional).
+  team: [
+    { name: "Gavin Zhou", role: "", photo: "" },
+    { name: "Arshiya Sharma", role: "", photo: "" },
+    { name: "Zohaib Shaikh", role: "", photo: "" },
+    { name: "Yashashri G.", role: "", photo: "" },
+  ],
   interviews: 15,
   waitlist: "30+",
   repoUrl: "https://github.com/arshiyasharma/hackharvard",
@@ -253,7 +260,32 @@ window.STORY = {
   end: { head: "Four agents. One thread.", sub: "Nothing happens without your yes." },
 };
 
-window.CHIPS = ["Craigslist", "Airbnb", "Venmo", "Facebook groups", "U-Haul", "Zillow", "A spreadsheet", "The group chat", "Marketplace", "Landlord email", "Utilities", "Storage units", "Booking.com", "Zelle", "Gas bill", "Mattress pickup"];
+window.CHIPS = [
+  { t: "Craigslist", c: "#5A2D82", l: ["Room in Allston $1,150", "no photos, wire a deposit?"] },
+  { t: "Airbnb", c: "#FF5A5F", l: ["June 1 to Aug 30", "$1,480 + cleaning fee"] },
+  { t: "Zillow", c: "#006AFF", l: ["Studio, Somerville", "saved 14 listings"] },
+  { t: "Booking.com", c: "#003B95", l: ["Hotel for the gap", "2 nights, nov 1"] },
+  { t: "SpareFoot", c: "#00A859", l: ["10x10 unit $119/mo", "compare 6 more"] },
+  { t: "U-Haul", c: "#E5701C", l: ["15 ft truck", "Saturday: sold out"] },
+  { t: "Marketplace", c: "#0866FF", l: ["Couch, still available?", "is $50 ok??"] },
+  { t: "Gmail", c: "#EA4335", l: ["Re: Re: lease?", "Fwd: deposit", "Landlord: notice"] },
+  { t: "move budget FINAL v3", c: "#188038", l: ["truck ??", "deposit 400", "who paid gas"] },
+  { t: "Notes", c: "#F5B800", l: ["call landlord", "sell couch??", "utilities!!"] },
+  { t: "Group chat", c: "#34C759", l: ["who has the car", "can't Saturday", "??"] },
+  { t: "Utilities", c: "#0B5BD3", l: ["Electric: set up", "Internet: hold 40 min"] },
+  { t: "311 bulk pickup", c: "#1F4E8C", l: ["Request form", "pickup in 3 weeks"] },
+  { t: "Apartments.com", c: "#0B5BD3", l: ["Sort by price", "scam?"] },
+  { t: "Venmo", c: "#3D95CE", l: ["You owe Priya $33.33", "Sam: pay me back"] },
+  { t: "Facebook groups", c: "#0866FF", l: ["Sublet Allston 2026", "DM me for the room"] },
+  { toast: true, t: "Sam", s: "who's paying for the truck??" },
+  { toast: true, t: "Craigslist", s: "3 new replies (2 look like scams)" },
+  { toast: true, t: "Landlord", s: "Move-out inspection Friday" },
+  { toast: true, t: "Mom", s: "did you find a place yet" },
+  { toast: true, t: "Zelle", s: "Payment request: $240" },
+  { toast: true, t: "Calendar", s: "Keys due in 3 days" },
+  { toast: true, t: "Priya", s: "can I get the lamp?" },
+  { toast: true, t: "Reminder", s: "Cancel the internet!!" },
+];
 
 /* One track at a time. Each tile: short title, one line, and a "more" that opens on tap. */
 window.TRACKS = [
@@ -422,3 +454,61 @@ window.FUTURE = [
 
 /* Captions for the placeholder strip until real photos are listed in SITE.nightPhotos (no times claimed). */
 window.NIGHT = ["First live reply", "Deal Engine", "Photo to price", "Money Elf joins", "Voice call lands", "Ledger in Nessie", "Smart Plan", "Demo day"];
+
+/* Icons: [local file in assets/icons | "mono:X" | "elf:tone", brand color]. Monograms are drawn tiles, not logos. */
+window.ICONS = {
+  "Photon 2.0 REST API": ["mono:P", "#0A84FF"], "Photon 2.0 Socket.IO events": ["socketdotio", "#010101"], "Photon shared iMessage pool": ["imessage", "#34C759"],
+  "Photon dedicated line": ["mono:P", "#0A84FF"], "Photon SMS and voice line": ["mono:P", "#0A84FF"], "Photon attachments": ["mono:P", "#0A84FF"],
+  "Photon idempotency keys": ["mono:P", "#0A84FF"], "Photon 1.0 Spectrum": ["mono:P", "#8e93a1"], "socket.io-client": ["socketdotio", "#010101"],
+  "Retell AI": ["mono:R", "#6B4EFF"], "Retell webhook (signed)": ["mono:R", "#6B4EFF"], "Retell mock call CLI": ["mono:R", "#6B4EFF"],
+  "Anthropic Claude API": ["anthropic", "#191919"], "Claude Haiku 5.5": ["claude", "#D97757"], "Claude Sonnet 5.5": ["claude", "#D97757"], "Claude vision": ["claude", "#D97757"],
+  "heif2jpeg": ["apple", "#111111"], "Zod structured outputs": ["zod", "#408AFF"], "Onboarding eval (simulated owners)": ["claude", "#D97757"],
+  "Capital One Nessie API": ["mono:N", "#D03027"], "Nessie pending and settle": ["mono:N", "#D03027"], "Moving Fund and Escrow accounts": ["mono:N", "#D03027"], "Smart Plan simulator": ["elf:lime"],
+  "Supabase Postgres": ["supabase", "#3FCF8E"], "Bun.sql": ["bun", "#14151a"], "SQL migrations (11)": ["postgresql", "#4169E1"], "Postgres full-text search": ["postgresql", "#4169E1"], "Docker Postgres": ["docker", "#2496ED"],
+  "Browserbase": ["mono:B", "#F26B3A"], "Stagehand v4": ["mono:S", "#14151a"], "Craigslist": ["mono:C", "#5A2D82"], "Airbnb": ["airbnb", "#FF5A5F"], "Booking.com": ["mono:B", "#003B95"],
+  "SpareFoot": ["mono:S", "#00A859"], "Apartments.com": ["mono:A", "#0B5BD3"], "Zillow": ["zillow", "#006AFF"], "Facebook (logged-in context)": ["facebook", "#0866FF"],
+  "Railway": ["railway", "#14151a"], "Docker (oven/bun slim)": ["docker", "#2496ED"], "GitHub": ["github", "#181717"], "Hono": ["hono", "#E36002"],
+  "Bun": ["bun", "#14151a"], "TypeScript 5.9": ["typescript", "#3178C6"], "Biome": ["biome", "#2563EB"],
+  "resvg-js": ["mono:R", "#14151a"], "Inter (Expo Google Fonts)": ["googlefonts", "#4285F4"], "Server-drawn SVG": ["mono:S", "#0A84FF"],
+  "EPA WARM v13": ["mono:E", "#2E7D32"], "Boston 311 bulk pickup": ["mono:B", "#1F4E8C"], "Salvation Army, Goodwill, Habitat ReStore": ["mono:G", "#2FB36B"], "FTC Consumer Sentinel": ["mono:F", "#14151a"],
+  "Deal Engine": ["elf:amber"], "Memory": ["elf:green"], "Router and clarify flow": ["elf:ink"], "Pipeline": ["elf:ink"], "Crew Board page": ["elf:green"], "Ledger dashboard": ["elf:lime"], "Scam rules": ["elf:amber"],
+  "Claude Code project skills (6)": ["claude", "#D97757"], "Photon operator CLI": ["mono:P", "#0A84FF"], "Offline demo and negotiation sim": ["mono:D", "#14151a"], "TESTING.md": ["mono:T", "#14151a"],
+};
+
+/* The Deal Engine, as a walk-through. */
+window.DEAL = {
+  modes: [
+    ["sell_item", "You sell", "Buyers text the number with your ref code."],
+    ["buy_item", "You buy", "Your max price is the ceiling."],
+    ["sublet_out", "You sublet", "Applicants screened, viewings wait for you."],
+    ["find_sublet", "You find a place", "The lister's replies run through the same engine."],
+  ],
+  steps: [
+    { k: "Listed", ev: "deal.opened", t: "A ref code and a private floor", p: ["Your floor is stored in code, never in a prompt", "Buyers match by ref code or one shared title word", "You paste the post yourself"] },
+    { k: "Negotiating", ev: "offer.countered", t: "It counters at your floor", p: ["Offers at or above your price are agreed", "Below the floor: held, countered, or asked to you", "Scam Shield watches every message"] },
+    { k: "Scheduled", ev: "pickup.scheduled", t: "Three slots on one calendar", p: ["No double-booking across deals", "Pickups book without asking", "A viewing waits for your yes"] },
+    { k: "Handed off", ev: "ledger.release", t: "Two signals release the money", p: ["Buyer confirms, you say yes", "A no-show past 24 hours is refunded after your yes", "Item marked sold, given or donated"] },
+    { k: "Paid", ev: "ledger.hold", t: "Every step lands in Nessie", p: ["Agreed price opens an escrow hold", "Release moves it to the Moving Fund", "Totals read back from Nessie"] },
+    { k: "Last Call", ev: "price.dropped", t: "Unsold? The price falls on a schedule", p: ["20% at 72 hours, 25% more at 48", "Free at 24 hours, then donate", "Anything left at move-out is dumped, and counted"] },
+  ],
+};
+
+/* The original ideas, added to every track so every judge hears them. */
+(function () {
+  var T = function (id) { return window.TRACKS.filter(function (t) { return t.id === id; })[0]; };
+  T("photon").tiles.unshift(
+    { k: "Ours", own: true, t: "A Deal Engine inside the thread", s: "Strangers negotiate over the same number.", more: "Buyers, applicants and listers text the Photon number from their own phones. Our Deal Engine, a Postgres state machine we built, matches them to a deal by ref code, counters at your floor, offers three slots on one calendar and asks you only when it must. It is Photon spaces plus a state machine, not a prompt." },
+    { k: "Ours", own: true, t: "Smart Plan, in your messages", s: "Three plans, odds, and a pick by text.", more: "Say \"smart plan\" and a picture of three plans arrives with the odds of each landing under your budget. Reply B (or tap a poll where polls work). The same plans are on the dashboard link, and a switch there sends a note back to your chat." }
+  );
+  T("nessie").tiles.unshift(
+    { k: "Ours", own: true, t: "The Deal Engine writes the ledger", s: "Negotiation outcomes become Nessie records.", more: "Our Deal Engine holds your floor, counters buyers and books pickups. Its events (hold, pickup, release, refund) are what open and close escrow in Nessie, so a negotiated price becomes a bookkeeping entry with the owner's yes at each money move." }
+  );
+  T("sustain").tiles.unshift(
+    { k: "Ours", own: true, t: "Last Call lives in the Deal Engine", s: "The sweep that keeps things out of the landfill.", more: "A sweep over every open deal cuts the ask 20% at 72 hours and 25% more at 48, relists free at 24 and offers donation. Buyers already talking get the new price. It is our engine, not a reminder." },
+    { k: "Ours", own: true, t: "Smart Plan favors reuse", s: "Donate-or-haul is an option, not an afterthought.", more: "Each plan decides what to sell, when to drop it, and what to donate or haul, then simulates the cost 2,000 times. When donating is the cheaper path, a plan says so." }
+  );
+  T("cyber").tiles.unshift(
+    { k: "Ours", own: true, t: "Scam Shield is in the Deal Engine", s: "The shield runs on every counterparty message.", more: "Because every buyer, applicant and lister goes through our Deal Engine, Scam Shield sees each message: off-escrow asks, gift cards, checks, codes, overpayments. The floor and ceiling are enforced in code at the same place." },
+    { k: "Ours", own: true, t: "Plans advise, never act", s: "Smart Plan moves no money and edits no listing.", more: "Picking a plan writes pending, future-dated records and never moves money. It never edits a listing price and never goes below your floor. Expected money stays out of the totals." }
+  );
+})();

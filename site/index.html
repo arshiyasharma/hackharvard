@@ -80,17 +80,27 @@
 <!-- Demo time -->
 <section class="demo" id="demo" aria-labelledby="h-demo">
   <div class="demo-in">
-    <div class="ring" aria-hidden="true"><i></i><i></i><i></i><span class="handset"></span></div>
-    <h2 id="h-demo">Demo time.</h2>
-    <p class="demo-sub">We pause the slides and call the agent. Live, on the judges' phones.</p>
-    <ol class="demo-steps">
-      <li>Call the number and tell the move out loud</li>
-      <li>Hear it play the brief back, say yes</li>
-      <li>Watch the recap text land in the thread</li>
-      <li>Sell a couch, split a truck, ask for the plan</li>
-    </ol>
-    <div class="keys dark" data-keys aria-label="Quick words"></div>
-    <div class="demo-num" id="demoNum"></div>
+    <div class="demo-copy">
+      <h2 id="h-demo">Demo time.</h2>
+      <p class="demo-sub">We pause the slides and call the agent. Live, on the judges' phones.</p>
+      <ol class="demo-steps" id="demoSteps">
+        <li>Call the number and tell the move out loud</li>
+        <li>Hear it play the brief back, say yes</li>
+        <li>Watch the recap text land in the thread</li>
+        <li>Sell a couch, split a truck, ask for the plan</li>
+      </ol>
+      <div class="demo-num" id="demoNum"></div>
+      <div class="keys dark" data-keys aria-label="Quick words"></div>
+    </div>
+    <div class="demo-stage">
+      <div class="callui" id="call" data-state="idle">
+        <div class="call-top"><span class="call-av" aria-hidden="true"></span><div><b>Crew Lead</b><span id="callStatus">Elfie · tap to call</span></div><time id="callTime" aria-hidden="true">0:00</time></div>
+        <div class="wave" id="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="caps" id="caps" aria-live="polite"></div>
+        <div class="call-actions"><button type="button" class="callbtn go" id="callGo"><span>Call Elfie</span></button><button type="button" class="callbtn end" id="callEnd" hidden><span>End</span></button></div>
+      </div>
+      <div class="phone small" id="phone-demo"></div>
+    </div>
     <a class="demo-fallback" href="#crew">If the line drops, every step plays below</a>
   </div>
 </section>
@@ -106,6 +116,7 @@
     <div class="keys" data-keys aria-label="Quick words"></div>
   </div>
 
+  <div class="crew-panel" id="crewPanel" data-tone="crew">
   <div class="crew-grid">
     <div class="picker">
       <div class="tabs" role="tablist" aria-label="Agents" id="agent-tabs"></div>
@@ -126,6 +137,8 @@
       <p class="fine">Example conversations in the product's real reply format.</p>
     </div>
   </div>
+  <div class="mascot" id="mascot" aria-hidden="true"></div>
+  </div>
 </section>
 
 <!-- Money Elf: the ledger and the Smart Plan -->
@@ -142,6 +155,17 @@
     <p class="fine">Try it: tap a plan, a budget, a payment. Synthetic data.</p>
   </div>
   <div class="led" id="led" aria-label="Ledger dashboard simulator"></div>
+</section>
+
+<!-- Deal Engine -->
+<section class="engine reveal" id="engine" aria-labelledby="h-engine">
+  <h2 id="h-engine">The Deal Engine.</h2>
+  <p class="lead2">The part we built from scratch: every buyer, applicant and lister you never met, handled by one state machine.</p>
+  <div class="modes" id="engModes" role="group" aria-label="Deal modes"></div>
+  <div class="eng" id="eng">
+    <ol class="eng-line" id="engLine" aria-label="Deal states"></ol>
+    <div class="eng-card" id="engCard" aria-live="polite"></div>
+  </div>
 </section>
 
 <!-- How it fits -->
@@ -182,7 +206,7 @@
       <select id="trackSelect"></select>
     </label>
   </div>
-  <div class="track" id="track" aria-live="polite"></div>
+  <div class="track-panel" id="trackPanel"><div class="ghost" id="trackGhost" aria-hidden="true"></div><div class="track" id="track" aria-live="polite"></div></div>
 </section>
 
 <!-- Unique -->
@@ -202,18 +226,19 @@
     <span><b>1</b> real Nessie sandbox, smoke-tested live</span>
     <span><b>0</b> actions without a yes</span>
   </div>
+  <div class="rail" id="rail" aria-label="Services we used, scroll sideways"></div>
   <div class="finder">
     <label class="search"><span class="sr">Search the stack</span><input id="stackQ" type="search" placeholder="Search: Nessie, voice, browser, Postgres…" autocomplete="off" spellcheck="false"></label>
     <div class="cats" id="stackCats" role="group" aria-label="Filter by category"></div>
   </div>
   <p class="count-line" id="stackCount" aria-live="polite"></p>
-  <ul class="stack-list" id="stackList"></ul>
+  <div class="stack-scroll" tabindex="0" aria-label="The full list, scroll to read"><ul class="stack-list" id="stackList"></ul></div>
 </section>
 
 <!-- Future -->
 <section class="future reveal" id="future" aria-labelledby="h-future">
   <h2 id="h-future">What's next.</h2>
-  <ul class="next" id="next"></ul>
+  <ol class="road" id="next"></ol>
 </section>
 
 <!-- Try -->
@@ -222,9 +247,7 @@
   <p class="muted">Judges: text us from your own phone and watch it work.</p>
   <div class="number" id="number"></div>
   <div class="keys center" data-keys aria-label="Quick words"></div>
-  <ul class="team" aria-label="Team">
-    <li>Gavin Zhou</li><li>Arshiya Sharma</li><li>Zohaib Shaikh</li><li>Yashashri G.</li>
-  </ul>
+  <ul class="team" id="team" aria-label="The team"></ul>
   <a class="btn small" id="repo" href="#" target="_blank" rel="noopener">Read the code</a>
 </section>
 
