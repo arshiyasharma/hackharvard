@@ -4,9 +4,12 @@
 
 window.SITE = {
   // Fill these in; the page renders sensible empty states until you do.
-  number: "", // e.g. "+1 628 997 9661", shown in "Try it" when set
+  number: "", // e.g. "+1 628 997 9661", shown in "Demo time" and "Try it" when set
   interviewYouTubeId: "", // the id of the interview Short, e.g. "abc123XYZ"
-  nightPhotos: [], // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]
+  nightPhotos: [], // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
+  nightCaptions: [], // optional, one per photo, e.g. ["Fri 11pm", "Sat 3am"]
+  interviews: 15,
+  waitlist: "30+",
   repoUrl: "https://github.com/arshiyasharma/hackharvard",
 };
 
@@ -209,9 +212,9 @@ window.SCENES = [
     line: "Three plans, 2,000 simulated moves each, with your odds.",
     msgs: [
       { from: "you", text: "smart plan" },
-      { from: "elf", agent: "money", text: "💸 Money Elf\n\nHere are three ways to finish the move, built around a $300 budget:\n\nA · best odds · $47 ahead · 92% under $300\nB · runner-up · $15 ahead · 81% under $300\nC · least effort · $190 · 54% under $300\n\nReply A, B or C to pick one.", img: "plans" },
+      { from: "elf", agent: "money", text: "💸 Money Elf\n\nHere are three ways to finish the move, built around a $300 budget:\n\nA · best odds · $190 · 92% under $300\nB · runner-up · $235 · 82% under $300\nC · least effort · $285 · 56% under $300\n\nReply A, B or C to pick one.", img: "plans" },
       { from: "you", text: "go with B" },
-      { from: "elf", agent: "money", text: "On plan B: $15 ahead, 81% under $300.\n\nWritten to Nessie as 3 pending records. Nothing moves until it happens.\n\nDashboard: your live ledger link" },
+      { from: "elf", agent: "money", text: "On plan B: $235, 82% under $300.\n\nWritten to Nessie as 3 pending records. Nothing moves until it happens.\n\nDashboard: your live ledger link" },
     ],
   },
   {
@@ -219,7 +222,7 @@ window.SCENES = [
     line: "A picture in the thread and a link that never expires.",
     msgs: [
       { from: "you", text: "DASHBOARD" },
-      { from: "elf", agent: "money", text: "📋 Your money, live from Nessie: $740 out, $593 expected back.", img: "ledger" },
+      { from: "elf", agent: "money", text: "📋 Your money, live from Nessie: $740 out, $33 back, $593 expected.", img: "ledger" },
       { from: "elf", agent: "money", text: "Dashboard: your live ledger link" },
     ],
   },
@@ -241,55 +244,181 @@ window.WONT = {
   money: ["Move money without your yes", "Pay rent, bills or a landlord", "Move money to or from a bank", "Invest or do taxes"],
 };
 
+/* What the crew does, for the scroll story */
+window.STORY = {
+  crew: { name: "Crew Lead", tasks: ["Listens to the whole move", "Sends each text to the right Elf", "Asks when it isn't sure"], head: "One number. One Crew Lead.", sub: "It listens, plans the brief, and decides who handles what." },
+  home: { name: "Home Elf", tasks: ["Finds a place, a hotel, storage", "Sublets yours, writes the post", "Keeps the move-in checklist"], head: "Home Elf finds the place.", sub: "A real browser searches the sites for you, and flags the scams." },
+  stuff: { name: "Stuff Elf", tasks: ["Prices a couch from a photo", "Negotiates, never under your floor", "Drops prices, then donates"], head: "Stuff Elf sells it all.", sub: "Buyers text it. You only hear about it when it matters." },
+  money: { name: "Money Elf", tasks: ["Splits costs, pays roommates", "Escrow and the ledger in Nessie", "Plans your budget, with odds"], head: "Money Elf keeps it straight.", sub: "Every dollar is a Nessie record. Nothing moves without your yes." },
+  end: { head: "Four agents. One thread.", sub: "Nothing happens without your yes." },
+};
+
+window.CHIPS = ["Craigslist", "Airbnb", "Venmo", "Facebook groups", "U-Haul", "Zillow", "A spreadsheet", "The group chat", "Marketplace", "Landlord email", "Utilities", "Storage units", "Booking.com", "Zelle", "Gas bill", "Mattress pickup"];
+
+/* One track at a time. Each tile: short title, one line, and a "more" that opens on tap. */
 window.TRACKS = [
   {
     id: "photon", name: "Photon", scene: "crew-brief",
-    head: "Four agents. One number. Built on Photon end to end.",
-    points: [
-      ["It's not one chat, it's four agents", "Crew Lead, Home, Stuff and Money each run on their own tools, rules and memory behind one thread, and call each other when a text needs two."],
-      ["Photon 2.0, all of it", "REST plus the Socket.IO event stream with cursor replay, replies as the agent each person texted, idempotency keys, read receipts, typing, reactions, polls, attachments."],
-      ["Pictures instead of mini apps", "2.0 has no app card, so the ledger, the plans and the Move Report are drawn as images and sent in the thread, with a live page behind a link."],
-      ["Voice that remembers", "A Retell agent on the Photon SMS line runs the onboarding call. The call writes to the same memory a text does, and a recap text follows."],
-      ["Photon skills", "We wrote what 2.0 can and can't send into project skills, checked against the live OpenAPI spec, so the whole team built against what exists."],
-      ["Fallbacks that earn trust", "Poll refused on the shared pool? Reply yes. Threads refused? Flat send. No model key? Deterministic replies."],
+    why: "Every part of Elfie is a Photon feature: one number, four agents, voice, pictures.",
+    tiles: [
+      { k: "Agents", t: "Four agents, one thread", s: "It looks like one chat. It is a crew.", more: "Crew Lead, Home, Stuff and Money are separate agents with their own tools, rules and memory behind one Photon number. They call each other when one text needs two, and a router asks you when it is not sure which one you meant." },
+      { k: "Photon 2.0", t: "The whole 2.0 surface", s: "REST, Socket.IO, attachments, polls, receipts.", more: "Inbound over the Socket.IO event stream with cursor replay (and a slow poll as a safety net). Replies go out as the agent identity each person texted, with idempotency keys so a replay never double-sends. Read receipts and typing wrap every model call; polls carry the action id so a stale tap is rejected." },
+      { k: "Pictures", t: "Mini apps don't work on 2.0", s: "So we drew pictures. After hours of tests.", more: "Photon 2.0 has no app card. We tried Photon 1.0 Spectrum cards: a second number, registered users only, and a second app to open. After hours of experiments we shipped the ledger, the plans and the Move Report as images drawn on the server (SVG to PNG), sent in the thread, with a never-expiring link to a live page behind each one." },
+      { k: "Voice", t: "A call that remembers", s: "Retell on the Photon line, then a recap text.", more: "The Crew Lead's onboarding call runs on the Photon phone line through Retell. When the call ends, the webhook writes the same memory a text writes (dates, items, facts, a note for every Elf), and a recap text arrives in the thread. The call and the chat are one conversation." },
+      { k: "Skills", t: "We taught our tools Photon", s: "Project skills, checked against the live spec.", more: "The 2.0 docs were still being written, so we verified against the live OpenAPI spec and saved it as project skills (photon, run-elves-on-phone). Three people building in parallel never coded against a feature 2.0 does not have." },
+      { k: "Trust", t: "A human in every loop", s: "One yes approves exactly one action.", more: "Viewings, escrow holds, releases, refunds, payments, plans: each waits for a yes by text, a poll tap or a dashboard button. A 👍 counts as yes. A stale or repeated tap changes nothing." },
+      { k: "Fallbacks", t: "Built for the shared pool", s: "Polls refused? Reply yes. Threads refused? Flat.", more: "The shared iMessage pool refuses polls, reactions and threaded replies. Every feature has a text fallback, the transport remembers which spaces refuse, and a missing model key falls back to deterministic replies." },
+      { k: "Context", t: "One move across every channel", s: "Text, call, web page, buyers, roommates.", more: "Working memory is rebuilt every turn from the move, items, board and brief. A rolling transcript summary, deduplicated facts with audience scoping, and per-Elf notes follow the move across the thread, the phone call and the dashboard." },
     ],
-    apis: ["Photon 2.0", "Anthropic Claude (Haiku, Sonnet, vision)", "Retell voice", "Capital One Nessie", "Browserbase + Stagehand", "Supabase Postgres", "Railway", "EPA WARM"],
+    apis: ["Photon 2.0 REST", "Socket.IO events", "Attachments", "Polls", "Read receipts + typing", "Reactions", "SMS line", "Retell voice", "Claude", "Nessie"],
   },
   {
     id: "nessie", name: "Nessie", scene: "money-plan",
-    head: "Nessie is the ledger, and the crystal ball.",
-    points: [
-      ["Every dollar is a Nessie record", "Splits, deposits, payments, escrow and sales are tagged records. Totals are read back from Nessie every 5 seconds."],
-      ["Roommate money, three ways", "Splits to the penny, payment plans, and paying a roommate back from the Moving Fund. One yes each."],
-      ["Negotiation becomes a ledger", "The deal engine's agreed price opens an escrow hold; pickup releases it; a no-show refunds it."],
-      ["Prices drop on a schedule", "Last Call: 20% off at 72 hours, 25% more at 48, free at 24. Each cut is texted with why."],
-      ["Smart Plan, beyond the ledger", "Set a budget, get three plans simulated 2,000 times with your odds of finishing under it. The chosen plan lives in Nessie as pending, future-dated records."],
-      ["A dashboard that shows it", "Expected payments against net cost, your real spend over the plan's range, every Nessie record one tap away."],
+    why: "Nessie is not our bank, it is our ledger and our crystal ball.",
+    tiles: [
+      { k: "Ledger", t: "Every dollar is a Nessie record", s: "Totals are read back, never remembered.", more: "Splits, deposits, payments, escrow and sales are tagged Nessie records in a Moving Fund account and an Escrow account per move. The dashboard re-reads Nessie every five seconds, and every row opens its record id." },
+      { k: "Roommates", t: "Splits, plans, paybacks", s: "To the penny, with one yes each.", more: "$100 three ways is $33.34, $33.33, $33.33. A roommate can pay a truck off at $40 a month as a Moving Fund loan. Paying someone back comes out of the Moving Fund after a yes. Paying more than owed counts only what was owed." },
+      { k: "Deals", t: "Negotiation becomes the ledger", s: "Agreed price opens escrow; pickup releases it.", more: "The deal engine holds your floor and counters buyers. When a price is agreed it opens an escrow hold; two signals (your yes and the buyer's confirmation) release it into the Moving Fund; a no-show past 24 hours is refunded after your yes." },
+      { k: "Last Call", t: "Prices fall on a schedule", s: "20% at 72 hours, 25% more at 48, free at 24.", more: "Unsold items get cheaper as move-out nears so they actually leave. Each cut is texted with the percent, the old and new price and the hours left. What sells lands in the ledger as money in." },
+      { k: "Budget", t: "Set a budget, get odds", s: "Three plans, 2,000 simulated moves each.", more: "The Money Elf asks your budget the moment the ledger is set up. Each plan (what to sell and when to drop it, donate or haul, truck size, movers or not) is simulated 2,000 times and shows a likely cost, a 10 to 90% band and your odds of finishing under budget." },
+      { k: "Smart Plan", t: "The plan lives in Nessie", s: "Pending, future-dated records that settle.", more: "The plan you pick is written to Nessie as pending deposits and withdrawals with future dates, and they complete or cancel as items sell. We verified live that Nessie accepts pending status and settles it with a PUT. Plan records never count toward totals." },
+      { k: "Dashboard", t: "Expected vs net cost, live", s: "Your real spend drawn over the plan's range.", more: "Overview shows net cost so far and where it lands. The Smart Plan tab draws the plan's band with your real net cost over it day by day. Coming back is a what-if for money still owed. Activity lists every Nessie movement." },
     ],
-    apis: ["Accounts", "Purchases", "Deposits", "Withdrawals", "Pending to completed", "Tagged records", "Read-back"],
+    apis: ["Customers", "Accounts", "Purchases", "Deposits", "Withdrawals", "Merchants", "Pending to completed", "Tagged records", "Read-back"],
   },
   {
     id: "sustain", name: "Sustainability", scene: "stuff-lastcall",
-    head: "Nobody should throw a good couch in the street.",
-    points: [
-      ["Allston Christmas", "Two-thirds of Boston leases turn over on September 1. In one week of 2023 the city collected 38 extra tons of trash and 1,700 mattresses."],
-      ["A plan for every item", "At the start, each thing is sell, donate, keep or undecided, so nothing is left for the last night."],
-      ["Last Call", "Unsold things get cheaper on a schedule so they leave your place, then go free, then get donated."],
-      ["Donate in one text", "Boston 311 bulk pickup, Salvation Army, Goodwill, Habitat ReStore, and a request drafted for you."],
-      ["Move Report", "Pounds kept out of the landfill, CO2e avoided (EPA WARM, labelled approximate), money recovered. Dumped items count against you."],
+    why: "Nobody should throw a good couch in the street because they ran out of time.",
+    tiles: [
+      { k: "Problem", t: "Allston Christmas", s: "38 tons of trash, 1,700 mattresses, one week.", more: "About two-thirds of Boston leases turn over on September 1. In one week of 2023 the city collected 38 extra tons of trash and 1,700 mattresses. Most of it was usable. People did not want to waste it; they ran out of time, hands and a plan." },
+      { k: "Plan", t: "A plan for every item", s: "Sell, donate, keep, or undecided. At the start.", more: "The first conversation asks what goes and what has to go, so nothing is left for the last night. The Smart Plan includes donate-or-haul as options, so the plan itself favors reuse when it is cheaper." },
+      { k: "Last Call", t: "Prices drop, things leave", s: "20% at 72 h, 25% more at 48 h, free at 24 h.", more: "Each cut is texted with how much and why, and offers keep or donate. Buyers already talking get the new price and the ref code. At move-out anything still open is marked dumped, and that counts against the report." },
+      { k: "Donate", t: "Donate in one text", s: "Listing off, pickups found, request drafted.", more: "\"Donate the lamp\" takes the listing down at once and marks it donated, then lists pickups near you (Boston 311 bulk pickup, Salvation Army, Goodwill, Habitat ReStore) and drafts the request for you to send." },
+      { k: "Reuse", t: "Give free, buy used", s: "Free listings, and a forwarded link to buy.", more: "\"Give away the bookshelf\" lists it free. Forward a used listing with a max price and Elfie opens a buying deal with your ceiling as the limit." },
+      { k: "Proof", t: "Move Report", s: "Pounds kept out, CO2e avoided, dollars back.", more: "A report in one text: pounds diverted, kg CO2e avoided using EPA WARM v13 source-reduction factors (mapped by category and labeled approximate), money recovered, and items still open. Dumped items count against the total, so it stays honest." },
     ],
-    apis: ["EPA WARM", "Boston 311", "Goodwill", "Salvation Army", "Habitat ReStore"],
+    apis: ["EPA WARM v13", "Boston 311", "Goodwill", "Salvation Army", "Habitat ReStore"],
   },
   {
     id: "cyber", name: "Cybersec and Fintech", scene: "home-viewing",
-    head: "An AI that touches money and strangers, built to say no and ask first.",
-    points: [
-      ["Nothing without your yes", "Viewings, escrow, releases, refunds, payments and plans each wait for one yes, applied to exactly one action."],
-      ["Refuses out loud", "No rent, bank moves, investing, taxes, lease reading or posting for you, and it names what it can do instead."],
-      ["Scam flags on the hunt", "Prices under half the median, wire or gift-card asks, \"I'm abroad\", no photos or place, mismatched duplicates."],
-      ["Scam Shield on deals", "Off-escrow asks get escrow only. Gift cards, cashier's checks, codes and overpayments end the chat."],
-      ["Fintech controls", "Escrow on two signals, live reads from Nessie, no card numbers stored, signed links, idempotent approvals, safe failure."],
+    why: "An AI that touches money and strangers has to say no, ask first and spot the scam.",
+    tiles: [
+      { k: "Acceptance", t: "Nothing without your yes", s: "A viewing is held until you approve it.", more: "An applicant picks a time and you get \"Book it? yes or no.\" Only yes books it. The same gate sits on escrow holds, releases, refunds, payments, split requests and plans, and one yes applies to exactly one action." },
+      { k: "Refusal", t: "It says no, out loud", s: "No rent, no bank moves, no lease reading.", more: "It won't book trucks or movers, read leases, contact landlords, post for you, pay rent or bills, move money to or from a bank, invest, do taxes or give legal or financial advice. Every refusal names the closest thing it can do. One list in code feeds every prompt, so refusals never drift." },
+      { k: "House hunt", t: "Scam flags on every listing", s: "Price, payment asks, 'I'm abroad', no photos.", more: "Rules run on raw search results: price under half the median, wire or gift-card or app payment before a viewing, 'I'm abroad' stories, no location, no photos, the same title at a different price elsewhere. Hard flags sink a listing out of the top three." },
+      { k: "Scam Shield", t: "Off-escrow asks end the chat", s: "Gift cards, checks, codes, overpayments.", more: "A buyer who asks to pay outside escrow is told escrow only. Gift cards, cashier's checks, money orders, verification codes and overpayments end the conversation and tell the owner. There is also an on-demand scam check." },
+      { k: "Privacy", t: "Your floor never leaves your chat", s: "Buyers never see your lowest price.", more: "The engine counters at the floor and asks you before going below it, in code. Card and bank numbers in a text are refused and never stored or repeated." },
+      { k: "Fintech", t: "Escrow, signed links, safe failure", s: "Two-signal release, live Nessie reads.", more: "Escrow releases on two signals; refunds need your yes. The dashboard is a signed HMAC link with no personal data in the URL (a wrong token is a 404). Approvals are idempotent, a stale one is rejected, and if Nessie is unreachable nothing is half-written." },
     ],
-    apis: ["Escrow", "HMAC links", "Idempotency keys", "Scam Shield", "Floor privacy"],
+    apis: ["Escrow", "HMAC-signed links", "Idempotency keys", "Scam rules", "Scam Shield", "Floor privacy"],
   },
 ];
+
+/* Every API and service in the project, searchable. */
+window.STACK = [
+  // Messaging
+  { n: "Photon 2.0 REST API", c: "Messaging", w: "iMessage and SMS: text, images, polls, reactions, typing, read receipts", p: "packages/photon" },
+  { n: "Photon 2.0 Socket.IO events", c: "Messaging", w: "Inbound stream with cursor replay and a poll safety net", p: "packages/photon" },
+  { n: "Photon shared iMessage pool", c: "Messaging", w: "Three real phones assigned; operator CLI manages assignments", p: "scripts/photon.ts" },
+  { n: "Photon dedicated line", c: "Messaging", w: "Tapbacks, threads, texting a lister first", p: "packages/photon" },
+  { n: "Photon SMS and voice line", c: "Messaging", w: "Carries the phone call and SMS", p: "packages/voice" },
+  { n: "Photon attachments", c: "Messaging", w: "Download HEIC photos, upload PNG cards", p: "packages/photon" },
+  { n: "Photon idempotency keys", c: "Messaging", w: "A replay never double-sends", p: "packages/pipeline" },
+  { n: "Photon 1.0 Spectrum", c: "Messaging", w: "App cards; evaluated, shelved (2.0 has no app card)", p: "packages/money-elf/src/spectrum.ts" },
+  { n: "socket.io-client", c: "Messaging", w: "Photon event stream client", p: "packages/photon" },
+  // Voice
+  { n: "Retell AI", c: "Voice", w: "The Crew Lead's onboarding phone call", p: "packages/voice" },
+  { n: "Retell webhook (signed)", c: "Voice", w: "call_ended and submit_brief write the call into memory", p: "packages/voice" },
+  { n: "Retell mock call CLI", c: "Voice", w: "Sends a signed fake webhook for testing", p: "scripts/mock-call.ts" },
+  // AI
+  { n: "Anthropic Claude API", c: "AI", w: "Routing, extraction, drafting, vision", p: "packages/llm" },
+  { n: "Claude Haiku 5.5", c: "AI", w: "Fast model: routing, extraction, ranking", p: "packages/llm" },
+  { n: "Claude Sonnet 5.5", c: "AI", w: "Smart model: drafting and vision", p: "packages/llm" },
+  { n: "Claude vision", c: "AI", w: "Couch photo to price; room photos to a sublet post", p: "packages/elves" },
+  { n: "heif2jpeg", c: "AI", w: "iPhone HEIC photos to JPEG for vision", p: "packages/llm" },
+  { n: "Zod structured outputs", c: "AI", w: "Typed model replies and webhook validation", p: "all packages" },
+  { n: "Onboarding eval (simulated owners)", c: "AI", w: "Scores prompt variants against three simulated owners", p: "scripts/onboarding-eval.ts" },
+  // Money
+  { n: "Capital One Nessie API", c: "Money", w: "The ledger: customers, accounts, purchases, deposits, withdrawals", p: "packages/money-elf" },
+  { n: "Nessie pending and settle", c: "Money", w: "Smart Plan records, future-dated, settled with PUT", p: "packages/money-elf/src/plan-service.ts" },
+  { n: "Moving Fund and Escrow accounts", c: "Money", w: "Two Nessie accounts per move", p: "packages/money-elf" },
+  { n: "Smart Plan simulator", c: "Money", w: "Seeded Monte Carlo, 2,000 runs per plan", p: "packages/money-elf/src/plans.ts" },
+  // Data
+  { n: "Supabase Postgres", c: "Data", w: "Store, memory, deals, Money state, plans", p: "packages/db" },
+  { n: "Bun.sql", c: "Data", w: "Postgres with no driver dependency", p: "packages/db" },
+  { n: "SQL migrations (11)", c: "Data", w: "Run on boot under an advisory lock", p: "packages/db/migrations" },
+  { n: "Postgres full-text search", c: "Data", w: "Ranks remembered facts", p: "packages/memory" },
+  { n: "Docker Postgres", c: "Data", w: "Same tests against a real database", p: "bun run test:pg" },
+  // Browser and sources
+  { n: "Browserbase", c: "Housing search", w: "Hosted Chrome, persistent logins, live view", p: "packages/listings" },
+  { n: "Stagehand v4", c: "Housing search", w: "Browser automation and page extraction", p: "packages/listings" },
+  { n: "Craigslist", c: "Housing search", w: "Rooms and sublets", p: "packages/listings/src/recipes" },
+  { n: "Airbnb", c: "Housing search", w: "Short stays for the gap", p: "packages/listings/src/recipes" },
+  { n: "Booking.com", c: "Housing search", w: "Hotels for the gap", p: "packages/listings/src/recipes" },
+  { n: "SpareFoot", c: "Housing search", w: "Storage units by monthly price", p: "packages/listings/src/recipes" },
+  { n: "Apartments.com", c: "Housing search", w: "Apartment listings", p: "packages/listings/src/recipes" },
+  { n: "Zillow", c: "Housing search", w: "Rental listings", p: "packages/listings/src/recipes" },
+  { n: "Facebook (logged-in context)", c: "Housing search", w: "Sublet groups, via a saved browser login", p: "packages/listings/src/recipes" },
+  // Hosting
+  { n: "Railway", c: "Hosting", w: "Production host with a /health check", p: "railway.json" },
+  { n: "Docker (oven/bun slim)", c: "Hosting", w: "One image, migrations on boot", p: "Dockerfile" },
+  { n: "GitHub", c: "Hosting", w: "Branches per agent, merged into team-stable", p: "repo" },
+  { n: "Hono", c: "Hosting", w: "HTTP server: health, Crew Board, dashboard, webhook", p: "apps/elves" },
+  // Runtime
+  { n: "Bun", c: "Runtime", w: "Runtime, package manager, test runner", p: "everywhere" },
+  { n: "TypeScript 5.9", c: "Runtime", w: "One typed monorepo, a package per agent", p: "everywhere" },
+  { n: "Biome", c: "Runtime", w: "Lint and format", p: "biome.json" },
+  // Images
+  { n: "resvg-js", c: "Pictures", w: "SVG to PNG for the ledger, plan and report cards", p: "packages/money-elf" },
+  { n: "Inter (Expo Google Fonts)", c: "Pictures", w: "Fonts bundled so images match on any server", p: "packages/money-elf" },
+  { n: "Server-drawn SVG", c: "Pictures", w: "Cards and charts, no mini app needed", p: "packages/money-elf" },
+  // Data sources
+  { n: "EPA WARM v13", c: "Sustainability data", w: "CO2e avoided per pound reused", p: "packages/elves/src/impact.ts" },
+  { n: "Boston 311 bulk pickup", c: "Sustainability data", w: "Donation pickup option", p: "packages/elves" },
+  { n: "Salvation Army, Goodwill, Habitat ReStore", c: "Sustainability data", w: "Donation options in the drafted request", p: "packages/elves" },
+  { n: "FTC Consumer Sentinel", c: "Sustainability data", w: "Rental scam research behind Scam Shield", p: "SPEC.md" },
+  // Built by us
+  { n: "Deal Engine", c: "Built by us", w: "Negotiation, shared calendar, Scam Shield, Last Call sweep", p: "packages/engine" },
+  { n: "Memory", c: "Built by us", w: "Working memory, transcript, facts, notes", p: "packages/memory" },
+  { n: "Router and clarify flow", c: "Built by us", w: "Right Elf, or a numbered question", p: "packages/elves/src/router.ts" },
+  { n: "Pipeline", c: "Built by us", w: "Debounce, batch, cancel, idempotent sends", p: "packages/pipeline" },
+  { n: "Crew Board page", c: "Built by us", w: "Live status of every Elf", p: "apps/elves" },
+  { n: "Ledger dashboard", c: "Built by us", w: "Live page, signed link, refreshes every 5 seconds", p: "packages/money-elf" },
+  { n: "Scam rules", c: "Built by us", w: "Listing flags and deal shield", p: "packages/listings, packages/engine" },
+  // Dev
+  { n: "Claude Code project skills (6)", c: "Dev tooling", w: "photon, nessie, run-elves-on-phone, verify-money-elf, record-decision, money-elf-add-dependency", p: ".claude/skills" },
+  { n: "Photon operator CLI", c: "Dev tooling", w: "Lines, assignments, last messages", p: "scripts/photon.ts" },
+  { n: "Offline demo and negotiation sim", c: "Dev tooling", w: "Whole arc with no keys", p: "scripts/demo.ts" },
+  { n: "TESTING.md", c: "Dev tooling", w: "About 190 human test rows", p: "TESTING.md" },
+];
+
+window.UNIQUE = [
+  ["One number, four agents", "Each with its own tools, rules and memory, behind a single thread."],
+  ["It asks before it guesses", "Not sure which Elf? A numbered question, then your original words go to the one you pick."],
+  ["A viewing waits for your yes", "The applicant's pick is held. Only yes books it."],
+  ["Your floor never leaves your chat", "Counters are code. Buyers never see your lowest price."],
+  ["Prices fall on a schedule", "Last Call: 20% at 72 hours, 25% more at 48, free at 24, and each cut says why."],
+  ["The ledger is Nessie, read live", "Totals come back from Nessie every five seconds, never from memory."],
+  ["A plan that lives in the bank", "Smart Plans are written to Nessie as pending, future-dated records that settle."],
+  ["Odds, not guesses", "Every plan simulated 2,000 times, with the assumptions printed."],
+  ["Pictures in the thread", "No mini apps on 2.0, so cards are drawn on the server and sent as images."],
+  ["A call that becomes a thread", "The voice call writes the same memory as a text, then texts you a recap."],
+  ["One list of abilities", "The same list writes the prompt, the voice script, the refusals and the docs."],
+  ["Real-browser house hunt", "Craigslist, Airbnb, Booking.com, SpareFoot, with scam rules on the results."],
+  ["Move Report", "Pounds kept out of the landfill and CO2e avoided, with dumped items counted against us."],
+  ["Built for the shared pool", "Every feature has a fallback when polls, reactions or threads are refused."],
+];
+
+window.FUTURE = [
+  ["A dedicated Photon line for everyone", "Tapbacks on every text, threaded replies, and the Elves texting a lister first."],
+  ["Move day", "Truck and mover quotes, a room scan for what is left, ETAs on the day."],
+  ["Roommates in one group thread", "A shared chat where the crew splits costs and settles up in the open."],
+  ["Outbound calls", "A voice agent that calls storage facilities and landlords for you, with your yes."],
+  ["More channels", "WhatsApp, Telegram and email, so a move can include everyone you know."],
+  ["Odds learned from real moves", "Swap the assumptions table for sale times and prices from real Elfie users."],
+  ["Beyond Boston", "Every city has its own September 1: more pickup partners and local scam patterns."],
+  ["Bring-your-own bank", "Point the ledger at a real account once Nessie-style rails are available."],
+];
+
+/* Captions for the placeholder strip until real photos are listed in SITE.nightPhotos (no times claimed). */
+window.NIGHT = ["First live reply", "Deal Engine", "Photo to price", "Money Elf joins", "Voice call lands", "Ledger in Nessie", "Smart Plan", "Demo day"];

@@ -1,4 +1,6 @@
-# Elves: the pitch plan
+# Elfie: the pitch plan
+
+*Elfie is the product. The four agents behind it are the Crew Lead and the Home, Stuff and Money Elves.*
 
 HackHarvard 2026. One doc for every judge: the main pitch, a tailored pitch for each track, the demo, the deck outline, and the pitch website. Everything in here is something the repo actually does (checked against `README.md`, `TESTING.md`, `SPEC.md` and the code). Anything marked **[CONFIRM]** is a claim to verify with the team before saying it on stage.
 
@@ -8,9 +10,9 @@ HackHarvard 2026. One doc for every judge: the main pitch, a tailored pitch for 
 
 ## 1. The one-liner
 
-> **Moving is a group project nobody is running. Elves is a crew you text: four agents on one number that find the place, sublet the old one, sell the furniture, and keep every dollar straight, and nothing happens without your yes.**
+> **Moving is a group project nobody is running. Elfie is a crew you text: four agents on one number that find the place, sublet the old one, sell the furniture, and keep every dollar straight, and nothing happens without your yes.**
 
-Shorter, for a slide: **"A moving crew in your iMessage."**
+Shorter, for a slide: **"Elfie: a moving crew in your iMessage."**
 
 Problem in one breath (the interviews back this up; add the best quote from the Short):
 - A move is 15 tabs, 4 group chats and a spreadsheet nobody trusts.
@@ -23,7 +25,7 @@ Problem in one breath (the interviews back this up; add the best quote from the 
 
 1. **Hook (10 s).** "Raise your hand if you've ever moved out in a week. Now keep it up if you threw something good in the trash because you ran out of time."
 2. **The problem (20 s).** The three bullets above, plainly. End on: "You don't need another app. You're already in a thread."
-3. **The product (30 s).** "Elves is one phone number. You text it like a friend. Behind it are four different agents: a Crew Lead, a Home Elf, a Stuff Elf and a Money Elf. Each one is a full agent with its own tools, memory and rules. You only ever see one thread." Show the phone.
+3. **The product (30 s).** "Elfie is one phone number. You text it like a friend. Behind it are four different agents: a Crew Lead, a Home Elf, a Stuff Elf and a Money Elf. Each one is a full agent with its own tools, memory and rules. You only ever see one thread." Show the phone.
 4. **The trust line (20 s).** "It never books, posts, pays or agrees to anything without your yes. It won't read your lease or pay your rent. It tells you what it can't do."
 5. **The twist (25 s).** "Under the thread is a ledger in Nessie. On top of the ledger is a Smart Plan that simulates your move 2,000 ways and tells you your odds of finishing under budget."
 6. **Close (15 s).** "Nobody throws their couch in the street. They text the crew. Try it: text the number."
@@ -133,7 +135,7 @@ The Photon page rewards "AI that lives with us": agents that participate, not ut
 ### 4.7 Questions Photon's team might ask, and answers
 
 - *Why four agents, not one?* Different tools, rules and risk. Money must never improvise; Home drives a browser; Stuff negotiates. A single prompt with all of it either leaks floors or books things. Separate agents with one routing layer keep each one small and testable.
-- *Why no mini app?* 2.0 has no app card; we drew the picture ourselves and linked a page. We tried 1.0 and shelved it: second number, registered users only.
+- *Why no mini app?* Mini apps don't work on Photon 2.0 (it has no app card). After hours of experiments, including a full Photon 1.0 Spectrum build, we drew the ledger, plans and Move Report ourselves as pictures in the thread and linked a live page. 1.0 needed a second number and registered users only, so we shelved it.
 - *What fails on the shared pool?* Polls, reactions, threads. Every feature has a text fallback, tested.
 - *What happens when a text arrives mid-search?* It queues; it never cancels the search.
 - *How do you know it works?* 614 tests, 640 with Postgres, real Nessie smoke test, a 190-row human test list.
@@ -308,41 +310,43 @@ Per-track appendix slides (swap in for that judge): Photon (4.2 + 4.4), Nessie (
 
 ## 10. The pitch website
 
-**Goal:** a single page the judges can scan in two minutes and play with for ten. Built in `site/` (static HTML, CSS and JS, no build step).
+**Goal:** a page that opens like a product launch and works like a cheat sheet on stage. Built in `site/` (static HTML, CSS and JS, no build step). Name: **Elfie**.
 
-### 10.1 Look and feel
-- iMessage-and-Photon calm: airy near-white canvas, hairline borders, soft blue for "you", soft gray for "them", one small avatar mark per agent, Geist type.
-- The page's signature is a phone on the right that never leaves: it plays real conversations as you move through the page.
-- Nothing shouts. Motion is gentle (messages arrive, a dot types, a number counts). No gradients on text, no emoji used as icons, no card grids.
+### 10.1 The flow (top to bottom)
+1. **Title screen.** A giant "Elfie" and one problem line: big tasks like moving take weeks of websites, people and coordination. Sixteen floating chips (Craigslist, Venmo, U-Haul, the group chat…) drift around it.
+2. **The scroll story.** As you scroll, the title shrinks, the chips swarm into one point, and a single **Crew Lead** appears. Then three wires draw out, one at a time, to the **Home**, **Stuff** and **Money** Elves, each popping in with its three jobs. This is the "one agent branching into three sub-agents" moment.
+3. **What we heard.** The interview Short (YouTube embed slot) beside two huge numbers that count up: **15** people interviewed, **30+** on the waitlist.
+4. **Demo time.** A dark full-screen pause: a ringing phone, "Demo time.", the four things we'll do live, the number to call, and a link to the simulator in case the line drops.
+5. **Photo strip.** A slowly scrolling film strip of photos from the build (placeholder tiles until real photos are added), with a second strip, running the other way, later on.
+6. **The Elves, simulated.** Tabs for Crew Lead, Home, Stuff and Money. Every main function is a button; click it and an iPhone replays the exact reply format. Each Elf also lists what it won't do. This is the backup if the live demo fails.
+7. **Inside the Money Elf.** A working ledger simulator: Overview, Smart Plan, Coming back, Activity. Switch plans, change the budget (the odds recompute), toggle expected payments (the projected net cost updates), see the pending Nessie records.
+8. **How it fits together.** You → Photon 2.0 → router → four agents → Deal Engine, memory, Nessie, Postgres.
+9. **Pick a track.** A dropdown shows one track at a time: "Why Photon" (or Nessie, Sustainability, Cybersec and Fintech), a big statement, the APIs used, and eight tap-to-open tiles (a line each, a "more" on tap) plus a "See it in the thread" button that plays the matching conversation.
+10. **What nobody else built.** Fourteen distinct things, one line each.
+11. **Every API and service.** A searchable list of everything we used, filterable by category (Messaging, Voice, AI, Money, Data, Housing search, Hosting, Runtime, Pictures, Sustainability data, Built by us, Dev tooling), with the test counts above it.
+12. **What's next.** Eight future items.
+13. **Text the crew.** The number, the team, the repo.
 
-### 10.2 Sections
-1. **Hero**: the problem in one line ("Moving is a group project nobody is running") + the phone playing the first conversation.
-2. **The problem**: three plain facts, big type, no paragraphs.
-3. **What we heard**: the user-interview Short (YouTube embed slot) next to the questions we asked.
-4. **Meet the crew (the emulator)**: tabs Crew Lead, Home, Stuff, Money. Each lists its functions; click one and the phone plays that exact conversation. Also lists what it will not do.
-5. **How it fits together**: one diagram: you, Photon, the router, four agents, the Deal Engine, Nessie, Postgres.
-6. **The dashboard**: the Smart Plan panel and ledger as a live miniature (synthetic data, labeled).
-7. **Per-track pitch**: tabs Photon, Nessie, Sustainability, Cybersec and Fintech, each with its proof points and a "see it" button that plays the matching conversation.
-8. **The build**: stack, the 614 tests, the timeline of the weekend, and **photos of us coding through the night** (a gallery slot).
-9. **Try it**: the number to text, the team, links (repo, README, TESTING.md).
+### 10.2 Look and feel
+iMessage and Photon calm: airy near-white canvas, soft blue for "you", gray for "them", hairline borders, Onest type, a small pointed-hat face for each agent (ink, green, amber, lime). The signature is the scroll-driven story; everything else is quiet. No gradients on text, no emoji used as icons, no card grids as page structure. It honors reduced-motion (the story becomes a static diagram).
 
 ### 10.3 Assets to gather (we cannot make these)
-- The interview Short: upload to YouTube, paste the id in `site/app.js` (`SITE.interviewYouTubeId`).
-- Night-coding photos: drop 3 to 6 images into `site/assets/night/` and list them in `SITE.nightPhotos`.
-- The number to text: `SITE.number` (only if you want it public).
-- Team names and roles: check the list in the page's Team row (taken from the git history, confirm spellings).
-- One decent screen recording of the live demo for the hero fallback.
+- The interview Short: upload to YouTube, paste the id in `site/data.js` (`SITE.interviewYouTubeId`).
+- Night-coding photos: drop images into `site/assets/night/` and list them in `SITE.nightPhotos` (optional `SITE.nightCaptions`). They scroll in both strips.
+- The number to text: `SITE.number` (shown in Demo time and Text the crew).
+- The waitlist and interview counts: `SITE.waitlist` and `SITE.interviews` (currently 30+ and 15).
+- Team names and spellings (taken from the git history, confirm).
 
 ### 10.4 Run it and host it
-- Built: `site/index.html`, `styles.css`, `app.js`, `data.js` (all the copy and conversations live in `data.js`). No build step.
 - Preview locally: `python3 -m http.server 8788 --directory site`, then open `http://localhost:8788`.
-- Host: GitHub Pages (publish the `site/` folder) or any static host; it needs no backend.
-- Fill the slots at the top of `site/data.js`: `number`, `interviewYouTubeId`, `nightPhotos`.
+- Host: GitHub Pages (publish `site/`) or any static host; no backend.
+- All copy, conversations, tracks, the stack list and the future list live in `site/data.js`.
 
 ### 10.5 Honesty rules for the site
-- Demo conversations are labeled "recorded from the product's real replies" only where true; the emulator's scripts mirror the real reply formats and are labeled **example conversation**.
-- All dashboard figures on the page are labeled synthetic.
-- Statistics keep their source in a footnote.
+- Demo conversations are labeled **example conversations** in the product's real reply format.
+- All dashboard figures on the page are synthetic and labeled so.
+- Statistics keep their source in a footnote in the deck.
+- "Mini apps don't work on Photon 2.0, so we drew pictures after hours of experiments" is stated in the Photon track.
 
 ---
 
@@ -356,3 +360,31 @@ Per-track appendix slides (swap in for that judge): Photon (4.2 + 4.4), Nessie (
 - [ ] Run `TESTING.md` section 10 end to end once.
 - [ ] Interview Short uploaded; photos dropped in; team names checked.
 - [ ] Source for the Allston and FTC figures on the slide.
+
+---
+
+## 12. What's unique, and what's next
+
+**What nobody else built (say three of these, pick by judge):**
+- One number, four agents, each with its own tools, rules and memory.
+- It asks before it guesses: a numbered "which did you mean?", and your original words go to the Elf you pick.
+- A viewing waits for your yes; your floor never leaves your chat.
+- Last Call: prices fall on a schedule (20% at 72 h, 25% more at 48 h, free at 24 h), and each cut says why.
+- The ledger is Nessie, read live; Smart Plans are written to Nessie as pending, future-dated records that settle.
+- Odds, not guesses: every plan simulated 2,000 times, assumptions printed.
+- Pictures in the thread because 2.0 has no mini apps.
+- A voice call that becomes a thread: same memory, then a recap text.
+- One list of abilities writes the prompt, the voice script, the refusals and the docs.
+- A real-browser house hunt (Craigslist, Airbnb, Booking.com, SpareFoot, Apartments.com, Zillow, Facebook) with scam rules on the results.
+- A Move Report with CO2e (EPA WARM) that counts dumped items against us.
+- Built for the shared pool: every feature has a fallback.
+
+**What's next (the honest roadmap):**
+- A dedicated Photon line for everyone (tapbacks, threads, texting a lister first).
+- Move day: truck and mover quotes, a room scan, ETAs.
+- Roommates in one group thread.
+- Outbound calls to storage facilities and landlords, with your yes.
+- More channels: WhatsApp, Telegram, email.
+- Odds learned from real moves instead of an assumptions table.
+- Beyond Boston: every city has its own September 1.
+- Bring-your-own bank, once Nessie-style rails are real.
