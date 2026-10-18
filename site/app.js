@@ -118,6 +118,7 @@
   var story = $("#story"), stage = $("#stage");
   var heroTitle = $("#heroTitle"), problemLine = $("#problemLine"), chipsEl = $("#chips"), treeEl = $("#tree");
   var capEl = $("#caption"), capHead = $("#capHead"), capSub = $("#capSub"), mtasks = $("#mtasks"), hint = $("#scrollHint");
+  var pitchNote = $(".pitchnote");
   var TN_COL = ["#0A84FF", "#2FB36B", "#F0A02B", "#E5484D"];
   var NODE = { crew: $("#n-crew"), home: $("#n-home"), stuff: $("#n-stuff"), money: $("#n-money") };
   var WIRE = { home: $("#w-home"), stuff: $("#w-stuff"), money: $("#w-money") };
@@ -198,6 +199,7 @@
     heroTitle.style.transform = "translateY(" + (-t * 7) + "vh) scale(" + (1 - t * 0.5) + ")";
     problemLine.style.opacity = String(1 - seg(p, 0.05, 0.16));
     hint.style.setProperty("--sh", String(1 - seg(p, 0.02, 0.08)));
+    pitchNote.classList.toggle("low", p > 0.2);
     // chips drift, then converge
     var conv = seg(p, 0.13, 0.31);
     chipNodes.forEach(function (c, i) {
