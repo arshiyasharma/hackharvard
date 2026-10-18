@@ -1,8 +1,8 @@
 /**
  * Live smoke test of the Money Elf against Nessie: a split (the truck posted as a purchase), the owner's yes,
  * a roommate paying, a deposit, an escrow sale released into the Moving Fund on two signals (owner OK + buyer
- * confirms), and a no-show refunded after the owner's yes. Creates simulated customers/accounts in your Nessie
- * sandbox.
+ * confirms), and a no-show refunded after the owner's yes. Creates customers and accounts in your Nessie
+ * sandbox (real API, real records; each run is a new move).
  *
  *   bun run packages/money-elf/scripts/smoke.ts        (reads NESSIE_API_KEY from .env)
  */

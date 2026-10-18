@@ -5,11 +5,11 @@
  */
 import { fmtUsd } from "./amounts.ts";
 import { booksLine } from "./books.ts";
+import { formatLines, formatOutbound } from "./format.ts";
 import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
 import { renderLedgerPng } from "./ledger-card.ts";
 import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
 import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
-import { formatLines, formatOutbound } from "./format.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
@@ -117,7 +117,7 @@ function textOf(ctx: MoneyContext): string {
 /**
  * Events that change what the Moving Ledger dashboard shows. After one, the owner's reply (or the note they get
  * when someone else's turn caused it) ends with the dashboard link; with the shelved mini app on, the crew service
- * also refreshes the owner's card in place. The page re-reads Nessie every 30 seconds.
+ * also refreshes the owner's card in place. The page re-reads Nessie every 5 seconds.
  */
 export const LEDGER_CHANGING_EVENTS: ReadonlySet<string> = new Set([
   "ledger.entry_added",
@@ -271,9 +271,7 @@ async function handle(
         }),
       );
     } else {
-      r.lines.push(
-        "Payments for this move run through escrow on this number, never any other way.",
-      );
+      r.lines.push("Payments for this move run through escrow on this number, never any other way.");
     }
     return finish(r, extras);
   }
@@ -514,10 +512,13 @@ async function finishTurn(
   // never have to ask for it. A roommate's turn refreshes the owner's card in the crew service instead.
   const miniApp =
     extras.miniApp ??
-    (cards && links && ctx.participant.role === "owner" && changed ? { url: ledgerUrl(links, ctx.move.id) } : undefined);
+    (cards && links && ctx.participant.role === "owner" && changed
+      ? { url: ledgerUrl(links, ctx.move.id) }
+      : undefined);
   // Asked for the dashboard, or the owner's own turn changed the Ledger: the web page link closes the reply.
   const asked = r.events.some((e) => e.type === "ledger.shown");
-  const link = !cards && dashboard && ctx.participant.role === "owner" && (asked || changed) ? dashboard : null;
+  const link =
+    !cards && dashboard && ctx.participant.role === "owner" && (asked || changed) ? dashboard : null;
   return {
     ...(extras.images?.length ? { images: extras.images } : {}),
     ...(poll ? { poll } : {}),

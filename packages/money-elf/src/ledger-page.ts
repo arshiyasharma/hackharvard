@@ -15,7 +15,7 @@
  *     the Nessie record id.
  *
  * The card opens this page in the expanded view (nearly full screen, scrollable; spectrum.ts). The page reloads
- * every 30 seconds to pick up new Nessie records, unless a sheet is open or the what-if was changed.
+ * every 5 seconds to pick up new Nessie records, unless a sheet is open or the what-if was changed.
  * Served by ledger-http.ts behind a signed link; Approve / Not now POST to its /decide route.
  */
 import { fmtDate, fmtUsd } from "./amounts.ts";
@@ -405,7 +405,7 @@ ${heldOut}
 </section>
 <section class="tab" id="tab-back">${comingBack}</section>
 <section class="tab" id="tab-activity">${activity}</section>
-<div class="foot">Read live from ${plural(v.records, "Nessie record")} · refreshes every 30 seconds</div>
+<div class="foot">Read live from ${plural(v.records, "Nessie record")} · refreshes every 5 seconds</div>
 </main>
 <div class="sheet-bg" id="sheet-bg"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grab"></div><div id="sheet-body"></div></div>
@@ -456,8 +456,8 @@ var card=btn.closest("[data-pending]"),choice=btn.dataset.decide;if(!D.decideUrl
 if(choice==="approve"&&!btn.classList.contains("confirm")){btn.classList.add("confirm");btn.textContent="Tap to confirm";busy=true;setTimeout(function(){if(btn.isConnected&&!btn.disabled){btn.classList.remove("confirm");btn.textContent=btn.dataset.verb;busy=false}},4000);return}
 card.querySelectorAll("button").forEach(function(b){b.disabled=true});
 fetch(D.decideUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pendingId:card.dataset.pending,choice:choice})}).then(function(r){return r.json()}).then(function(r){toast(r.message||(r.ok?"Done.":"That didn't work."));setTimeout(function(){location.reload()},1400)}).catch(function(){toast("Couldn't reach Elves. Try again.");card.querySelectorAll("button").forEach(function(b){b.disabled=false})})})});
-// Pick up new Nessie records every 30 seconds, unless the owner is in the middle of something.
-setInterval(function(){if(!busy&&!touched&&document.visibilityState==="visible")location.reload()},30000);
+// Pick up new Nessie records every 5 seconds, unless the owner is in the middle of something.
+setInterval(function(){if(!busy&&!touched&&document.visibilityState==="visible")location.reload()},5000);
 })();
 </script>
 </body></html>`;
