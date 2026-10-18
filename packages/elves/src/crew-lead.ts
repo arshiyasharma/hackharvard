@@ -136,7 +136,7 @@ export const crewLead: Elf = {
     }
     let justApproved: Awaited<ReturnType<typeof approvePendingListings>> = [];
     if (intake.items.length === 0 && isApproval(text)) {
-      justApproved = await approvePendingListings(ctx);
+      justApproved = await approvePendingListings(ctx, text);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",

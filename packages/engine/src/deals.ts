@@ -99,7 +99,7 @@ export async function openDeal(
 export interface Attribution {
   deal: Deal;
   move: Move;
-  via: "code" | "match";
+  via: "code" | "match" | "only";
 }
 
 const STOP = new Set(
@@ -138,6 +138,76 @@ export async function attributeInbound(
       hits.push({ deal, move, via: "match" });
   }
   return hits.length === 1 ? hits[0]! : null;
+}
+
+/**
+ * Open deals a stranger texting `agentId` could be asking about: things the owner on that pool number is offering
+ * (selling an item, subletting a room), oldest first. Buying deals are for sellers, who quote a ref code.
+ */
+export async function listingCandidates(store: Store, agentId: string): Promise<{ deal: Deal; move: Move }[]> {
+  const out: { deal: Deal; move: Move }[] = [];
+  const owned = new Map<string, Move | null>();
+  for (const deal of await store.listOpenDeals()) {
+    if (policyFor(deal.mode).dir !== 1) continue;
+    if (!owned.has(deal.moveId)) {
+      const move = await store.getMove(deal.moveId);
+      const owners = move ? (await store.listParticipants(move.id)).filter((p) => p.role === "owner") : [];
+      owned.set(deal.moveId, move && owners.some((o) => o.agentUserId === agentId) ? move : null);
+    }
+    const move = owned.get(deal.moveId);
+    if (move) out.push({ deal, move });
+  }
+  return out.sort((a, b) => a.deal.createdAt.localeCompare(b.deal.createdAt));
+}
+
+/** The listings whose titles share a word with `text`. */
+function namedDeals<T extends { deal: Deal }>(text: string, pool: T[]): T[] {
+  const said = words(text);
+  return pool.filter((x) => [...words(x.deal.title)].some((w) => said.has(w) || said.has(`${w}s`)));
+}
+
+export type Inquiry =
+  | { kind: "join"; attribution: Attribution }
+  | { kind: "ask"; move: Move; options: Deal[] };
+
+/**
+ * A stranger's first text on a pool number. Nearly every text there is a buyer, so: a ref code wins; else the one
+ * listing their words name; else the only open listing; else we ask which one, listing just the ones their words
+ * matched ("table" -> the coffee table and the dining table) or everything on offer when they named nothing.
+ * `allowMatch: false` (the sender already runs their own move) honours only a ref code.
+ */
+export async function inquiryFor(
+  store: Store,
+  msg: { text: string | null; agentId: string },
+  opts: { allowMatch: boolean },
+): Promise<Inquiry | null> {
+  const byCode = await attributeInbound(store, msg, { allowMatch: false });
+  if (byCode) return { kind: "join", attribution: byCode };
+  if (!opts.allowMatch) return null;
+  const all = await listingCandidates(store, msg.agentId);
+  if (!all.length) return null;
+  // One owner per pool number in practice; if several moves sit on it, ask about the oldest listing's move.
+  const moveId = all[0]!.move.id;
+  const pool = all.filter((x) => x.move.id === moveId);
+  const named = namedDeals(msg.text ?? "", pool);
+  if (named.length === 1) return { kind: "join", attribution: { ...named[0]!, via: "match" } };
+  if (pool.length === 1) return { kind: "join", attribution: { ...pool[0]!, via: "only" } };
+  return { kind: "ask", move: pool[0]!.move, options: (named.length ? named : pool).map((x) => x.deal) };
+}
+
+/** The listings offered to one stranger space in the last "which one?" question, or all open ones on the move. */
+async function inquiryOptions(store: Store, moveId: string, spaceId: string): Promise<Deal[]> {
+  const events = await store.listEvents(moveId);
+  const asked = [...events].reverse().find((e) => e.type === "inquiry.asked" && e.payload.spaceId === spaceId);
+  const ids = Array.isArray(asked?.payload.dealIds) ? (asked.payload.dealIds as string[]) : null;
+  const open = (await store.listDeals(moveId)).filter((d) => policyFor(d.mode).dir === 1 && isOpen(d.state));
+  const shown = ids ? ids.map((id) => open.find((d) => d.id === id)).filter((d): d is Deal => !!d) : open;
+  return shown.length ? shown : open;
+}
+
+/** "Which one are you asking about?" with the options by name and asking price. Never floors or other buyers. */
+export async function whichListing(store: Store, moveId: string, spaceId: string): Promise<Deal[]> {
+  return inquiryOptions(store, moveId, spaceId);
 }
 
 /** Put a counterparty in a deal: a participant row for their space and a party row for this deal. */
@@ -183,7 +253,23 @@ export async function partyForText(
   who: { handle: string; platform: string; agentUserId: string | null },
 ): Promise<DealParty | null> {
   const parties = await store.listDealPartiesBySpace(spaceId);
-  if (!parties.length) return null;
+  if (!parties.length) {
+    // A stranger we asked "which one?": their reply picks a listing by number, ref code or name.
+    const known = await store.getParticipantBySpace(spaceId);
+    if (!known || known.role === "owner") return null;
+    const options = await inquiryOptions(store, known.moveId, spaceId);
+    const num = text.trim().match(/^#?(\d{1,2})[.)]?$/);
+    let pick: Deal | undefined = num ? options[Number(num[1]) - 1] : undefined;
+    for (const code of codesIn(text)) {
+      const deal = await store.getDealByCode(code);
+      if (deal && deal.moveId === known.moveId && isOpen(deal.state)) pick = deal;
+    }
+    if (!pick) {
+      const named = namedDeals(text, options.map((deal) => ({ deal })));
+      if (named.length === 1) pick = named[0]!.deal;
+    }
+    return pick ? (await joinDeal(store, pick, { spaceId, ...who })).party : null;
+  }
   const moveId = parties[0]!.moveId;
   for (const code of codesIn(text)) {
     const deal = await store.getDealByCode(code);

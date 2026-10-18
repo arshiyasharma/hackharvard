@@ -6,7 +6,9 @@ import {
   ownerTurn,
   partyForText,
   policyFor,
+  price,
   type TurnResult,
+  whichListing,
 } from "@elves/engine";
 import type { DealParty } from "@elves/shared";
 import {
@@ -120,12 +122,36 @@ async function deliver(ctx: ElfContext, r: TurnResult, here: { partyId: string |
 export async function handleCounterparty(ctx: ElfContext): Promise<ElfResult> {
   const text = batchText(ctx.batch);
   const last = ctx.batch.messages[ctx.batch.messages.length - 1];
+  const hadParties = (await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)).length > 0;
   const party = await partyForText(ctx.store, ctx.participant.spaceId, text, {
     handle: ctx.participant.handle,
     platform: ctx.participant.platform,
     agentUserId: last?.agentId ?? ctx.participant.agentUserId,
   });
   if (!party) {
+    // A stranger who has not picked a listing yet: say what is on offer (names and asking prices only).
+    if (!(await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)).length) {
+      const options = await whichListing(ctx.store, ctx.move.id, ctx.participant.spaceId);
+      if (options.length) {
+        const list = options
+          .map((d, i) => `${i + 1}) ${d.title}, ${price(d.askCents, policyFor(d.mode).unit)}`)
+          .join("\n");
+        return {
+          replies: [
+            {
+              text: `Hi! Which one are you asking about?\n${list}\nReply with the name or the number.`,
+              parentMessageId: lastMessageId(ctx.batch),
+            },
+          ],
+          events: [
+            {
+              type: "inquiry.asked",
+              payload: { spaceId: ctx.participant.spaceId, dealIds: options.map((d) => d.id) },
+            },
+          ],
+        };
+      }
+    }
     const titles: string[] = [];
     for (const row of await ctx.store.listDealPartiesBySpace(ctx.participant.spaceId)) {
       const deal = await ctx.store.getDeal(row.dealId);
@@ -139,7 +165,15 @@ export async function handleCounterparty(ctx: ElfContext): Promise<ElfResult> {
       replies: [{ text: which, parentMessageId: lastMessageId(ctx.batch) }],
     };
   }
-  const r = await counterpartyTurn({ store: ctx.store, move: ctx.move, party, text, clock: { now: ctx.now() } });
+  // A bare "2" that only picked a listing from our "which one?" list is not a $2 offer.
+  const picked = !hadParties && /^#?\d{1,2}[.)]?$/.test(text.trim());
+  const r = await counterpartyTurn({
+    store: ctx.store,
+    move: ctx.move,
+    party,
+    text: picked ? "is it still available?" : text,
+    clock: { now: ctx.now() },
+  });
   if (ctx.signal.aborted) return { replies: [] };
   return deliver(ctx, r, { partyId: party.id });
 }

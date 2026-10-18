@@ -9,7 +9,7 @@ import {
   route,
   spaceOwnerKey,
 } from "@elves/elves";
-import { attributeInbound, dealBoard, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
+import { dealBoard, inquiryFor, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
@@ -100,9 +100,32 @@ export function createService(deps: ServiceDeps): Service {
     // A stranger quoting a listing's ref code joins that deal, even if they run a move of their own; a stranger
     // who is not an owner joins the one open deal on this number their text names ("is the couch available?").
     let move = await deps.store.getMoveByOwnerHandle(msg.senderHandle);
-    const attributed =
-      (await attributeInbound(deps.store, msg, { allowMatch: false })) ??
-      (move ? null : await attributeInbound(deps.store, msg, { allowMatch: true }));
+    const inquiry = await inquiryFor(deps.store, msg, { allowMatch: !move });
+    if (inquiry?.kind === "ask") {
+      // Several listings fit: record them as a buyer-in-waiting, and the Stuff Elf asks which one they mean.
+      const participant = await deps.store.upsertParticipant({
+        moveId: inquiry.move.id,
+        handle: msg.senderHandle,
+        role: policyFor(inquiry.options[0]!.mode).counterpartyRole,
+        spaceId: msg.spaceId,
+        platform: msg.platform,
+        agentUserId: msg.agentId,
+      });
+      // Remember exactly which listings we are about to offer, so "2" means the second one they were shown.
+      await deps.store.appendEvent({
+        moveId: inquiry.move.id,
+        type: "inquiry.asked",
+        payload: { spaceId: msg.spaceId, dealIds: inquiry.options.map((d) => d.id) },
+        traceId: null,
+      });
+      log.info("stranger asked about several listings", {
+        moveId: inquiry.move.id,
+        options: inquiry.options.length,
+        spaceId: msg.spaceId,
+      });
+      return { move: inquiry.move, participant, firstContact: false };
+    }
+    const attributed = inquiry?.kind === "join" ? inquiry.attribution : null;
     if (attributed) {
       const { participant, party } = await joinDeal(deps.store, attributed.deal, {
         spaceId: msg.spaceId,

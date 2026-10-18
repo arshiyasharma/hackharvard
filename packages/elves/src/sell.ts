@@ -10,6 +10,7 @@ import {
   memoryPreamble,
 } from "./contract.ts";
 import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
+import { moveReport, reportText } from "./impact.ts";
 import { CATEGORY_WORDS, type Category } from "./facts.ts";
 import {
   type ApprovedItem,
@@ -38,6 +39,10 @@ Write the reply as a text message:
 - Never ask for a photo or a floor price for an item that already has one (see items).
 - Buyers reach you by texting this same number; never claim you posted anywhere. You negotiate with them inside the owner's floor and only ask the owner when an offer is under it.
 - Do not repeat details already confirmed earlier (see the conversation and working memory).`;
+
+/** "move report", "how did we do", "how much did we save from the landfill". */
+const REPORT_ASK =
+  /\b(move report|how did we do|how much (?:did we|have we) (?:save|divert|keep)|my impact|landfill report)\b/i;
 
 const SELL_SKILL: Skill = {
   id: "sell",
@@ -101,6 +106,19 @@ export const stuffElf: Elf = {
     if (decided) return decided;
     const confirmed = await confirmPending(ctx, text);
     if (confirmed) return confirmed;
+    if (!hasPhotos(ctx.batch) && REPORT_ASK.test(text)) {
+      const report = moveReport(await ctx.store.listItems(ctx.move.id), await ctx.store.listDeals(ctx.move.id));
+      return replyTo(ctx, reportText(report), {
+        events: [
+          { type: "report.sent", payload: { lbDiverted: report.lbDiverted, kgCo2eAvoided: report.kgCo2eAvoided } },
+        ],
+        boardPatch: {
+          status: "working",
+          currentTask: "Move Report",
+          lastUpdate: `${report.lbDiverted} lb diverted so far`,
+        },
+      });
+    }
     if (!hasPhotos(ctx.batch)) {
       const { skill } = pickSkill(text, [SELL_SKILL, BUY_SKILL, GREEN_SKILL]);
       if (skill === BUY_SKILL) {
@@ -157,7 +175,7 @@ export const stuffElf: Elf = {
 
     let justApproved: ApprovedItem[] = [];
     if (price == null && intake.items.length === 0 && isApproval(text)) {
-      justApproved = await approvePendingListings(ctx);
+      justApproved = await approvePendingListings(ctx, text);
       for (const it of justApproved)
         events.push({
           type: "listing.approved",

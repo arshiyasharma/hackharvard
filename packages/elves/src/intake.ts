@@ -126,11 +126,11 @@ export function isApproval(text: string): boolean {
 export type ApprovedItem = Item & { dealId: string; dealCode: string };
 
 /** Mark every priced, unapproved item as approved and open its sell deal; returns the items that flipped. */
-export async function approvePendingListings(ctx: ElfContext): Promise<ApprovedItem[]> {
+export async function approvePendingListings(ctx: ElfContext, text = ""): Promise<ApprovedItem[]> {
   const items = await ctx.store.listItems(ctx.move.id);
   const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
   const out: ApprovedItem[] = [];
-  for (const it of pending) {
+  for (const it of chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id))) {
     const item = await ctx.store.upsertItem({
       id: it.id,
       moveId: it.moveId,
@@ -151,8 +151,40 @@ export async function approvePendingListings(ctx: ElfContext): Promise<ApprovedI
   return out;
 }
 
+const ALL_OF_THEM = /\b(all of them|them all|both|everything|(?:list|post) (?:them )?all)\b/i;
+
+/**
+ * Which pending items a yes covers: the item the text names; every pending item for "both" / "all of them";
+ * the only one when just one is waiting; else the one whose floor was set most recently, which is the item the
+ * last "want me to list it?" was about.
+ */
+export function chooseToApprove(
+  text: string,
+  pending: Item[],
+  events: { type: string; payload: Record<string, unknown> }[],
+): Item[] {
+  if (pending.length <= 1) return pending;
+  const t = text.toLowerCase();
+  const named = pending.find((i) => t.includes(i.name.toLowerCase()));
+  if (named) return [named];
+  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
+      const m = pending.find((i) => i.category === cat);
+      if (m) return [m];
+    }
+  }
+  if (ALL_OF_THEM.test(t)) return pending;
+  const last = [...events]
+    .reverse()
+    .find((e) => e.type === "item.floor_set" && pending.some((p) => p.id === e.payload.itemId));
+  return [pending.find((p) => p.id === last?.payload.itemId) ?? (pending[pending.length - 1] as Item)];
+}
+
 /** onSent for the owner-chat message that announced these listings: their deal summaries thread under it. */
-export function anchorDeals(ctx: ElfContext, approved: ApprovedItem[]): ((id: string) => Promise<void>) | undefined {
+export function anchorDeals(
+  ctx: ElfContext,
+  approved: ApprovedItem[],
+): ((id: string) => Promise<void>) | undefined {
   if (!approved.length) return undefined;
   return async (messageId) => {
     for (const a of approved) {
