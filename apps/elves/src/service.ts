@@ -599,15 +599,21 @@ export function createService(deps: ServiceDeps): Service {
   async function notifyOwner(moveId: string, elf: ElfName, text: string, key: string): Promise<boolean> {
     const move = await deps.store.getMove(moveId);
     if (!move) return false;
-    const sk = sendKey("notify", key);
-    if (await deps.store.getSend(sk)) return false;
-    // The owner's newest space: after a phone is re-assigned to a new pool number, texting it opens a new space, and
-    // the old one (move.ownerSpaceId) points at a line the phone no longer talks to.
-    const newest = (await deps.store.listParticipants(move.id))
+    // The owner may have several spaces (iMessage, SMS, a line they were re-assigned from). Newest first; the first
+    // space that accepts the text wins, so one dead line never silences the recap.
+    const spaces = (await deps.store.listParticipants(move.id))
       .filter((p) => p.role === "owner" && p.agentUserId)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    await deliverTo(move, elf, { spaceId: newest?.spaceId ?? move.ownerSpaceId, text }, sk, null);
-    return Boolean(await deps.store.getSend(sk));
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((p) => p.spaceId);
+    if (!spaces.includes(move.ownerSpaceId)) spaces.push(move.ownerSpaceId);
+    const keys = spaces.map((spaceId) => sendKey("notify", `${key}:${spaceId}`));
+    for (const k of keys) if (await deps.store.getSend(k)) return false; // already delivered
+    for (const [i, spaceId] of spaces.entries()) {
+      await deliverTo(move, elf, { spaceId, text }, keys[i]!, null);
+      if (await deps.store.getSend(keys[i]!)) return true;
+      log.warn("recap not delivered to this space; trying the next", { moveId, spaceId });
+    }
+    return false;
   }
 
   return {

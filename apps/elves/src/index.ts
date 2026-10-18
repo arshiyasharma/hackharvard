@@ -58,9 +58,7 @@ const app = createServer({
             memory,
             apiKey: retellKey,
             logger: createLogger("voice"),
-            sendRecap: async (moveId, text, callId) => {
-              await service.notifyOwner(moveId, "crew_lead", text, callId);
-            },
+            sendRecap: (moveId, text, callId) => service.notifyOwner(moveId, "crew_lead", text, callId),
           },
           raw,
           signature,

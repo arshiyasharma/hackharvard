@@ -642,3 +642,32 @@ describe("a phone re-assigned to a new pool number", () => {
     stop();
   });
 });
+
+describe("call recap delivery", () => {
+  test("falls back to the owner's other space when the newest one is refused", async () => {
+    const { transport, store, service, stop } = boot();
+    transport.push(owner, "hi");
+    await transport.waitForSends(1);
+    await transport.settled();
+    const move = (await store.getMoveByOwnerHandle(owner))!;
+    const good = (await store.getParticipantBySpace(transport.spaceFor(owner)))!;
+    await Bun.sleep(5);
+    await store.upsertParticipant({
+      moveId: move.id,
+      handle: owner,
+      role: "owner",
+      spaceId: "spc_dead_line",
+      platform: "sms",
+      agentUserId: "usr_dead",
+    });
+    const send = transport.send.bind(transport);
+    transport.send = async (r, k) => {
+      if (r.spaceId === "spc_dead_line") throw new Error("403 SHARED_LINE_NOT_ASSIGNED");
+      return send(r, k);
+    };
+    expect(await service.notifyOwner(move.id, "crew_lead", "Thanks for the call.", "call_9")).toBe(true);
+    expect(transport.sent.at(-1)?.spaceId).toBe(good.spaceId);
+    expect(await service.notifyOwner(move.id, "crew_lead", "Thanks for the call.", "call_9")).toBe(false);
+    stop();
+  });
+});

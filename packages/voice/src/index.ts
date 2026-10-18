@@ -15,7 +15,7 @@ export interface WebhookDeps extends IngestDeps {
   /** The Retell API key that has the webhook badge; it signs every delivery. */
   apiKey: string | null;
   /** Deliver the recap text to the owner (the service sends it as the Crew Lead). */
-  sendRecap?: (moveId: string, text: string, callId: string) => Promise<void>;
+  sendRecap?: (moveId: string, text: string, callId: string) => Promise<boolean>;
   logger?: Logger;
 }
 
@@ -87,11 +87,20 @@ export async function handleRetellWebhook(
     return { status: 500, body: { error: "ingest failed" } };
   }
   if (res.status === "ingested" && res.recap && res.moveId && deps.sendRecap) {
+    let sent = false;
     try {
-      await deps.sendRecap(res.moveId, res.recap, evt.call.call_id);
+      sent = await deps.sendRecap(res.moveId, res.recap, evt.call.call_id);
     } catch (err) {
       log.warn("recap text failed; call data was saved", { callId: evt.call.call_id, error: String(err) });
     }
+    if (!sent)
+      // Visible in /events and the events table, so a missing text is never a silent failure.
+      await deps.store.appendEvent({
+        moveId: res.moveId,
+        type: "call.recap_failed",
+        payload: { callId: evt.call.call_id },
+        traceId: null,
+      });
   }
   return { status: 200, body: { ok: true, status: res.status } };
 }

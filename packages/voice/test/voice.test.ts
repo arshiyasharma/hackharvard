@@ -137,10 +137,19 @@ describe("handleRetellWebhook", () => {
   const payload = (c = "call_9") =>
     JSON.stringify({ event: "call_ended", call: { ...evt().call, call_id: c } });
 
+  test("a recap that cannot be delivered is recorded as an event", async () => {
+    const { deps, store, move } = await setup();
+    const d = { ...deps, apiKey: KEY, sendRecap: async () => false };
+    const body = payload("call_fail");
+    const r = await handleRetellWebhook(d, body, signRetell(body, KEY));
+    expect(r.status).toBe(200);
+    expect((await store.listEvents(move.id)).some((e) => e.type === "call.recap_failed")).toBe(true);
+  });
+
   test("401 on a bad signature, 503 without a key, 400 on junk, 200 and one recap on a good call", async () => {
     const { deps } = await setup();
     const sent: string[] = [];
-    const d = { ...deps, apiKey: KEY, sendRecap: async (_m: string, t: string) => void sent.push(t) };
+    const d = { ...deps, apiKey: KEY, sendRecap: async (_m: string, t: string) => (sent.push(t), true) };
     const body = payload();
     expect((await handleRetellWebhook({ ...d, apiKey: null }, body, "x")).status).toBe(503);
     expect((await handleRetellWebhook(d, body, "v=1,d=ab")).status).toBe(401);
