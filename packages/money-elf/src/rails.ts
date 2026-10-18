@@ -30,7 +30,15 @@ export interface MoveMoneyInput {
   description: string;
   /** YYYY-MM-DD */
   date: string;
+  /**
+   * Default completed. "pending" records money that is expected, not moved yet (Move Plans, decision #78):
+   * a future-dated record that settle() later flips to completed or cancelled.
+   */
+  status?: "pending" | "completed";
 }
+
+/** Only deposits and withdrawals can be settled: Nessie rejects a status update on a purchase (#78). */
+export type SettleKind = "deposit" | "withdrawal";
 
 export interface MoneyRecord {
   id: string;
@@ -100,6 +108,8 @@ export interface MoneyRails {
     description: string;
   }): Promise<{ loanId: string }>;
   updateLoan(loanId: string, patch: { amountCents?: number; status?: string }): Promise<void>;
+  /** Flip a pending deposit or withdrawal to completed (it happened) or cancelled (it won't). */
+  settle(kind: SettleKind, id: string, status: "completed" | "cancelled"): Promise<void>;
   /** Everything recorded on one account, read back live. */
   readAccount(accountId: string): Promise<AccountRecords>;
 }
@@ -229,7 +239,7 @@ export class NessieRails implements MoneyRails {
     const leg = {
       medium: "balance",
       amount: input.amountCents,
-      status: "completed",
+      status: input.status ?? "completed",
       transaction_date: input.date,
       description: input.description.slice(0, 200),
     };
@@ -327,6 +337,11 @@ export class NessieRails implements MoneyRails {
     });
   }
 
+  async settle(kind: SettleKind, id: string, status: "completed" | "cancelled") {
+    // PUT paths are singular for withdrawals and plural for deposits (verified Oct 18 2026).
+    await this.request("PUT", kind === "deposit" ? `/deposits/${id}` : `/withdrawal/${id}`, { status });
+  }
+
   async readAccount(accountId: string): Promise<AccountRecords> {
     const [w, d, p, b, l] = await Promise.all([
       this.list(`/accounts/${accountId}/withdrawals`),
@@ -418,7 +433,7 @@ export class FakeRails implements MoneyRails {
     const rec = (id: string): MoneyRecord => ({
       id,
       amountCents: input.amountCents,
-      status: "completed",
+      status: input.status ?? "completed",
       description: input.description,
       date: input.date,
     });
@@ -496,14 +511,25 @@ export class FakeRails implements MoneyRails {
     if (patch.amountCents != null) l.amountCents = patch.amountCents;
     if (patch.status) l.status = patch.status;
   }
+  async settle(kind: SettleKind, id: string, status: "completed" | "cancelled") {
+    this.check("settle", { kind, id, status });
+    for (const a of this.accounts.values()) {
+      const r = (kind === "deposit" ? a.deposits : a.withdrawals).find((x) => x.id === id);
+      if (r) {
+        r.status = status;
+        return;
+      }
+    }
+    throw new RailsError(`unknown ${kind} ${id}`, 404, "");
+  }
 
   async readAccount(accountId: string): Promise<AccountRecords> {
     const a = this.acct(accountId);
     const strip = <T extends { accountId: string }>({ accountId: _a, ...rest }: T) => rest;
     return {
-      withdrawals: [...a.withdrawals],
-      deposits: [...a.deposits],
-      purchases: [...a.purchases],
+      withdrawals: a.withdrawals.map((x) => ({ ...x })),
+      deposits: a.deposits.map((x) => ({ ...x })),
+      purchases: a.purchases.map((x) => ({ ...x })),
       bills: [...this.bills.values()].filter((b) => b.accountId === accountId).map(strip),
       loans: [...this.loans.values()].filter((l) => l.accountId === accountId).map(strip),
     };

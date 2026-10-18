@@ -27,7 +27,15 @@ import {
   parseAmounts,
   readTag,
 } from "../src/index.ts";
-import type { MoneyContext, MoneyPoll, MoneyResult, OutboundMessage, Role } from "../src/types.ts";
+import type {
+  MoneyContext,
+  MoneyItem,
+  MoneyPoll,
+  MoneyResult,
+  MoneySpaces,
+  OutboundMessage,
+  Role,
+} from "../src/types.ts";
 
 const useNessie = process.argv.includes("--nessie");
 const OWNER = "+16175550100";
@@ -45,9 +53,24 @@ const PORT = portArg > 0 ? Number(process.argv[portArg + 1]) : 8787;
 const links = { publicUrl: `http://localhost:${PORT}`, secret: randomBytes(16).toString("hex") };
 const CARD_DIR = resolve(import.meta.dir, "../../../.data");
 
+// The time machine: /ff <days> moves this clock forward, so plan dates come due and drift shows.
+let offsetDays = 0;
+const clock = () => new Date(Date.now() + offsetDays * 86_400_000);
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
 let store = new MemoryMoneyStore();
 let rails = makeRails();
-let elf = createMoneyElf({ store, rails, links });
+let elf = createMoneyElf({ store, rails, links, now: clock });
+// The move's items, standing in for the crew Store (the Stuff Elf's items). /items seeds a demo set.
+let items: MoneyItem[] = [];
+const crew: MoneySpaces = {
+  // Everyone on the Ledger with a number counts as reachable, texting from a space named after their number.
+  listParticipants: async (moveId) =>
+    (await store.listPeople(moveId)).flatMap((p) =>
+      p.handle ? [{ handle: p.handle, spaceId: p.handle }] : [],
+    ),
+  listItems: async () => items,
+};
 let lastPoll: MoneyPoll | null = null;
 let lastCard: string | null = null;
 
@@ -57,7 +80,12 @@ Bun.serve({
     (await createLedgerHandler({ service: elf.service, links })(req)) ??
     new Response("not found", { status: 404 }),
 });
-let move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
+let move: { id: string; ownerHandle: string; name: null; moveOutAt: string | null } = {
+  id: `mv_local_${Date.now()}`,
+  ownerHandle: OWNER,
+  name: null,
+  moveOutAt: null,
+};
 let speaker: { role: Role; handle: string; label: string } = { role: "owner", handle: OWNER, label: "owner" };
 let showEvents = false;
 let n = 0;
@@ -82,7 +110,7 @@ function print(r: Omit<MoneyResult, "outbound"> & { outbound?: OutboundMessage[]
     );
   for (const img of r.images ?? []) {
     mkdirSync(CARD_DIR, { recursive: true });
-    lastCard = resolve(CARD_DIR, `ledger-${Date.now()}.png`);
+    lastCard = resolve(CARD_DIR, `${img.filename.replace(/\.png$/, "")}-${Date.now()}.png`);
     writeFileSync(lastCard, img.bytes);
     console.log(cyan(`  [image] ${img.alt}`));
     console.log(dim(`          saved to ${lastCard}  (/open to view)`));
@@ -122,7 +150,8 @@ async function send(text: string | null, vote?: { id: string; text: string }) {
     },
     traceId: `tr_${n}`,
     log,
-    now: () => new Date(),
+    now: clock,
+    store: crew,
   };
   print(await elf.handle(ctx));
 }
@@ -144,6 +173,14 @@ const HELP = `Commands:
                                 pickup. "late" sets the pickup time 25h ago, for /sweep
   /map <item>                   Move Map convergence for a sale (the owner-side release signal; a stub hook)
   /sweep                        run the Deal Engine's no-show sweep (24h past pickup asks the owner to refund)
+  /items [days]                 seed demo items (couch, desk, bookshelf, lamp, kept mattress); move-out in
+                                <days> (default 10). Then "plan my move under $300"
+  /moveout <YYYY-MM-DD|+days>   set the move-out date
+  /sold <item>                  mark an item sold (what the Deal Engine does); /plansweep settles its plan record
+  /donated <item>               mark an item donated
+  /plansweep                    run the plan drift sweep (settles records, nudges when you fall behind)
+  /plans                        the drafts and the chosen plan's Nessie records
+  /ff <days>                    fast-forward the clock (the time machine)
   /ledger                       every Ledger row
   /books                        the live Ledger straight from Nessie, account by account
   /pending                      actions waiting for the owner's yes
@@ -152,6 +189,7 @@ const HELP = `Commands:
   /events                       toggle showing events
   /reset                        start a fresh move
   /quit
+Move Plans: /items, "plan my move under $300", /vote 2, /books, /ff 6, /plansweep, "what plan am I on", "show me the ledger".
 Try: "Sam is 617-555-0101", "split the $240 truck with Sam and Priya", "yes", "/as roommate Sam",
 "can I do a payment plan, $20 a month?", "/as owner", "yes", "/as roommate Sam", "paid", "/books".`;
 
@@ -224,6 +262,95 @@ async function command(line: string) {
       print({ replies: [], outbound: r.outbound, events: r.events });
       return;
     }
+    case "items": {
+      const days = Number(rest[0] ?? 10) || 10;
+      const mk = (
+        id: string,
+        name: string,
+        category: string,
+        weightLb: number,
+        list: number,
+        floor: number | null,
+        keep = false,
+      ): MoneyItem => ({
+        id,
+        name,
+        category,
+        weightLb,
+        listPriceCents: list,
+        floorPriceCents: floor,
+        outcome: "listed",
+        ...(keep ? { keep } : {}),
+      });
+      items = [
+        mk("it_couch", "couch", "furniture", 120, 12000, 8000),
+        mk("it_desk", "desk", "furniture", 60, 8000, 5000),
+        mk("it_shelf", "bookshelf", "furniture", 40, 4000, 2000),
+        mk("it_lamp", "lamp", "decor", 8, 2500, 1500),
+        mk("it_mattress", "mattress", "furniture", 70, 0, null, true),
+      ];
+      move = { ...move, moveOutAt: isoDay(new Date(clock().getTime() + days * 86_400_000)) };
+      for (const it of items)
+        console.log(
+          dim(
+            `  ${it.name.padEnd(10)} ${it.keep ? "keeping".padStart(9) : fmtUsd(it.listPriceCents ?? 0).padStart(9)}  floor ${it.floorPriceCents ? fmtUsd(it.floorPriceCents) : "-"}  ${it.weightLb} lb`,
+          ),
+        );
+      console.log(dim(`  move-out ${move.moveOutAt}`));
+      return;
+    }
+    case "moveout": {
+      const a = rest[0] ?? "";
+      const d = a.startsWith("+") ? isoDay(new Date(clock().getTime() + Number(a.slice(1)) * 86_400_000)) : a;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        console.log(yellow("  usage: /moveout 2026-10-28 or /moveout +10"));
+        return;
+      }
+      move = { ...move, moveOutAt: d };
+      console.log(dim(`  move-out ${d}`));
+      return;
+    }
+    case "sold":
+    case "donated": {
+      const it = items.find((i) => i.name === rest[0]);
+      if (!it) {
+        console.log(yellow(`  no item "${rest[0] ?? ""}"; /items first`));
+        return;
+      }
+      it.outcome = cmd === "sold" ? "sold" : "donated";
+      console.log(dim(`  ${it.name} is ${it.outcome}; /plansweep settles its plan record in Nessie`));
+      return;
+    }
+    case "plansweep": {
+      const r = await elf.plans.sweep(move, items);
+      if (!r.outbound.length && !r.events.length) console.log(dim("  on plan; nothing to settle or nudge"));
+      for (const e of r.events) console.log(dim(`  ${e.type} ${JSON.stringify(e.payload)}`));
+      print({ replies: [], outbound: r.outbound, events: [] });
+      return;
+    }
+    case "plans": {
+      const st = await store.getPlans(move.id);
+      if (!st) {
+        console.log(dim('  no plans yet; /items then "plan my move under $300"'));
+        return;
+      }
+      for (const p of st.drafts)
+        console.log(
+          `  ${p.label} ${p.name.padEnd(13)} ${fmtUsd(p.stats.p50Cents).padStart(8)}  ${Math.round(p.stats.chanceUnderBudget * 100)}% under ${fmtUsd(st.budgetCents)}`,
+        );
+      console.log(dim(`  chosen: ${st.chosenLabel ?? "none"}`));
+      for (const l of st.lines)
+        console.log(
+          `    ${l.status.padEnd(9)} ${l.date}  ${fmtUsd(l.cents).padStart(8)}  ${l.label}  ${dim(l.recordId)}`,
+        );
+      return;
+    }
+    case "ff": {
+      const days = Number(rest[0] ?? 1) || 1;
+      offsetDays += days;
+      console.log(dim(`  it's now ${isoDay(clock())} (${offsetDays} days ahead)`));
+      return;
+    }
     case "ledger": {
       const entries = await store.listEntries(move.id);
       if (!entries.length) console.log(dim("  (empty)"));
@@ -251,11 +378,11 @@ async function command(line: string) {
         console.log(`  ${label}  ${dim(id)}`);
         for (const w of r.withdrawals)
           console.log(
-            `    - ${fmtUsd(w.amountCents).padStart(8)} out  ${readTag(w.description)?.tag ?? "?"}  ${dim(w.description.replace(/ \[elves:.*\]$/, ""))}`,
+            `    - ${fmtUsd(w.amountCents).padStart(8)} out  ${readTag(w.description)?.tag ?? "?"}  ${w.status !== "completed" ? `${yellow(w.status)} ${w.date}  ` : ""}${dim(w.description.replace(/ \[elves:.*\]$/, ""))}`,
           );
         for (const d of r.deposits)
           console.log(
-            `    + ${fmtUsd(d.amountCents).padStart(8)} in   ${readTag(d.description)?.tag ?? "?"}  ${dim(d.description.replace(/ \[elves:.*\]$/, ""))}`,
+            `    + ${fmtUsd(d.amountCents).padStart(8)} in   ${readTag(d.description)?.tag ?? "?"}  ${d.status !== "completed" ? `${yellow(d.status)} ${d.date}  ` : ""}${dim(d.description.replace(/ \[elves:.*\]$/, ""))}`,
           );
         for (const x of r.purchases)
           console.log(
@@ -297,9 +424,11 @@ async function command(line: string) {
     case "reset":
       store = new MemoryMoneyStore();
       rails = makeRails();
-      elf = createMoneyElf({ store, rails, links });
+      elf = createMoneyElf({ store, rails, links, now: clock });
       lastPoll = null;
-      move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null };
+      items = [];
+      offsetDays = 0;
+      move = { id: `mv_local_${Date.now()}`, ownerHandle: OWNER, name: null, moveOutAt: null };
       speaker = { role: "owner", handle: OWNER, label: "owner" };
       console.log(dim("  fresh move"));
       return;

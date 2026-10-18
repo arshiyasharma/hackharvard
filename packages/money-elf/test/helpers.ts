@@ -1,6 +1,6 @@
 import { createDb, migrate } from "@elves/db";
 import { createLogger } from "@elves/shared";
-import { type LedgerEntry, MemoryMoneyStore, type MoneyStore, type PendingAction, type Person } from "../src/ledger.ts";
+import { type LedgerEntry, MemoryMoneyStore, type MoneyStore, type PendingAction, type Person, type PlanState } from "../src/ledger.ts";
 import { PostgresMoneyStore } from "../src/pg-store.ts";
 import { createMoneyElf } from "../src/money-elf.ts";
 import { FakeRails } from "../src/rails.ts";
@@ -87,6 +87,14 @@ class TestPgStore extends PostgresMoneyStore {
   override async setFundAccount(moveId: string, accountId: string) {
     await this.ensure(moveId);
     return super.setFundAccount(moveId, accountId);
+  }
+  override async getPlans(moveId: string) {
+    await this.ensure(moveId);
+    return super.getPlans(moveId);
+  }
+  override async setPlans(moveId: string, state: PlanState | null) {
+    await this.ensure(moveId);
+    return super.setPlans(moveId, state);
   }
 }
 

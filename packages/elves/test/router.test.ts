@@ -93,6 +93,24 @@ describe("route()", () => {
     );
   });
 
+  test("Move Plans texts go to the Money Elf; a bare letter only right after it sent plans", async () => {
+    const store = new MemoryStore();
+    const deps = { elves: allElves, llm: new FakeLLM(), store };
+    const r = (t: string) => route(batchOf(t), deps, { firstContact: false, moveId: "mv_1" });
+    for (const t of [
+      "plan my move under $300",
+      "keep this move under $400",
+      "go with plan B",
+      "what plan am I on?",
+      "drop the plan",
+    ])
+      expect((await r(t)).elf).toBe("money");
+    expect((await r("B")).elf).not.toBe("money");
+    await store.setThreadOwner(spaceOwnerKey(batchOf("B").spaceId), "money");
+    expect(await r("B")).toMatchObject({ elf: "money", via: "followup" });
+    expect((await r("go with c")).elf).toBe("money");
+  });
+
   test("a poll tap goes back to the Elf that sent the poll, before any other rule", async () => {
     const tap: Batch = {
       ...batchOf(null),

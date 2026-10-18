@@ -14,10 +14,12 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import type { LedgerView } from "./ledger-view.ts";
+import { cardColors, planPath } from "./plan-chart.ts";
+import { pct } from "./plans.ts";
 import { netPhrase } from "./projection.ts";
 import { projectionChart } from "./projection-chart.ts";
 
-const C = {
+export const C = {
   canvas: "#F3F2EE",
   surface: "#FFFFFF",
   ink: "#0E0F0C",
@@ -48,7 +50,7 @@ export function capFirst(s: string): string {
 
 type Weight = 400 | 500 | 600 | 700;
 
-function text(
+export function text(
   x: number,
   y: number,
   s: string,
@@ -165,6 +167,36 @@ export function ledgerCardSvg(v: LedgerView): string {
         p,
         { x: PAD + 36, y: y + 28, w: inner - 72, h: h - 56 },
         { line: C.ink, grid: C.muted, text: C.ink, muted: C.muted, bg: C.surface },
+        { size: 24, family: "Inter" },
+      ),
+    );
+    y += h + 28;
+  }
+
+  // Move Plans (decision #77): the chosen plan's likely cost, its odds, and its path with the real net cost on top.
+  const plan = v.plans?.chosen;
+  if (v.plans && plan) {
+    const h = 400;
+    parts.push(panel(PAD, y, inner, h, 32));
+    parts.push(text(PAD + 36, y + 58, `Plan ${plan.label} · ${plan.name}`, 24, 500, C.muted));
+    parts.push(
+      text(
+        PAD + 36,
+        y + 106,
+        `${netPhrase(plan.stats.p50Cents)} likely · ${pct(plan.stats.chanceUnderBudget)} under ${fmtUsd(v.plans.budgetCents)}`,
+        34,
+        600,
+        C.ink,
+      ),
+    );
+    parts.push(
+      planPath(
+        plan,
+        v.plans.budgetCents,
+        v.plans.history,
+        v.plans.moveOutDate,
+        { x: PAD + 36, y: y + 130, w: inner - 72, h: h - 158 },
+        cardColors(),
         { size: 24, family: "Inter" },
       ),
     );
@@ -370,7 +402,8 @@ function fonts(): string[] {
   return fontFiles;
 }
 
-async function render(svgSource: string, w: number): Promise<Uint8Array<ArrayBuffer>> {
+/** Any card SVG as PNG bytes, with the bundled Inter font (Move Plans renders its own card with this too). */
+export async function renderSvgPng(svgSource: string, w = W): Promise<Uint8Array<ArrayBuffer>> {
   const { Resvg } = await import("@resvg/resvg-js");
   const r = new Resvg(svgSource, {
     font: { fontFiles: fonts(), loadSystemFonts: false, defaultFontFamily: "Inter" },
@@ -381,10 +414,10 @@ async function render(svgSource: string, w: number): Promise<Uint8Array<ArrayBuf
 
 /** The card as PNG bytes, ready to upload as a Photon attachment. */
 export function renderLedgerPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
-  return render(ledgerCardSvg(v), W);
+  return renderSvgPng(ledgerCardSvg(v), W);
 }
 
 /** The 3:2 bubble preview as PNG bytes (the dashboard's og:image). */
 export function renderLedgerPreviewPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
-  return render(ledgerPreviewSvg(v), PW);
+  return renderSvgPng(ledgerPreviewSvg(v), PW);
 }

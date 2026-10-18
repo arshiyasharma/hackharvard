@@ -12,6 +12,9 @@ import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
 import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
 import { cantLines, clarifyLines, focusLine, menuLines, otherLines } from "./menu.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
+import { renderPlansPng } from "./plan-chart.ts";
+import { PLAN_POLL_ID, type PlanOp, PlanService } from "./plan-service.ts";
+import { pct } from "./plans.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
 import { approvalPollFor, MoneyService, type OpResult, type Reach } from "./service.ts";
@@ -26,7 +29,7 @@ import type {
 } from "./types.ts";
 
 export const MONEY_DESCRIPTION =
-  'Money: splitting a shared cost with roommates, who owes what, payment plans, paying a roommate back from the Moving Fund, deposits the owner paid and when they come back, escrow for sales and sublet payments (open, release, refund), the dashboard and ledger ("how much have I spent", "who owes me", "how much did I make"), money scams. Not about listing, pricing or donating an item (that is stuff), not about finding or subletting a place (that is home); nobody pays rent, bills or a landlord, moves money to a bank, invests or does taxes';
+  'Money: splitting a shared cost with roommates, who owes what, payment plans, paying a roommate back from the Moving Fund, deposits the owner paid and when they come back, escrow for sales and sublet payments (open, release, refund), move plans under a budget ("plan my move under $300": three plans with a projected cost and the odds of finishing under budget), the dashboard and ledger ("how much have I spent", "who owes me", "how much did I make"), money scams. Not about listing, pricing or donating an item (that is stuff), not about finding or subletting a place (that is home); nobody pays rent, bills or a landlord, moves money to a bank, invests or does taxes';
 
 /** Same list as the foundation stub, so routing is unchanged when this replaces it. */
 export const MONEY_KEYWORDS = [
@@ -69,6 +72,9 @@ export const MONEY_KEYWORDS = [
   "was actually",
   "loan",
   "installments",
+  // Not "budget": the Home Elf's housing hunt asks for a budget too.
+  "plan my move",
+  "move plan",
 ];
 
 export interface MoneyElf {
@@ -76,6 +82,8 @@ export interface MoneyElf {
   readonly description: string;
   readonly keywords: string[];
   readonly service: MoneyService;
+  /** Move Plans (decision #77); the local chat calls plans.sweep() for the drift sweep. */
+  readonly plans: PlanService;
   handle(ctx: MoneyContext): Promise<MoneyResult>;
 }
 
@@ -92,14 +100,16 @@ export function createMoneyElf(deps: {
   cards?: boolean;
 }): MoneyElf {
   const service = new MoneyService(deps.store, deps.rails, deps.now);
+  const plans = new PlanService(service);
   return {
     name: "money",
     description: MONEY_DESCRIPTION,
     keywords: MONEY_KEYWORDS,
     service,
+    plans,
     async handle(ctx) {
       try {
-        return await handle(service, ctx, deps.links, deps.cards === true);
+        return await handle(service, plans, ctx, deps.links, deps.cards === true);
       } catch (err) {
         ctx.log.error("money elf failed", { err: String(err), traceId: ctx.traceId });
         return {
@@ -173,8 +183,37 @@ interface Extras {
   miniApp?: { url: string };
 }
 
+/** The move's items, or null when this context has no item source (Move Plans says so out loud). */
+async function itemsOf(ctx: MoneyContext) {
+  return ctx.store?.listItems ? await ctx.store.listItems(ctx.move.id) : null;
+}
+
+/** Fold a Move Plans result into the turn: its lines, events and outbound, plus the poll and the plans card. */
+async function withPlan(r: OpResult, p: PlanOp, extras: Extras, service: MoneyService, ctx: MoneyContext) {
+  if (p.poll) extras.poll = p.poll;
+  if (p.showPlans) {
+    const state = await service.store.getPlans(ctx.move.id);
+    if (state) {
+      try {
+        extras.images = [
+          {
+            contentType: "image/png",
+            filename: "plans.png",
+            bytes: await renderPlansPng(state),
+            alt: `Move Plans under ${fmtUsd(state.budgetCents)}: ${p.lines.slice(0, 3).join("; ")}`,
+          },
+        ];
+      } catch (err) {
+        ctx.log.warn("plans card render failed; sending text", { err: String(err) });
+      }
+    }
+  }
+  return merge(r, p);
+}
+
 async function handle(
   service: MoneyService,
+  plans: PlanService,
   ctx: MoneyContext,
   links?: LedgerLinks,
   cards = false,
@@ -190,6 +229,21 @@ async function handle(
 
   // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
   const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
+  const planVote = vote?.id.match(PLAN_POLL_ID);
+  if (vote && planVote?.[1] && planVote[2]) {
+    if (role !== "owner") r.lines.push("Only the move's owner can pick a plan.");
+    else if (planVote[2] === "none") r.lines.push(`No plan for now. Text "plan my move" any time.`);
+    else
+      r = await withPlan(
+        r,
+        await plans.choose(move, await itemsOf(ctx), planVote[2] as "A" | "B" | "C", planVote[1]),
+        extras,
+        service,
+        ctx,
+      );
+    r.events.push({ type: "poll.voted", payload: { plan: planVote[2], draftKey: planVote[1] } });
+    return finish(r, extras);
+  }
   if (vote) {
     const m = vote.id.match(POLL_ID);
     if (role !== "owner") {
@@ -403,6 +457,24 @@ async function handle(
     case "add_contact":
       r = merge(r, await service.addContact(move, intent.name, intent.handle, reach));
       break;
+    case "plan_draft": {
+      const budget = intent.budgetCents ?? (await service.store.getPlans(move.id))?.budgetCents ?? null;
+      if (!budget) {
+        r.lines.push(`What's your budget for the rest of the move? Text "plan my move under $400".`);
+        break;
+      }
+      r = await withPlan(r, await plans.draft(move, await itemsOf(ctx), budget), extras, service, ctx);
+      break;
+    }
+    case "plan_choose":
+      r = await withPlan(r, await plans.choose(move, await itemsOf(ctx), intent.label), extras, service, ctx);
+      break;
+    case "plan_status":
+      r = await withPlan(r, await plans.status(move, await itemsOf(ctx)), extras, service, ctx);
+      break;
+    case "plan_cancel":
+      r = await withPlan(r, await plans.cancel(move), extras, service, ctx);
+      break;
     case "fix":
       // Past entries aren't editable (the dashboard replaced the editor, decision #60). Say so, and show
       // exactly what's recorded so the owner can tell what to log next.
@@ -517,6 +589,7 @@ async function finishTurn(
   await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
   const pending = await service.latestPending(ctx.move.id);
+  const plan = await service.store.getPlans(ctx.move.id);
   // The board shows the live Ledger, read back from Nessie.
   const books = await service.books(ctx.move);
   // Texts Elves can't deliver become one line telling the owner who to talk to; the Ledger already has the rest.
@@ -574,9 +647,11 @@ async function finishTurn(
       status: pending ? "waiting" : entries.length ? "working" : "idle",
       currentTask: pending
         ? `Waiting for your OK to ${pending.summary}`
-        : entries.length
-          ? "Keeping the Ledger"
-          : "Standing by",
+        : plan?.chosen
+          ? `On plan ${plan.chosen.label}: ${pct(plan.chosen.stats.chanceUnderBudget)} under ${fmtUsd(plan.budgetCents)}`
+          : entries.length
+            ? "Keeping the Ledger"
+            : "Standing by",
       lastUpdate: booksLine(books),
     },
   };

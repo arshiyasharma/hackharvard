@@ -31,11 +31,28 @@ export interface MoneyMove {
   name: string | null;
   /** The owner's chat (the crew's Move has it), for outbound texts to the owner. */
   ownerSpaceId?: string;
+  /** Move-out (the crew's Move has it), ISO date or time. Move Plans plans up to this day. */
+  moveOutAt?: string | null;
+}
+
+/** The slice of the crew's Item that Move Plans reads (packages/shared/src/index.ts Item). */
+export interface MoneyItem {
+  id: string;
+  name: string;
+  category: string;
+  weightLb: number;
+  listPriceCents: number | null;
+  floorPriceCents: number | null;
+  outcome: "listed" | "sold" | "given" | "donated" | "dumped";
+  /** The owner is keeping it (always hauled). Not on the crew Item yet; the local chat sets it. */
+  keep?: boolean;
 }
 
 /** The slice of the crew Store the Money Elf reads: who is in the move and which space each one texts from. */
 export interface MoneySpaces {
   listParticipants(moveId: string): Promise<{ handle: string; spaceId: string }[]>;
+  /** The move's items (Move Plans). Optional so callers without items still type-check. */
+  listItems?(moveId: string): Promise<MoneyItem[]>;
 }
 
 export interface MoneyParticipant {

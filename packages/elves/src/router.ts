@@ -100,6 +100,17 @@ const DASHBOARD_ASK = /\b(dashboard|ledger)\b/i;
 const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
 
 /**
+ * Move Plans texts, the Money Elf's (decision #77). Mirrors parsePlanIntent in packages/money-elf/src/parse.ts;
+ * the router can't import it (the Money Elf package depends on this one). "Payment plan" is a roommate loan and
+ * already reaches the Money Elf by keyword.
+ */
+const MOVE_PLAN_ASK =
+  /\bplan (out )?(my|the|this) move\b|\bmove plans?\b|\bkeep (this|the|my) move under\b|\b(what|which) plan am i on\b|\bplan status\b|\b(go with|pick|choose|switch(?: me)? to|take|let'?s do)\s+plan\s+[abc]\b|\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i;
+/** A bare plan pick ("B", "go with C"): only right after the Money Elf sent plans. */
+const PLAN_PICK =
+  /^\s*(?:plan\s+)?[abc]\s*[.!]?\s*$|^\s*(?:go with|pick|choose|switch(?: me)? to|take)\s+[abc]\s*[.!]?\s*$/i;
+
+/**
  * Crew Lead routing: a counterparty (a buyer texting about a listing) always goes to the Elf that owns their
  * deal, never through classification; first contact in the owner chat always goes to the Crew Lead; a reply inside an Elf's
  * thread goes to that Elf; a "more" / "tell me about 2" after the Home Elf sent picks goes back to it;
@@ -140,6 +151,13 @@ export async function route(
   }
 
   const text = batchText(batch);
+  // Move Plans ("plan my move under $300", "go with plan B", "what plan am I on") go to the Money Elf, before
+  // "status" and the price rules can claim them. Polls are refused on the shared pool, so picks come as text.
+  if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch) && deps.elves.some((e) => e.name === "money")) {
+    if (MOVE_PLAN_ASK.test(text)) return { elf: "money", via: "scope", confidence: 1 };
+    if (PLAN_PICK.test(text) && (await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId))) === "money")
+      return { elf: "money", via: "followup", confidence: 0.95 };
+  }
   // "status" is the Home Elf's (it has the checklist and the sublet); "what can you do?" is the Crew Lead's.
   // Both are answered from any thread.
   if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch)) {

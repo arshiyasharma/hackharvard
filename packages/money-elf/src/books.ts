@@ -7,7 +7,7 @@
  */
 import { fmtUsd } from "./amounts.ts";
 import type { MoneyStore, Person } from "./ledger.ts";
-import type { AccountRecords, MoneyRails } from "./rails.ts";
+import type { AccountRecords, MoneyRails, MoneyRecord } from "./rails.ts";
 
 export type RecordTag =
   | "expense"
@@ -19,7 +19,13 @@ export type RecordTag =
   | "escrow_in"
   | "escrow_release"
   | "escrow_refund"
-  | "payment";
+  | "payment"
+  /** Move Plans (decision #78): expected sale money into the Moving Fund, a pending deposit. */
+  | "plan_in"
+  /** Move Plans: an expected cost (truck, movers), a pending withdrawal on the owner's account. */
+  | "plan_out";
+
+const PLAN_TAGS: RecordTag[] = ["plan_in", "plan_out"];
 
 export function tagged(description: string, tag: RecordTag, entryId: string): string {
   return `${description} [elves:${tag}:${entryId}]`;
@@ -59,6 +65,33 @@ export interface Books {
   recent: Activity[];
   /** Number of tagged Nessie records the totals were built from. */
   records: number;
+  /**
+   * The chosen move plan's records (Move Plans), whatever their status: pending = still expected, completed =
+   * it happened, cancelled = it won't. Never counted in the totals above.
+   */
+  planned: PlannedRecord[];
+}
+
+export interface PlannedRecord {
+  tag: "plan_in" | "plan_out";
+  /** The plan line id from the tag (`<planId>_<lineId>`). */
+  lineId: string;
+  /** Nessie record id, for settling it. */
+  recordId: string;
+  date: string;
+  cents: number;
+  status: string;
+  label: string;
+}
+
+/**
+ * Whether a record counts as money that moved. Pending and cancelled records are expectations; plan records are
+ * never totals. FakeRails and records written before Move Plans may carry "" or "completed".
+ */
+function settled(r: { status: string; description: string }): boolean {
+  if (r.status !== "" && r.status !== "completed") return false;
+  const t = readTag(r.description);
+  return !(t && PLAN_TAGS.includes(t.tag));
 }
 
 export interface Activity {
@@ -87,7 +120,7 @@ function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
   ] as const) {
     for (const x of list) {
       const t = readTag(x.description);
-      if (t)
+      if (t && settled(x))
         out.push({
           date: x.date,
           label: untagged(x.description),
@@ -103,13 +136,37 @@ function activity(r: AccountRecords, account: Activity["account"]): Activity[] {
   return out;
 }
 
-function sumTagged(recs: { amountCents: number; description: string }[], tags: RecordTag[]): number {
+function sumTagged(recs: MoneyRecord[], tags: RecordTag[]): number {
   let n = 0;
   for (const r of recs) {
     const t = readTag(r.description);
-    if (t && tags.includes(t.tag)) n += r.amountCents;
+    if (t && tags.includes(t.tag) && settled(r)) n += r.amountCents;
   }
   return n;
+}
+
+/** Balance of an account from the records that actually moved (pending and plan records excluded). */
+function balanceOf(r: AccountRecords): number {
+  const sum = (xs: MoneyRecord[]) => xs.filter(settled).reduce((a, x) => a + x.amountCents, 0);
+  return sum(r.deposits) - sum(r.withdrawals) - sum(r.purchases);
+}
+
+function plannedIn(r: AccountRecords): PlannedRecord[] {
+  const out: PlannedRecord[] = [];
+  for (const x of [...r.deposits, ...r.withdrawals]) {
+    const t = readTag(x.description);
+    if (t && (t.tag === "plan_in" || t.tag === "plan_out"))
+      out.push({
+        tag: t.tag,
+        lineId: t.entryId,
+        recordId: x.id,
+        date: x.date,
+        cents: x.amountCents,
+        status: x.status,
+        label: untagged(x.description),
+      });
+  }
+  return out;
 }
 
 function countTagged(r: AccountRecords): number {
@@ -148,6 +205,7 @@ export async function readBooks(store: MoneyStore, rails: MoneyRails, moveId: st
     owes: [],
     recent: [],
     records: 0,
+    planned: [],
   };
   if (ownerRecs) {
     // Shared costs are purchases at a merchant (SPEC §4); older moves recorded them as withdrawals.
@@ -161,21 +219,19 @@ export async function readBooks(store: MoneyStore, rails: MoneyRails, moveId: st
     books.records += countTagged(ownerRecs);
   }
   if (fundRecs) {
-    books.fundCents =
-      fundRecs.deposits.reduce((a, r) => a + r.amountCents, 0) -
-      fundRecs.withdrawals.reduce((a, r) => a + r.amountCents, 0) -
-      fundRecs.purchases.reduce((a, r) => a + r.amountCents, 0);
+    books.fundCents = balanceOf(fundRecs);
     books.collectedCents += sumTagged(fundRecs.deposits, ["share_paid", "loan_payment"]);
     books.salesCents += sumTagged(fundRecs.deposits, ["escrow_release"]);
     books.spentCents += sumTagged(fundRecs.withdrawals, ["payment"]);
     books.records += countTagged(fundRecs);
   }
   if (escrowRecs) {
-    books.escrowCents =
-      escrowRecs.deposits.reduce((a, r) => a + r.amountCents, 0) -
-      escrowRecs.withdrawals.reduce((a, r) => a + r.amountCents, 0);
+    books.escrowCents = balanceOf(escrowRecs);
     books.records += countTagged(escrowRecs);
   }
+  books.planned = [...(ownerRecs ? plannedIn(ownerRecs) : []), ...(fundRecs ? plannedIn(fundRecs) : [])].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.lineId.localeCompare(b.lineId),
+  );
   // Escrow and the Fund mirror the owner's own movements, so the owner's view lists each event once.
   books.recent = [
     ...(ownerRecs ? activity(ownerRecs, "you") : []),

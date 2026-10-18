@@ -21,6 +21,7 @@ function books(over: Partial<Books> = {}): Books {
     owes: [],
     recent: [],
     records: 0,
+    planned: [],
     ...over,
   };
 }

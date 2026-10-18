@@ -6,7 +6,7 @@
  * Takes the crew's Bun SQL client, so it shares the pool the rest of the store uses.
  */
 import type { SQL } from "bun";
-import type { LedgerEntry, MoneyStore, NessieRefs, PendingAction, PendingKind, Person } from "./ledger.ts";
+import type { LedgerEntry, MoneyStore, NessieRefs, PendingAction, PendingKind, Person, PlanState } from "./ledger.ts";
 import type { MerchantCache } from "./rails.ts";
 import type { Role } from "./types.ts";
 
@@ -265,5 +265,22 @@ export class PostgresMoneyStore implements MoneyStore {
     await this.sql`
       insert into money_accounts (move_id, fund_account_id) values (${moveId}, ${accountId})
       on conflict (move_id) do update set fund_account_id = excluded.fund_account_id`;
+  }
+
+  // ---------- Move Plans
+
+  async getPlans(moveId: string) {
+    const rows = await this.sql`select state from money_plans where move_id = ${moveId}`;
+    return rows[0] ? json<PlanState>(rows[0].state, undefined as never) : undefined;
+  }
+
+  async setPlans(moveId: string, state: PlanState | null) {
+    if (!state) {
+      await this.sql`delete from money_plans where move_id = ${moveId}`;
+      return;
+    }
+    await this.sql`
+      insert into money_plans (move_id, state) values (${moveId}, ${JSON.stringify(state)}::jsonb)
+      on conflict (move_id) do update set state = excluded.state, updated_at = now()`;
   }
 }

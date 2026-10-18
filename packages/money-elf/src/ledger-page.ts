@@ -11,6 +11,8 @@
  *   - Coming back: a what-if projection. Switch off anything you're not counting on, or assume everyone pays two
  *     weeks late, and the chart and numbers redraw. Nothing is saved; it's a calculator.
  *   - Activity: every tagged Nessie movement.
+ *   - Plan (Move Plans, decision #77): the drafts to pick from, or the chosen plan's path with its pending,
+ *     completed and cancelled records read live from Nessie.
  *   - Tapping a person, an expected payment or an activity row opens a bottom sheet with its details, including
  *     the Nessie record id.
  *
@@ -21,6 +23,8 @@
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import { capFirst, esc } from "./ledger-card.ts";
 import { type LedgerView, ledgerSummaryLine } from "./ledger-view.ts";
+import { type PlanColors, planGrid, planPath, planRace } from "./plan-chart.ts";
+import { ASSUMPTIONS, pct as pctOf } from "./plans.ts";
 import { ASSUMED_DAYS, netPhrase } from "./projection.ts";
 
 // ---------- icons (thin line glyphs, drawn inline so the page has no external assets) ----------
@@ -387,6 +391,10 @@ input:focus-visible+.switch{outline:2px solid var(--ink);outline-offset:2px}
 .sheet .kv{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:14px}.sheet .kv span:last-child{text-align:right;font-weight:600;word-break:break-all}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:11;background:var(--ink);color:var(--canvas);font-size:13.5px;font-weight:500;padding:10px 14px;border-radius:10px;max-width:88vw;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
+.plan-svg{display:block;width:100%;height:auto;padding:8px 10px 4px}
+.chip{display:inline-block;font-size:11px;font-weight:600;border-radius:6px;padding:1px 7px;background:var(--fill);color:var(--muted);border:1px solid var(--line)}
+.chip.pending{background:var(--wait-soft);color:var(--wait);border-color:transparent}.chip.completed{color:var(--good)}.chip.cancelled{text-decoration:line-through}
+details.how{margin:12px 2px 0}details.how summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:500}
 </style></head>
 <body>
 <main>
@@ -395,9 +403,11 @@ input:focus-visible+.switch{outline:2px solid var(--ink);outline-offset:2px}
 <button class="on" data-tab="overview">Overview</button>
 <button data-tab="back">Coming back</button>
 <button data-tab="activity">Activity</button>
+<button data-tab="plan">Plan</button>
 </nav></div>
 <section class="tab on" id="tab-overview">
 <div class="fold">${hero}</div>
+${planLink(v)}
 ${approvals}
 ${stats}
 ${owes}
@@ -405,6 +415,7 @@ ${heldOut}
 </section>
 <section class="tab" id="tab-back">${comingBack}</section>
 <section class="tab" id="tab-activity">${activity}</section>
+<section class="tab" id="tab-plan">${planTab(v)}</section>
 <div class="foot">Read live from ${plural(v.records, "Nessie record")} · refreshes every 5 seconds</div>
 </main>
 <div class="sheet-bg" id="sheet-bg"></div>
@@ -425,7 +436,7 @@ var busy=false;
 function show(t){document.querySelectorAll(".tab").forEach(function(el){el.classList.toggle("on",el.id==="tab-"+t)});document.querySelectorAll(".seg button").forEach(function(b){b.classList.toggle("on",b.dataset.tab===t)});try{history.replaceState(null,"","#"+t)}catch(e){}window.scrollTo(0,0)}
 document.querySelectorAll("[data-tab]").forEach(function(b){b.addEventListener("click",function(){show(b.dataset.tab)})});
 document.querySelectorAll("[data-go]").forEach(function(b){b.addEventListener("click",function(){show(b.dataset.go)})});
-var h=(location.hash||"").slice(1);if(h==="back"||h==="activity")show(h);
+var h=(location.hash||"").slice(1);if(h==="back"||h==="activity"||h==="plan")show(h);
 // Sheets
 function kv(k,v){return '<div class="kv"><span class="muted">'+esc(k)+'</span><span>'+esc(v)+'</span></div>'}
 function openSheet(html){$("#sheet-body").innerHTML=html;$("#sheet").classList.add("on");$("#sheet-bg").classList.add("on");busy=true}
@@ -461,4 +472,81 @@ setInterval(function(){if(!busy&&!touched&&document.visibilityState==="visible")
 })();
 </script>
 </body></html>`;
+}
+
+// ---------- Move Plans (decision #77) ----------
+
+const PLAN_COLORS: PlanColors = {
+  series: ["var(--ink)", "var(--ink-2)", "var(--muted)"],
+  grid: "var(--line)",
+  text: "var(--ink)",
+  muted: "var(--muted)",
+  bg: "var(--surface)",
+  shade: "var(--fill)",
+};
+const PLAN_FONT = { size: 11, family: "Inter, -apple-system, BlinkMacSystemFont, sans-serif" };
+
+/** One row on Overview that opens the Plan tab. */
+function planLink(v: LedgerView): string {
+  const ps = v.plans;
+  if (!ps || (!ps.chosen && !ps.drafts.length)) return "";
+  const text = ps.chosen
+    ? `Plan ${ps.chosen.label} · ${netPhrase(ps.chosen.stats.p50Cents)} likely · ${pctOf(ps.chosen.stats.chanceUnderBudget)} under ${fmtUsd(ps.budgetCents)}`
+    : `${ps.drafts.length} plans under ${fmtUsd(ps.budgetCents)} · pick one`;
+  return `<div class="panel" style="margin-top:14px"><button class="next" data-go="plan" style="border-top:0"><span class="k">Plan</span><span class="grow">${esc(text)}</span>${ICON.chevronRight}</button></div>`;
+}
+
+/** The written-out assumptions behind every plan percentage. */
+function assumptionsHtml(): string {
+  const a = ASSUMPTIONS;
+  const rates = Object.entries(a.saleRatePerDay)
+    .map(([k, r]) => `${k} ${pctOf(r)}/day`)
+    .join(", ");
+  return `<details class="how"><summary>How the odds are estimated</summary><p class="note">Each plan is run 2,000 times. An item at its list price sells on a given day with these chances: ${esc(rates)}; a lower price raises that by (list ÷ price)<sup>${a.priceElasticity}</sup>. Last Call drops the price to ${pctOf(a.lastCallDrop)} of list two days before move-out and relists it free the day before; anything left is hauled away for ${fmtUsd(a.dumpCents)}. Trucks: ${esc(a.trucks.map((t) => `${t.size} ${fmtUsd(t.cents)} (up to ${t.capacityLb} lb)`).join(", "))}, sized for ${a.baseLoadLb} lb of boxes plus what you haul. Movers: ${fmtUsd(a.moversCents)}. Estimates, not quotes.</p></details>`;
+}
+
+function planTab(v: LedgerView): string {
+  const ps = v.plans;
+  const empty = `<div class="panel empty" style="margin-top:16px"><b>No plan yet.</b><span>Text Elves “plan my move under $300” (your budget) and you get three plans, each with the chance it finishes under budget.</span></div>`;
+  if (!ps) return empty;
+  const p = ps.chosen;
+  if (p) {
+    const path = planPath(
+      p,
+      ps.budgetCents,
+      ps.history,
+      ps.moveOutDate,
+      { x: 4, y: 0, w: 332, h: 150 },
+      PLAN_COLORS,
+      PLAN_FONT,
+    );
+    const records = ps.records
+      .map(
+        (r) =>
+          `<div class="li static"><span class="date">${esc(fmtDate(r.date))}</span><div class="grow"><div>${esc(capFirst(r.label.replace(/^Plan [ABC]: /, "")))}</div><div class="sub"><span class="chip ${esc(r.status)}">${esc(r.status)}</span>${r.tag === "plan_in" ? "Moving Fund" : "Your account"}</div></div><div class="amt${r.tag === "plan_in" ? " good" : ""}">${money(r.cents, r.tag === "plan_in" ? "+" : "−")}</div></div>`,
+      )
+      .join("");
+    return `<section class="hero compact">
+<div class="eyebrow">Plan ${p.label} · ${esc(p.name)}</div>
+<div class="figure">${esc(netPhrase(p.stats.p50Cents))}</div>
+<div class="flow"><span>likely final cost</span><i></i><span>${esc(netPhrase(p.stats.p10Cents))}–${esc(netPhrase(p.stats.p90Cents))}</span></div>
+<div class="land"><span class="tag">${ICON.arrowDown}Projected</span><b>${pctOf(p.stats.chanceUnderBudget)}</b><span>chance under ${fmtUsd(ps.budgetCents)}, move-out ${esc(fmtDate(ps.moveOutDate))}</span></div>
+</section>
+${path ? `<div class="panel chart-panel"><svg class="plan-svg" viewBox="0 0 340 162" role="img" aria-label="${esc(`Plan ${p.label}: likely ${netPhrase(p.stats.p50Cents)} by move-out`)}">${path}</svg></div>` : ""}
+<p class="note">Shaded: 10–90% of simulated moves. Dots: your real net cost, day by day. ${p.truck.size} truck${p.movers ? " and movers" : ""}.</p>
+${records ? `<div class="sh"><h2>In Nessie</h2><span class="meta">${plural(ps.records.length, "record")}</span></div><div class="panel">${records}</div>` : ""}
+${assumptionsHtml()}`;
+  }
+  if (!ps.drafts.length) return empty;
+  const race = planRace(ps.drafts, ps.budgetCents, { x: 4, y: 0, w: 332, h: 190 }, PLAN_COLORS, PLAN_FONT);
+  const grid = planGrid(ps.drafts, { x: 4, y: 0, w: 332 }, PLAN_COLORS, PLAN_FONT);
+  return `<section class="hero compact">
+<div class="eyebrow">Move plans under ${fmtUsd(ps.budgetCents)}</div>
+<div class="figure">${ps.drafts.length} plans</div>
+<div class="flow"><span>Reply A, B or C in Messages</span></div>
+</section>
+<div class="panel chart-panel"><svg class="plan-svg" viewBox="0 0 340 190" role="img" aria-label="${esc(ps.drafts.map((d) => `Plan ${d.label}: ${netPhrase(d.stats.p50Cents)}, ${pctOf(d.stats.chanceUnderBudget)} under budget`).join("; "))}">${race}</svg></div>
+<div class="sh"><h2>What each plan does</h2></div>
+<div class="panel"><svg class="plan-svg" viewBox="0 0 340 ${Math.ceil(grid.h + 8)}" role="img" aria-label="What each plan does with each item">${grid.svg}</svg></div>
+${assumptionsHtml()}`;
 }
