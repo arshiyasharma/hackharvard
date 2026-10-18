@@ -61,8 +61,12 @@ describe("show me the ledger", () => {
     const png = r.images?.[0];
     expect(png?.contentType).toBe("image/png");
     expect([...(png?.bytes.slice(0, 4) ?? [])]).toEqual([0x89, 0x50, 0x4e, 0x47]);
-    expect(reply(r)).toContain("Here's your Ledger, live from Nessie.");
-    expect(reply(r)).toContain(`https://elves.test/ledger/mv_test?t=${ledgerToken("s3cret", "mv_test")}`);
+    expect(reply(r)).toContain("Your money, live from Nessie: $40 in the Moving Fund");
+    // The link and the card both open the Moving Ledger dashboard (the read-only page, decision #60).
+    const dashboard = `https://elves.test/ledger/mv_test?t=${ledgerToken("s3cret", "mv_test")}`;
+    expect(reply(r)).toContain("Tap the Elves Ledger card to open your dashboard");
+    expect(reply(r)).toContain(dashboard);
+    expect(r.miniApp?.url).toBe(dashboard);
     expect(r.replies[0]?.text.split("\n").length).toBeLessThanOrEqual(3);
     expect(eventTypes(r)).toContain("ledger.shown");
   });
@@ -80,6 +84,18 @@ describe("show me the ledger", () => {
     const r = await s.say("show me the ledger", { from: SAM, role: "roommate" });
     expect(r.images).toBeUndefined();
     expect(reply(r)).not.toContain("http");
+  });
+});
+
+describe("corrections by text", () => {
+  test("a correction says it can't edit past entries and links the dashboard, with no card", async () => {
+    const s = linkedSetup();
+    await demo(s);
+    const r = await s.say("the truck was actually $260");
+    expect(reply(r)).toContain("I can't change a past Ledger entry by text yet.");
+    expect(reply(r)).toContain(`https://elves.test/ledger/mv_test?t=${ledgerToken("s3cret", "mv_test")}`);
+    expect(r.miniApp).toBeUndefined();
+    expect(eventTypes(r)).toContain("ledger.fix_declined");
   });
 });
 
@@ -107,11 +123,14 @@ describe("the Ledger view, card and page", () => {
     spentCents: 0,
     salesCents: 0,
     depositsOutCents: 0,
-    owes: [{ name: '<script>alert("x")</script>', owedCents: 100, loan: null }],
+    owes: [{ name: '<script>alert("x")</script>', owedCents: 100, loan: null, bills: [] }],
     escrow: [],
     deposits: [],
     recent: [],
-    pending: [],
+    pending: ["pay </script><script>alert(1)</script> $1"],
+    pendingActions: [
+      { id: "pa_1", kind: "pay_person", summary: "pay </script><script>alert(1)</script> $1" },
+    ],
     records: 1,
     projection: {
       outCents: 0,
@@ -132,6 +151,9 @@ describe("the Ledger view, card and page", () => {
     expect(html).not.toContain("<script>alert");
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("<b>Eve</b>");
+    // Names also travel in the page's JSON data block; none may close the script tag early.
+    expect(html).not.toContain("</script><script>alert(1)");
+    expect(html.match(/<\/script>/g)?.length).toBe(2);
   });
 
   test("the page carries Open Graph tags so iMessage previews it with the card", () => {
@@ -154,14 +176,23 @@ describe("live Ledger routes", () => {
     return { ...s, handle: createLedgerHandler({ service: s.elf.service, links: LINKS }) };
   }
 
-  test("signed links serve the page, the PNG and the JSON", async () => {
+  test("signed links serve the page, both PNGs and the JSON", async () => {
     const { handle } = await routes();
     const page = await handle(new Request(ledgerUrl(LINKS, "mv_test")));
     expect(page?.status).toBe(200);
     expect(page?.headers.get("content-type")).toContain("text/html");
-    expect(await page?.text()).toContain("Moving Ledger");
+    const html = (await page?.text()) ?? "";
+    expect(html).toContain("Move Money");
+    // The bubble shows the 3:2 preview, not the tall thread image.
+    expect(html).toContain(`content="${ledgerUrl(LINKS, "mv_test", ".preview.png")}"`);
     const png = await handle(new Request(ledgerUrl(LINKS, "mv_test", ".png")));
     expect(png?.headers.get("content-type")).toBe("image/png");
+    const preview = await handle(new Request(ledgerUrl(LINKS, "mv_test", ".preview.png")));
+    expect(preview?.headers.get("content-type")).toBe("image/png");
+    const bytes = new Uint8Array((await preview?.arrayBuffer()) ?? new ArrayBuffer(0));
+    const dims = new DataView(bytes.buffer, 16, 8);
+    expect([dims.getUint32(0), dims.getUint32(4)]).toEqual([1200, 800]);
+    expect((await handle(new Request("https://elves.test/ledger/mv_test.preview.png")))?.status).toBe(404);
     const json = await handle(new Request(ledgerUrl(LINKS, "mv_test", ".json")));
     if (!json) throw new Error("no response");
     expect(((await json.json()) as { fundCents: number }).fundCents).toBe(4000);
@@ -173,6 +204,19 @@ describe("live Ledger routes", () => {
     expect((await handle(new Request("https://elves.test/ledger/mv_test?t=nope")))?.status).toBe(404);
     const other = `https://elves.test/ledger/mv_other?t=${ledgerToken("s3cret", "mv_other")}`;
     expect((await handle(new Request(other)))?.status).toBe(404);
+  });
+
+  test("the old editor routes are gone", async () => {
+    const { handle } = await routes();
+    const t = ledgerToken("s3cret", "mv_test");
+    expect(await handle(new Request(`https://elves.test/ledger/mv_test/app?t=${t}`))).toBeNull();
+    expect(
+      await handle(
+        new Request(`https://elves.test/ledger/mv_test/edit?t=${t}`, { method: "POST", body: "{}" }),
+      ),
+    ).toBeNull();
+    const post = await handle(new Request(ledgerUrl(LINKS, "mv_test"), { method: "POST", body: "{}" }));
+    expect(post?.status).toBe(405);
   });
 
   test("other paths fall through to the caller's routes", async () => {
@@ -246,5 +290,126 @@ describe("approval polls", () => {
     expect(toOwner?.poll?.options[0]?.id).toMatch(/^money:approve:pa_/);
     const r = await s.say(null, { vote: toOwner?.poll?.options[0] ?? { id: "", text: "" } });
     expect(eventTypes(r)).toContain("loan.created");
+  });
+});
+
+describe("dashboard phrases", () => {
+  for (const phrase of ["show me my dashboard", "dashboard", "how's my money", "where do I stand"]) {
+    test(`"${phrase}" opens the dashboard`, async () => {
+      const s = linkedSetup();
+      await demo(s);
+      const r = await s.say(phrase);
+      expect(r.miniApp?.url).toBe(`https://elves.test/ledger/mv_test?t=${ledgerToken("s3cret", "mv_test")}`);
+      expect(reply(r)).toContain("Tap the Elves Ledger card to open your dashboard");
+    });
+  }
+});
+
+describe("the dashboard card comes unasked", () => {
+  test("an owner turn that changes the Ledger brings the card, without asking for it", async () => {
+    const s = linkedSetup();
+    const dashboard = `https://elves.test/ledger/mv_test?t=${ledgerToken("s3cret", "mv_test")}`;
+    // Adding a contact doesn't touch the Ledger.
+    expect((await s.say(`Sam is ${SAM}`)).miniApp).toBeUndefined();
+    // The split goes on the Ledger as it asks for an OK (the dashboard shows Approve / Not now for it).
+    expect((await s.say("split the $240 truck with Sam and Priya")).miniApp?.url).toBe(dashboard);
+    expect((await s.say("yes")).miniApp?.url).toBe(dashboard);
+  });
+
+  test("a roommate's payment doesn't send the roommate the owner's dashboard", async () => {
+    const s = linkedSetup();
+    await demo(s);
+    const r = await s.say("paid", { from: SAM, role: "roommate" });
+    expect(r.miniApp).toBeUndefined();
+  });
+});
+
+describe("approving from the dashboard", () => {
+  async function withPending() {
+    const s = linkedSetup();
+    await s.say(`Sam is ${SAM}`);
+    await s.say("split the $240 truck with Sam");
+    await s.say("pay Sam $40 for gas");
+    const pending = await s.store.listPending("mv_test");
+    const split = pending.find((p) => p.kind === "send_split_requests");
+    const pay = pending.find((p) => p.kind === "pay_person");
+    const decided: { moveId: string; lines: string[]; outbound: number }[] = [];
+    const handle = createLedgerHandler({
+      service: s.elf.service,
+      links: LINKS,
+      onDecided: async (moveId, result) => {
+        decided.push({ moveId, lines: result.lines, outbound: result.outbound.length });
+      },
+    });
+    const post = (body: unknown, url = ledgerUrl(LINKS, "mv_test", "/decide")) =>
+      handle(new Request(url, { method: "POST", body: JSON.stringify(body) }));
+    return { s, split, pay, decided, post };
+  }
+
+  test("Approve runs exactly the action it names and hands its texts to the crew service", async () => {
+    const { s, split, decided, post } = await withPending();
+    const res = await post({ pendingId: split?.id, choice: "approve" });
+    const body = (await res?.json()) as { ok: boolean; message: string; view: { pendingActions: unknown[] } };
+    expect(res?.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.message).toContain("Sent the request");
+    // The newer pay_person action is still waiting: the tap named the split, not "the latest".
+    expect(body.view.pendingActions).toHaveLength(1);
+    expect(decided).toEqual([{ moveId: "mv_test", lines: expect.any(Array), outbound: 1 }]);
+    expect((await s.store.listPending("mv_test")).map((p) => p.kind)).toEqual(["pay_person"]);
+  });
+
+  test("Not now declines it; a second tap is harmless", async () => {
+    const { s, pay, post, decided } = await withPending();
+    const first = (await (await post({ pendingId: pay?.id, choice: "decline" }))?.json()) as {
+      ok: boolean;
+      message: string;
+    };
+    expect(first.ok).toBe(true);
+    expect(first.message).toContain("I won't pay Sam $40");
+    const again = (await (await post({ pendingId: pay?.id, choice: "approve" }))?.json()) as {
+      ok: boolean;
+      message: string;
+    };
+    expect(again.ok).toBe(false);
+    expect(again.message).toContain("already been handled");
+    expect(decided).toHaveLength(1);
+    expect(s.rails.calls.filter((c) => c.op === "moveMoney")).toHaveLength(0);
+  });
+
+  test("bad bodies, wrong methods and wrong tokens are refused", async () => {
+    const { post } = await withPending();
+    expect((await post({ pendingId: "x y", choice: "approve" }))?.status).toBe(400);
+    expect((await post({ pendingId: "pa_1", choice: "maybe" }))?.status).toBe(400);
+    expect((await post("{not json"))?.status).toBe(400);
+    expect(
+      (
+        await post(
+          { pendingId: "pa_1", choice: "approve" },
+          "https://elves.test/ledger/mv_test/decide?t=nope",
+        )
+      )?.status,
+    ).toBe(404);
+    const { s } = await withPending();
+    const handle = createLedgerHandler({ service: s.elf.service, links: LINKS });
+    expect((await handle(new Request(ledgerUrl(LINKS, "mv_test", "/decide"))))?.status).toBe(405);
+  });
+
+  test("the dashboard shows Approve / Not now for each pending action, wired to /decide", async () => {
+    const { s } = await withPending();
+    const handle = createLedgerHandler({ service: s.elf.service, links: LINKS });
+    const html = (await (await handle(new Request(ledgerUrl(LINKS, "mv_test"))))?.text()) ?? "";
+    expect(html).toContain("Needs your OK");
+    expect(html.match(/data-decide="approve"/g)?.length).toBe(2);
+    expect(html.match(/data-decide="decline"/g)?.length).toBe(2);
+    expect(html).toContain(ledgerUrl(LINKS, "mv_test", "/decide"));
+    expect(html).toContain('id="tab-back"');
+    expect(html).toContain("2 waiting");
+    // Once the requests go out, Sam's share is coming back, so the what-if appears.
+    const [split] = (await s.store.listPending("mv_test")).filter((p) => p.kind === "send_split_requests");
+    await s.elf.service.approve(s.move, split?.id);
+    const after = (await (await handle(new Request(ledgerUrl(LINKS, "mv_test"))))?.text()) ?? "";
+    expect(after).toContain('id="wi-late"');
+    expect(after).toContain('data-count="0"');
   });
 });

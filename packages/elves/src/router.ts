@@ -8,6 +8,7 @@ import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { parsePriceCents } from "./intake.ts";
 
 export type RouteVia =
+  | "poll"
   | "first_contact"
   | "counterparty"
   | "thread"
@@ -59,6 +60,9 @@ export function spaceOwnerKey(spaceId: string): string {
   return `space:${spaceId}`;
 }
 
+/** Asking to see the Money Elf's dashboard, which skips the Crew Lead's first-contact hello. */
+const DASHBOARD_ASK = /\b(dashboard|ledger)\b/i;
+
 /** Roles that text in about a deal; everyone else is crew. */
 const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
 
@@ -73,10 +77,19 @@ export async function route(
   deps: RouterDeps,
   opts: { firstContact: boolean; moveId?: string; role?: Role },
 ): Promise<RouteDecision> {
+  // A tap on a poll goes back to the Elf that sent it: option ids start with that Elf's name ("money:approve:…").
+  for (const m of [...batch.messages].reverse()) {
+    const id = m.pollVote?.selectedOptions[0]?.id ?? "";
+    const owner = deps.elves.find((e) => id.startsWith(`${e.name}:`));
+    if (owner) return { elf: owner.name, via: "poll", confidence: 1 };
+  }
   if (opts.role && COUNTERPARTY_ROLES.includes(opts.role)) {
     const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
+  // "show me the dashboard" as the first text (a new phone, or after a restart) still opens the dashboard.
+  if (opts.firstContact && DASHBOARD_ASK.test(batchText(batch)) && deps.elves.some((e) => e.name === "money"))
+    return { elf: "money", via: "first_contact", confidence: 1 };
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
 
   for (const m of [...batch.messages].reverse()) {
@@ -109,6 +122,12 @@ export async function route(
           return { elf: "stuff", via: "deal", confidence: 0.9 };
       }
     }
+  }
+  // "yes" / "no" right after the Money Elf asked for an OK answers the Money Elf, not the classifier.
+  if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "money" && deps.elves.some((e) => e.name === "money"))
+      return { elf: "money", via: "followup", confidence: 0.9 };
   }
   // "2" after a list of picks is a pick, not a price. "search again" and a forwarded
   // listing link stay with Home when it spoke last, even with no number to pick.

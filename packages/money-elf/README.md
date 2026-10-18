@@ -16,31 +16,42 @@ Spec section 3: every dollar in a move on one Ledger, and no money moves without
 | `the desk pickup fell through` | Asks to refund the buyer; `yes` refunds and texts them. A no-show 24h past the pickup time asks the same (see the sweep below) |
 | `pay Sam $40 for gas` | Asks, then sends on `yes`, from the Moving Fund when it covers it |
 | `let Sam pay the truck at $40 a month` | Offers Sam a Moving Fund loan; `yes` opens it in Nessie |
-| `show me the ledger` / `ledger` | The Ledger card (an image) plus a signed link to the live Ledger page, both read live from Nessie. Both lead with the **move cost projection**: net cost so far, projected net cost once expected money comes back, and a chart of when (scheduled dates solid, estimates hollow) |
+| `show me my dashboard` / `dashboard` / `how's my money` / `ledger` | The Ledger card (an image) plus a signed link to the live dashboard, both read live from Nessie. Both lead with the **move cost projection**: net cost so far, projected net cost once expected money comes back, and a chart of when (scheduled dates solid, estimates hollow) |
 | anything scam-shaped | Warns in plain words; a flagged payment is never staged or paid |
 
 Anything that needs your yes also comes with a tap-to-answer poll (Yes / Not now). The tap approves exactly that action.
 
 Roommates can reply `PAID` or `PAID $50` (money moves into the owner's Moving Fund checking account, and the owner is told), ask for a payment plan ("can I do $20 a month?", which needs the owner's yes), or ask what they owe. Buyers get the escrow notice and confirm pickup by texting `got it` (their half of the release; if the owner hasn't OK'd yet, the owner gets a poll).
 
-## Wiring it into the service
+## How it's wired into the crew service (on this branch)
 
-```ts
-import { moneyElfFromEnv } from "@elves/money-elf";
-const money = moneyElfFromEnv(); // Nessie when NESSIE_API_KEY is set, otherwise FakeRails
-// in packages/elves/src/index.ts, replace the "money" stub in allElves with:
-const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
-```
+`apps/elves/src/index.ts` swaps the canned `money` stub for `moneyElfFromEnv()`; `handle()` takes the crew's `ElfContext` as is, and `test/foundation-compat.ts` makes `tsc` prove it. Besides the usual `ElfResult`, the Money Elf returns fields the service now sends (decision #58):
 
-`handle()` takes the foundation `ElfContext` as is, and returns an `ElfResult` plus new fields the service has to send. None of this is wired yet (decision #37):
+- `outbound: {spaceId, toHandle, text, poll?}[]`: texts to other people (roommates, buyers, the owner). A handle with no space yet (they've never texted Elves, so the shared pool can't reach them) isn't sent; the owner's reply says who to talk to instead.
+- `images`: the Ledger card PNG, uploaded to Photon (`POST /attachments`, multipart/related) and sent as an attachment.
+- `poll`: approval polls (Yes / Not now). The Photon 2.0 shared pool refuses them (`422`), so the text always says "Reply yes" too. Poll taps (`poll.vote`) route back to the Money Elf by their `money:` option ids.
+- `miniApp: {url}`: **the Moving Ledger dashboard as an iMessage mini app card**, delivered through Spectrum (Photon 1.0) when `SPECTRUM_PROJECT_ID`/`SECRET` are set. Photon 2.0 stays the agent; Spectrum only carries this card (decisions #53, #60). It's set whenever the owner asks for the dashboard *or* their turn changes the Ledger, so the card arrives unasked; a second send to the same person updates their card in place. The card is static: a tap opens the dashboard nearly full screen and it scrolls (decision #63).
 
-- `outbound: {spaceId, toHandle, text, poll?}[]`: messages to other people (roommates, buyers, the owner), in the crew's `ElfOutbound` shape. The owner's go to `move.ownerSpaceId`, and everyone else's to the space they text from (via `ctx.store`). A handle with no space yet (they've never texted Elves, so the shared pool can't reach them) isn't sent. Instead the owner's reply ends with one line saying who to talk to and about what ("Talk to Priya about the $30 gas share; ..."), and an `outbound.unreachable` event is logged.
-- `images: {contentType, filename, bytes, alt}[]`: upload each with `POST /v1/projects/{id}/attachments` (multipart/related: a JSON part `{contentType, sizeBytes, filename}`, then the bytes), then send `{type:"attachment", attachmentId}` after the reply text.
-- `poll: {question, options, selectionMode}`: send as `{type:"poll", ...}` after the reply text.
-- Inbound: map a `poll.vote` content's `selectedOptions` onto the message's `pollVote`, and route any vote whose option id starts with `money:` to this Elf. Today the foundation router sends empty-text messages to the Crew Lead.
-- Live Ledger page: `app.get("/ledger/*", async (c) => (await createLedgerHandler({ service: money.service, links })(c.req.raw)) ?? c.notFound())`, with `PUBLIC_URL` and `LEDGER_LINK_SECRET` set. `moneyElfFromEnv()` reads both. The Stuff Elf opens escrow with `money.service.openEscrow(move, { item, buyerName, buyerHandle, amountCents, pickupAt })`. The Deal Engine can call `confirmPickup(move, { via: "engine", entryId })` when it sees the buyer confirm, `mapConverged(move, entryId)` when Move Map pins meet (a stub hook that counts as the owner's 👍), `setPickupTime(move, entryId, iso)` for the one reschedule, and `sweepNoShows(move)` from its periodic sweep (stages a refund with a poll to the owner for each buyer 24h past pickup; nothing moves without the owner's yes). The Ledger is in memory (`MemoryMoneyStore`), like the rest of the store today. `MoneyStore` is the interface to put Supabase behind.
+The service mounts `/ledger/*` (`createLedgerHandler`) when `PUBLIC_URL` and `LEDGER_LINK_SECRET` are set:
+- `/ledger/<move>`: the dashboard page (what the mini app card opens);
+- `.png`: the card image;
+- `.json`: the view.
 
-Events: `loan.created`, `payment.requested`, `payment.received`, `payment.sent`, `escrow.opened`, `escrow.owner_ok`, `escrow.buyer_confirmed`, `escrow.map_converged`, `escrow.no_show`, `escrow.released`, `escrow.refunded`, `deposit.recorded`, `deposit.returned`, `scam.flagged`, `approval.requested|granted|cancelled`, `ledger.entry_added`, `ledger.totals`, `money.sensitive_blocked`, `money.error`.
+After any Ledger-changing event (`LEDGER_CHANGING_EVENTS`: payments, deposits, escrow, loans, new shared costs), the service refreshes the owner's card in place. Hooks for other Elves:
+- **Stuff Elf:** opens escrow with `money.service.openEscrow(move, {...})`.
+- **Deal Engine:** calls `confirmPickup`, `mapConverged`, `setPickupTime` and `sweepNoShows`.
+
+The Ledger is in memory (`MemoryMoneyStore`); `MoneyStore` is the interface to put Supabase behind.
+
+## The Moving Ledger dashboard (mini app card)
+
+"Show me the ledger" sends the Ledger image in the Photon 2.0 thread, plus a card from "Elves Ledger" that opens the dashboard (`src/ledger-page.ts`) inside Messages. The same page is linked in the reply. It's read-only, re-reads Nessie every 30 seconds, and its card caption comes from the page's Open Graph tags.
+
+The dashboard, the thread image and the bubble preview share one design system, "Elves Ledger" (decision #64): warm neutrals, ink with one lime accent, Inter with tabular figures, hairline panels. The page has a segmented control (Overview, Coming back, Activity). Overview leads with net cost so far and where it lands, then the projection chart, anything waiting for your OK (Approve / Not now), balances, who owes you, and what's held or due back. Coming back is a what-if calculator. Activity lists every Nessie movement; tap a row for its record id. The bubble shows a 3:2 preview (`/ledger/<move>.preview.png`).
+
+Past entries can't be edited. A correction by text ("the truck was actually $260") gets an honest "can't change that by text yet" plus the dashboard link (decision #60). To try it on your phone, see `.claude/skills/run-elves-on-phone`.
+
+Events: `ledger.fix_declined`, `ledger.shown`, `loan.created`, `payment.requested`, `payment.received`, `payment.sent`, `escrow.opened`, `escrow.owner_ok`, `escrow.buyer_confirmed`, `escrow.map_converged`, `escrow.no_show`, `escrow.released`, `escrow.refunded`, `deposit.recorded`, `deposit.returned`, `scam.flagged`, `approval.requested|granted|cancelled`, `ledger.entry_added`, `ledger.totals`, `money.sensitive_blocked`, `money.error`.
 
 ## Install
 

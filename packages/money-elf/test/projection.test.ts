@@ -190,9 +190,10 @@ describe("the projection on the dashboard", () => {
     await s.say("yes");
     const v = await buildLedgerView(s.elf.service, s.move);
     const html = ledgerPageHtml(v, { imageUrl: "https://x/i.png", pageUrl: "https://x/p" });
-    expect(html).toContain("Move cost projection");
+    expect(html).toContain("Coming back");
+    expect(html).toContain(`<div class="fold">`);
     expect(html).toContain("Net cost so far");
-    expect(html).toContain("Projected net cost");
+    expect(html.toLowerCase()).toContain("projected net cost");
     expect(html).toContain("estimated");
     expect(html).toContain('<svg class="chart"');
   });

@@ -482,6 +482,7 @@ export class FakeRails implements MoneyRails {
     if (patch.amountCents != null) l.amountCents = patch.amountCents;
     if (patch.status) l.status = patch.status;
   }
+
   async readAccount(accountId: string): Promise<AccountRecords> {
     const a = this.acct(accountId);
     const strip = <T extends { accountId: string }>({ accountId: _a, ...rest }: T) => rest;

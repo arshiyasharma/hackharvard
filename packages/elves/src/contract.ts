@@ -48,6 +48,24 @@ export interface ElfReply {
 /** A text for a space other than the one being answered: a buyer's DM, or the owner chat from a buyer's turn. */
 export interface ElfOutbound extends ElfReply {
   spaceId: string;
+  /** Optional native poll sent right after this text (e.g. an approval for the owner). */
+  poll?: ElfPoll;
+}
+
+/** A native poll; option ids are the Elf's own and come back on a later message's `pollVote`. */
+export interface ElfPoll {
+  question: string;
+  options: { id: string; text: string }[];
+  selectionMode: "single" | "multiple";
+}
+
+/** An image sent in the sender's chat after the reply text (the Money Elf's Ledger card). */
+export interface ElfImage {
+  contentType: string;
+  filename: string;
+  bytes: Uint8Array;
+  /** What it shows, for logs and the event trail. */
+  alt: string;
 }
 
 export interface ElfResult {
@@ -57,6 +75,15 @@ export interface ElfResult {
   movePatch?: Partial<Omit<Move, "id" | "createdAt">>;
   /** Texts for other spaces, sent after `replies`. */
   outbound?: ElfOutbound[];
+  /** Images for the sender's chat, sent after `replies` (skipped on transports that can't send images). */
+  images?: ElfImage[];
+  /** A poll for the sender's chat, sent after the images (skipped on transports without polls). */
+  poll?: ElfPoll;
+  /**
+   * An iMessage mini app card (a web app that opens inside Messages) for the sender, sent through the
+   * service's mini app sender when it has one (Spectrum); skipped otherwise.
+   */
+  miniApp?: { url: string };
   /**
    * Slow follow-up work (a web search) the service runs after `replies` are sent, then sends what it returns.
    * The batch is settled by then, so it is never cancelled by a newer text.

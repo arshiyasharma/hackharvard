@@ -3,7 +3,9 @@ import {
   batchText,
   type Elf,
   type ElfContext,
+  type ElfImage,
   type ElfOutbound,
+  type ElfPoll,
   type ElfReply,
   EMPTY_CONVERSATION,
   route,
@@ -27,6 +29,16 @@ import {
 export interface ServiceDeps {
   store: Store;
   transport: Transport;
+  /**
+   * Sends iMessage mini app cards (the Money Elf's Moving Ledger dashboard) through Spectrum, and refreshes a
+   * sent card in place; skipped when unset.
+   */
+  miniApps?: {
+    send(handle: string, url: string): Promise<void>;
+    refresh?(handle: string): Promise<void>;
+  } | null;
+  /** Event types after which the owner's mini app card is refreshed (the Money Elf's LEDGER_CHANGING_EVENTS). */
+  refreshCardOn?: ReadonlySet<string>;
   llm: LLM;
   elves?: Elf[];
   /** Conversational memory (transcript, facts, summaries); null disables it. */
@@ -49,6 +61,11 @@ export interface Service {
   sweep: () => Promise<number>;
   /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
   notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
+  /**
+   * Send texts an Elf produced outside any inbound batch (an approval tapped in the Money Elf's dashboard).
+   * Each note goes to its space once per `key`; returns how many were sent.
+   */
+  deliverOutbound: (moveId: string, elf: ElfName, notes: ElfOutbound[], key: string) => Promise<number>;
   stats: () => Record<string, unknown>;
 }
 
@@ -202,6 +219,25 @@ export function createService(deps: ServiceDeps): Service {
         payload: { elf, spaceId: note.spaceId, messageId: sent.id, text: note.text },
         traceId,
       });
+      if (note.poll && deps.transport.sendPoll) {
+        try {
+          const poll = await deps.transport.sendPoll(
+            { spaceId: note.spaceId, senderId },
+            note.poll,
+            `${key}:poll`,
+          );
+          await deps.store.setThreadOwner(poll.id, elf);
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "poll.sent",
+            payload: { elf, spaceId: note.spaceId, messageId: poll.id, question: note.poll.question },
+            traceId,
+          });
+        } catch (err) {
+          // The text already asked; a refused poll (shared pool) is logged, not retried.
+          log.warn("outbound poll refused; the text still asks", { key, error: String(err) });
+        }
+      }
       await safeMem("remember outbound", async (m) => {
         await m.ensureThread(note.spaceId, {
           moveId: move.id,
@@ -485,7 +521,76 @@ export function createService(deps: ServiceDeps): Service {
       return k;
     };
 
+    /** The result's images, then its poll, in the sender's chat (after the reply text). */
+    const sendExtras = async (images: ElfImage[], poll: ElfPoll | undefined) => {
+      const target = { spaceId: last.spaceId, senderId: last.agentId };
+      for (const [i, img] of images.entries()) {
+        const key = sendKey("image", last.id, i);
+        if (await deps.store.getSend(key)) continue;
+        if (!deps.transport.sendImage) {
+          log.info("transport can't send images; skipped", { key, alt: img.alt });
+          continue;
+        }
+        try {
+          const sent = await deps.transport.sendImage(target, img, key);
+          await deps.store.recordSend(key, sent.id);
+          await deps.store.setThreadOwner(sent.id, elf.name);
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: "image.sent",
+            payload: { elf: elf.name, messageId: sent.id, alt: img.alt, bytes: img.bytes.byteLength },
+            traceId,
+          });
+        } catch (err) {
+          counters.failures++;
+          log.error("image send failed", { key, error: String(err) });
+        }
+      }
+      if (!poll) return;
+      const key = sendKey("poll", last.id, 0);
+      if ((await deps.store.getSend(key)) || !deps.transport.sendPoll) return;
+      try {
+        const sent = await deps.transport.sendPoll(target, poll, key);
+        await deps.store.recordSend(key, sent.id);
+        await deps.store.setThreadOwner(sent.id, elf.name);
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "poll.sent",
+          payload: { elf: elf.name, messageId: sent.id, question: poll.question },
+          traceId,
+        });
+      } catch (err) {
+        // The reply text already says "Reply yes"; a refused poll (shared pool) is logged, not retried.
+        log.warn("poll refused; the text still asks", { key, error: String(err) });
+      }
+    };
+
     let n = await sendReplies(result.replies, 0);
+    await sendExtras(result.images ?? [], result.poll);
+    if (result.miniApp && deps.miniApps) {
+      try {
+        await deps.miniApps.send(participant.handle, result.miniApp.url);
+        await deps.store.appendEvent({
+          moveId: move.id,
+          type: "miniapp.sent",
+          payload: { elf: elf.name, handle: participant.handle },
+          traceId,
+        });
+      } catch (err) {
+        // The text reply already went out with the plain link; the card is a bonus.
+        log.warn("mini app card not sent", { error: String(err).slice(0, 300) });
+      }
+    } else if (
+      deps.miniApps?.refresh &&
+      deps.refreshCardOn &&
+      (result.events ?? []).some((e) => deps.refreshCardOn?.has(e.type))
+    ) {
+      // The Ledger changed (a payment came in, a deposit came back): update the owner's card in place.
+      // A no-op if the owner hasn't been sent a card yet.
+      await deps.miniApps.refresh(move.ownerHandle).catch((err) => {
+        log.warn("mini app card not refreshed", { error: String(err).slice(0, 300) });
+      });
+    }
     let notes = await sendOutbound(result.outbound ?? [], 0);
 
     // Slow follow-up work (a housing search) runs after the ack is out.
@@ -598,12 +703,31 @@ export function createService(deps: ServiceDeps): Service {
     return Boolean(await deps.store.getSend(sk));
   }
 
+  async function deliverOutbound(
+    moveId: string,
+    elf: ElfName,
+    notes: ElfOutbound[],
+    key: string,
+  ): Promise<number> {
+    const move = await deps.store.getMove(moveId);
+    if (!move) return 0;
+    let sent = 0;
+    for (const [i, note] of notes.entries()) {
+      const sk = sendKey("outside", key, i);
+      if (await deps.store.getSend(sk)) continue;
+      await deliverTo(move, elf, note, sk, null);
+      if (await deps.store.getSend(sk)) sent++;
+    }
+    return sent;
+  }
+
   return {
     pipeline,
     handleBatch,
     run,
     sweep,
     notifyOwner,
+    deliverOutbound,
     stats: () => ({
       ...counters,
       memory: mem?.stats() ?? { kind: "off" },

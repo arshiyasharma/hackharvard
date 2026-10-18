@@ -15,8 +15,11 @@ export function createServer(deps: {
     signature: string | null,
   ) => Promise<{ status: number; body: Record<string, unknown> }>;
   info: Record<string, unknown>;
+  /** The Money Elf's live Ledger page (signed links); the route is off (404) when unset. */
+  ledger?: (req: Request) => Promise<Response | null>;
 }) {
   const app = new Hono();
+  app.get("/ledger/*", async (c) => (deps.ledger ? await deps.ledger(c.req.raw) : null) ?? c.notFound());
   const started = Date.now();
 
   app.get("/", (c) =>

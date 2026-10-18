@@ -79,11 +79,53 @@ describe("keyword routing", () => {
 });
 
 describe("route()", () => {
+  test("a bare yes or no right after the Money Elf asked goes back to the Money Elf", async () => {
+    const store = new MemoryStore();
+    const deps = { store, llm: new FakeLLM(), elves: allElves };
+    const b = batchOf("yes");
+    await store.setThreadOwner(spaceOwnerKey(b.spaceId), "money");
+    expect(await route(b, deps, { firstContact: false, moveId: "mv_1" })).toMatchObject({
+      elf: "money",
+      via: "followup",
+    });
+    expect((await route(batchOf("no"), deps, { firstContact: false, moveId: "mv_1" })).elf).toBe("money");
+    // Another Elf spoke last: the Money Elf rule doesn't apply.
+    await store.setThreadOwner(spaceOwnerKey(b.spaceId), "home");
+    expect((await route(batchOf("yes"), deps, { firstContact: false, moveId: "mv_1" })).elf).not.toBe(
+      "money",
+    );
+  });
+
+  test("a poll tap goes back to the Elf that sent the poll, before any other rule", async () => {
+    const tap: Batch = {
+      ...batchOf(null),
+      messages: [
+        {
+          ...batchOf(null).messages[0]!,
+          pollVote: { selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }] },
+        },
+      ],
+    };
+    const deps = { store: new MemoryStore(), llm: new FakeLLM(), elves: allElves };
+    expect(await route(tap, deps, { firstContact: true })).toMatchObject({ elf: "money", via: "poll" });
+    const stranger: Batch = {
+      ...tap,
+      messages: [{ ...tap.messages[0]!, pollVote: { selectedOptions: [{ id: "opt_1", text: "Yes" }] } }],
+    };
+    expect((await route(stranger, deps, { firstContact: false })).via).not.toBe("poll");
+  });
+
   const store = new MemoryStore();
   const deps = { store, llm: new FakeLLM(), elves: allElves };
-  test("first contact always goes to the Crew Lead", async () => {
+  test("first contact goes to the Crew Lead, except a dashboard ask", async () => {
     const r = await route(batchOf("sell my couch"), deps, { firstContact: true });
     expect(r).toMatchObject({ elf: "crew_lead", via: "first_contact" });
+    // Except asking for the dashboard, which the Money Elf answers even as the first text.
+    for (const t of ["show me the dashboard", "show me the ledger"])
+      expect(await route(batchOf(t), deps, { firstContact: true })).toMatchObject({
+        elf: "money",
+        via: "first_contact",
+      });
   });
   test("a reply in an Elf's thread goes to that Elf", async () => {
     await store.setThreadOwner("out_stuff", "stuff");

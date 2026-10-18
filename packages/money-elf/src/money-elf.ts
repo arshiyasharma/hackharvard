@@ -24,7 +24,7 @@ import type {
 } from "./types.ts";
 
 export const MONEY_DESCRIPTION =
-  "Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the ledger, scams";
+  'Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the money dashboard ("show me my dashboard", "how\'s my money"), the ledger, scams, fixing or undoing a cost or deposit already on the Ledger';
 
 /** Same list as the foundation stub, so routing is unchanged when this replaces it. */
 export const MONEY_KEYWORDS = [
@@ -40,9 +40,14 @@ export const MONEY_KEYWORDS = [
   "owe",
   "refund",
   "ledger",
+  "dashboard",
+  "my money",
   "scam",
   "money",
   "payment plan",
+  "mistake",
+  "undo",
+  "was actually",
   "loan",
   "installments",
 ];
@@ -103,6 +108,24 @@ function textOf(ctx: MoneyContext): string {
     .join("\n");
 }
 
+/**
+ * Events that change what the Moving Ledger dashboard shows. After one, the crew service refreshes the owner's
+ * mini app card in place so its preview stays current (the page itself re-reads Nessie every 30 seconds).
+ */
+export const LEDGER_CHANGING_EVENTS: ReadonlySet<string> = new Set([
+  "ledger.entry_added",
+  "payment.requested",
+  "payment.received",
+  "payment.sent",
+  "deposit.recorded",
+  "deposit.returned",
+  "escrow.opened",
+  "escrow.released",
+  "escrow.refunded",
+  "escrow.no_show",
+  "loan.created",
+]);
+
 const POLL_ID = /^money:(approve|decline):([A-Za-z0-9_]+)$/;
 
 /** The approval poll for one pending action. Option ids carry the action id, so a vote can't hit the wrong one. */
@@ -122,6 +145,7 @@ function pendingIdsIn(events: { type: string; payload: Record<string, unknown> }
 interface Extras {
   images?: MoneyImage[];
   poll?: MoneyPoll;
+  miniApp?: { url: string };
 }
 
 async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLinks): Promise<MoneyResult> {
@@ -132,7 +156,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
   const extras: Extras = {};
   const spaceOf = await spaces(ctx);
   const reach: Reach = (h) => spaceOf(h) !== undefined;
-  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf);
+  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links);
 
   // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
   const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
@@ -329,6 +353,17 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
     case "add_contact":
       r = merge(r, await service.addContact(move, intent.name, intent.handle, reach));
       break;
+    case "fix":
+      // Past entries aren't editable (the dashboard replaced the editor, decision #60). Say so, and show
+      // exactly what's recorded so the owner can tell what to log next.
+      r.lines.push("I can't change a past Ledger entry by text yet.");
+      r.lines.push(
+        links
+          ? `Your dashboard shows exactly what's recorded in Nessie: ${ledgerUrl(links, move.id)}`
+          : "Say \"dashboard\" and I'll show you exactly what's recorded in Nessie.",
+      );
+      r.events.push({ type: "ledger.fix_declined", payload: { link: !!links } });
+      break;
     case "scam_check":
       r.lines.push("Nothing in that looks like a known scam pattern.");
       r.lines.push("Still, only pay through the Ledger, and never before you've seen the item or the place.");
@@ -343,8 +378,12 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
         ctx.log.warn("ledger card render failed; sending text", { err: String(err) });
       }
       if (png) {
-        r.lines.push("Here's your Ledger, live from Nessie.");
-        r.lines.push(ledgerSummaryLine(view));
+        // With the mini app on, the summary shares a line so the card intro fits in three lines.
+        if (links) r.lines.push(`Your money, live from Nessie: ${lowerFirst(ledgerSummaryLine(view))}`);
+        else {
+          r.lines.push("Here's your money, live from Nessie.");
+          r.lines.push(ledgerSummaryLine(view));
+        }
         extras.images = [
           {
             contentType: "image/png",
@@ -356,7 +395,12 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
       } else {
         r.lines.push(...(await service.ledgerSummary(move)).slice(0, 2));
       }
-      if (links) r.lines.push(ledgerUrl(links, move.id));
+      if (links) {
+        // The Moving Ledger dashboard: a mini app card from "Elves Ledger" (sent by the service through
+        // Spectrum), and the same page behind this link for anyone who'd rather stay in this thread.
+        r.lines.push(`Tap the Elves Ledger card to open your dashboard, or use ${ledgerUrl(links, move.id)}`);
+        extras.miniApp = { url: ledgerUrl(links, move.id) };
+      }
       r.events.push({ type: "ledger.shown", payload: { records: view.records, card: !!png, link: !!links } });
       break;
     }
@@ -420,6 +464,7 @@ async function finishTurn(
   r: OpResult,
   extras: Extras,
   spaceOf: (handle: string) => string | undefined,
+  links?: LedgerLinks,
 ): Promise<MoneyResult> {
   await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
@@ -445,9 +490,17 @@ async function finishTurn(
   // Anything the owner was just asked to approve also gets a tap-to-answer poll.
   const [pid] = ctx.participant.role === "owner" ? pendingIdsIn(r.events) : [];
   const poll = extras.poll ?? (pid ? await approvalPoll(service, ctx.move.id, pid) : undefined);
+  // When the owner's own turn changes the Ledger, the dashboard card comes along (or updates in place), so they
+  // never have to ask for it. A roommate's turn refreshes the owner's card in the crew service instead.
+  const miniApp =
+    extras.miniApp ??
+    (links && ctx.participant.role === "owner" && r.events.some((e) => LEDGER_CHANGING_EVENTS.has(e.type))
+      ? { url: ledgerUrl(links, ctx.move.id) }
+      : undefined);
   return {
     ...(extras.images?.length ? { images: extras.images } : {}),
     ...(poll ? { poll } : {}),
+    ...(miniApp ? { miniApp } : {}),
     replies: lines.length ? [{ text: lines.join("\n"), parentMessageId: lastId(ctx) }] : [],
     outbound,
     events: [
@@ -465,4 +518,8 @@ async function finishTurn(
       lastUpdate: booksLine(books),
     },
   };
+}
+
+function lowerFirst(s: string): string {
+  return s.charAt(0).toLowerCase() + s.slice(1);
 }

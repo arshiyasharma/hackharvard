@@ -116,7 +116,7 @@ describe("the live Ledger is read back from Nessie", () => {
     await samOwesTruck(s);
     await s.say("paid", { from: SAM, role: "roommate" });
     const r = await s.say("ledger");
-    expect(reply(r)).toContain("Here's your Ledger, live from Nessie.");
+    expect(reply(r)).toContain("Here's your money, live from Nessie.");
     expect(reply(r)).toContain("$80 in the Moving Fund, $80 owed to you.");
     expect(r.images).toHaveLength(1);
   });

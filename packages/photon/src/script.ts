@@ -1,4 +1,11 @@
-import type { AttachmentFile, InboundMessage, OutboundReply, Transport } from "./transport.ts";
+import type {
+  AttachmentFile,
+  InboundMessage,
+  OutboundImage,
+  OutboundPoll,
+  OutboundReply,
+  Transport,
+} from "./transport.ts";
 
 export interface ScriptSend extends OutboundReply {
   id: string;
@@ -16,6 +23,10 @@ export class ScriptTransport implements Transport {
   readonly reactions: { messageId: string; emoji: string }[] = [];
   readonly typingEvents: { spaceId: string; on: boolean }[] = [];
   readonly reads: string[] = [];
+  /** Images and polls sent, for tests (ids share the reply sequence). */
+  readonly images: { spaceId: string; senderId: string; image: OutboundImage; key: string; id: string }[] =
+    [];
+  readonly polls: { spaceId: string; senderId: string; poll: OutboundPoll; key: string; id: string }[] = [];
   readonly attachments = new Map<string, AttachmentFile>();
   private queue: InboundMessage[] = [];
   private waiters: ((m: InboundMessage | null) => void)[] = [];
@@ -38,7 +49,9 @@ export class ScriptTransport implements Transport {
   push(
     handle: string,
     text: string | null,
-    extra: Partial<Pick<InboundMessage, "attachments" | "reaction" | "parentMessageId" | "spaceKind">> = {},
+    extra: Partial<
+      Pick<InboundMessage, "attachments" | "reaction" | "parentMessageId" | "spaceKind" | "pollVote">
+    > = {},
   ): InboundMessage {
     const msg: InboundMessage = {
       id: `${this.idPrefix}msg_${++this.seq}`,
@@ -52,6 +65,7 @@ export class ScriptTransport implements Transport {
       text,
       attachments: extra.attachments ?? [],
       reaction: extra.reaction ?? null,
+      pollVote: extra.pollVote ?? null,
       parentMessageId: extra.parentMessageId ?? null,
       receivedAt: new Date().toISOString(),
     };
@@ -86,6 +100,16 @@ export class ScriptTransport implements Transport {
       }
       return true;
     });
+    return { id };
+  }
+  async sendImage(target: { spaceId: string; senderId: string }, image: OutboundImage, key: string) {
+    const id = `${this.idPrefix}img_${++this.seq}`;
+    this.images.push({ ...target, image, key, id });
+    return { id };
+  }
+  async sendPoll(target: { spaceId: string; senderId: string }, poll: OutboundPoll, key: string) {
+    const id = `${this.idPrefix}poll_${++this.seq}`;
+    this.polls.push({ ...target, poll, key, id });
     return { id };
   }
   async react(target: { messageId: string }, emoji: string) {

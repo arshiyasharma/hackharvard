@@ -1,5 +1,12 @@
+import { allElves, type Elf } from "@elves/elves";
 import { createListings } from "@elves/listings";
 import { createLLM } from "@elves/llm";
+import {
+  createLedgerHandler,
+  LEDGER_CHANGING_EVENTS,
+  moneyElfFromEnv,
+  SpectrumMiniApps,
+} from "@elves/money-elf";
 import { Photon2Transport, PhotonClient, ScriptTransport, type Transport } from "@elves/photon";
 import { createLogger } from "@elves/shared";
 import { handleRetellWebhook } from "@elves/voice";
@@ -35,9 +42,63 @@ if (config.transport === "script") {
   });
 }
 
+// The Money Elf replaces the canned "money" stub: Nessie ledger, splits, loans, escrow, the Ledger card.
+const money = moneyElfFromEnv(process.env);
+const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
+const elves = allElves.map((e) => (e.name === "money" ? moneyElf : e));
+const ledgerSecret = process.env.LEDGER_LINK_SECRET?.trim();
+// The Moving Ledger dashboard as an iMessage mini app card, sent from the Spectrum (Photon 1.0) project when configured.
+const miniApps = await SpectrumMiniApps.fromEnv(process.env, createLogger("spectrum")).catch((err) => {
+  log.warn("spectrum unavailable; no mini app cards", { error: String(err).slice(0, 200) });
+  return null;
+});
+const ledger =
+  config.publicUrl && ledgerSecret
+    ? createLedgerHandler({
+        service: money.service,
+        links: { publicUrl: config.publicUrl, secret: ledgerSecret },
+        // A tap on Approve / Not now in the dashboard: deliver what it produced, confirm in the owner's chat,
+        // and refresh the card. Runs at request time, after `service` below exists.
+        onDecided: async (moveId, result) => {
+          for (const ev of result.events)
+            await store.appendEvent({
+              moveId,
+              type: ev.type,
+              payload: { ...ev.payload, elf: "money" },
+              traceId: null,
+            });
+          const decided = result.events.find((e) => e.type === "dashboard.decided");
+          const key = `dashboard:${String(decided?.payload.pendingId ?? Date.now())}`;
+          const people = await store.listParticipants(moveId);
+          const notes = [];
+          const missed: string[] = [];
+          for (const o of result.outbound) {
+            const spaceId = people.find((p) => p.handle === o.toHandle)?.spaceId;
+            if (spaceId) notes.push({ spaceId, text: o.text, ...(o.poll ? { poll: o.poll } : {}) });
+            else missed.push(o.toName ?? o.toHandle);
+          }
+          if (notes.length) await service.deliverOutbound(moveId, "money", notes, key);
+          const tail = missed.length
+            ? ` I can't text ${missed.join(" or ")} until they've texted Elves once.`
+            : "";
+          await service.notifyOwner(
+            moveId,
+            "money",
+            `From your dashboard: ${result.lines.join(" ")}${tail}`,
+            key,
+          );
+          const move = await money.service.moveFromStore(moveId);
+          if (move) await miniApps?.refresh(move.ownerHandle);
+        },
+      })
+    : undefined;
+
 const service = createService({
   store,
   transport,
+  miniApps,
+  refreshCardOn: LEDGER_CHANGING_EVENTS,
+  elves,
   llm,
   memory,
   listings,
@@ -49,6 +110,7 @@ const retellKey = process.env.RETELL_API_KEY?.trim() || null;
 const app = createServer({
   store,
   service,
+  ledger,
   retell: retellKey
     ? (raw, signature) =>
         handleRetellWebhook(

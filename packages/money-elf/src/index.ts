@@ -10,6 +10,7 @@ export * from "./parse.ts";
 export * from "./rails.ts";
 export * from "./scam.ts";
 export * from "./service.ts";
+export * from "./spectrum.ts";
 export * from "./types.ts";
 
 import { MemoryMoneyStore } from "./ledger.ts";
