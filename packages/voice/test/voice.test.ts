@@ -93,6 +93,17 @@ describe("ingestCall", () => {
     expect((await store.listItems(move.id)).length).toBe(2);
   });
 
+  test("two deliveries of one call arriving together are saved once (call_ended + call_analyzed race)", async () => {
+    const { deps, store, move, memory } = await setup();
+    const [a, b] = await Promise.all([ingestCall(deps, evt()), ingestCall(deps, evt({}, "call_analyzed"))]);
+    expect([a.status, b.status].sort()).toEqual(["duplicate", "ingested"]);
+    expect((await store.listItems(move.id)).length).toBe(2);
+    expect((await store.listEvents(move.id)).filter((e) => e.type === "call.completed")).toHaveLength(1);
+    expect((await memory.listFacts(move.id)).filter((f) => f.text.includes("sell the couch"))).toHaveLength(
+      1,
+    );
+  });
+
   test("a different date on the call never overwrites the move; it becomes a question", async () => {
     const { deps, store, move, memory } = await setup();
     await store.updateMove(move.id, { moveOutAt: "2026-08-31" });
