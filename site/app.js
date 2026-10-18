@@ -17,22 +17,24 @@
 
   /* ---------- the Elves, drawn: a face and a pointed hat ---------- */
   var TONES = {
-    ink: ["#3b3f4e", "#0b0c10", "#ffffff", "#3b3f4e", "#23262f"],
-    green: ["#6fdca3", "#2a9d63", "#1c2a22", "#ffffff", "#3fb87c"],
-    amber: ["#fbc96e", "#e0901a", "#2c2010", "#ffffff", "#f2a93a"],
-    neon: ["#74ccff", "#1b8fe0", "#10243a", "#ffffff", "#43aef5"],
+    blue: ["#5db0ff", "#0a84ff", "#10243a", "#ffffff", "#3d9bff"],
+    red: ["#ffa9a9", "#e5585c", "#3a1517", "#ffffff", "#f27478"],
+    amber: ["#ffd96b", "#e9a400", "#3a2a05", "#ffffff", "#f5b82e"],
+    green: ["#7fe0ab", "#2a9d63", "#0b4a2a", "#ffffff", "#3fb87c"],
     elfie: ["#ffe3d0", "#0a84ff", "#241a14", "#ffffff", "#3d9bff"],
   };
   function avatar(tone) {
-    var c = TONES[tone] || TONES.ink;
+    var c = TONES[tone] || TONES.blue;
+    var eyes = tone === "green"
+      ? '<text x="38" y="72" text-anchor="middle" font-family="Onest,Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="' + c[2] + '">$</text><text x="62" y="72" text-anchor="middle" font-family="Onest,Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="' + c[2] + '">$</text><circle cx="31.5" cy="58.5" r="1.3" fill="#fff"/><circle cx="68.5" cy="58.5" r="1.3" fill="#fff"/>'
+      : '<ellipse cx="38" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/><ellipse cx="62" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/><circle cx="39.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="63.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="36.8" cy="68.2" r=".9" fill="' + c[3] + '"/><circle cx="60.8" cy="68.2" r=".9" fill="' + c[3] + '"/>';
     return '<svg class="av" viewBox="0 0 100 100" aria-hidden="true">' +
       '<ellipse cx="15" cy="64" rx="8.5" ry="12" transform="rotate(-18 15 64)" fill="' + c[0] + '"/><ellipse cx="85" cy="64" rx="8.5" ry="12" transform="rotate(18 85 64)" fill="' + c[0] + '"/>' +
       '<ellipse cx="16" cy="64" rx="4" ry="7" transform="rotate(-18 16 64)" fill="#ff9db3" opacity=".6"/><ellipse cx="84" cy="64" rx="4" ry="7" transform="rotate(18 84 64)" fill="#ff9db3" opacity=".6"/>' +
       '<circle cx="50" cy="62" r="31" fill="' + c[0] + '"/>' +
       '<path d="M21 49 Q34 20 63 6 Q72 30 79 49 Z" fill="' + c[1] + '"/><path d="M28 45 Q40 24 58 12" stroke="#fff" stroke-opacity=".28" stroke-width="3" fill="none" stroke-linecap="round"/>' +
       '<rect x="18" y="44" width="64" height="11" rx="5.5" fill="' + c[4] + '"/><circle cx="65" cy="7" r="7.5" fill="#fff"/><circle cx="62.5" cy="5" r="2.4" fill="#eef1f6"/>' +
-      '<ellipse cx="38" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/><ellipse cx="62" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/>' +
-      '<circle cx="39.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="63.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="36.8" cy="68.2" r=".9" fill="' + c[3] + '"/><circle cx="60.8" cy="68.2" r=".9" fill="' + c[3] + '"/>' +
+      eyes +
       '<circle cx="29" cy="75" r="5" fill="#ff8fa8" opacity=".6"/><circle cx="71" cy="75" r="5" fill="#ff8fa8" opacity=".6"/>' +
       '<path d="M44 76 Q47 80 50 76 Q53 80 56 76" stroke="' + c[2] + '" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
@@ -119,7 +121,7 @@
   var TN_COL = ["#0A84FF", "#2FB36B", "#F0A02B", "#E5484D"];
   var NODE = { crew: $("#n-crew"), home: $("#n-home"), stuff: $("#n-stuff"), money: $("#n-money") };
   var WIRE = { home: $("#w-home"), stuff: $("#w-stuff"), money: $("#w-money") };
-  var TONE = { crew: "ink", home: "green", stuff: "amber", money: "neon" };
+  var TONE = { crew: "blue", home: "red", stuff: "amber", money: "green" };
   ["crew", "home", "stuff", "money"].forEach(function (k) {
     NODE[k].innerHTML = avatar(TONE[k]) + '<div class="nm">' + esc(STORY[k].name) + "</div>" + "<ul>" + STORY[k].tasks.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
   });
@@ -158,12 +160,12 @@
     else if (c.s === "badge") inner = el("div", "nbadge", esc(c.x));
     else inner = el("div", "stk " + c.s, STK[c.s]);
     inner.style.setProperty("--rot", rot + "deg"); inner.style.setProperty("--dur", dur + "s"); inner.style.setProperty("--dl", (-(i % 9) * 0.6) + "s");
-    node.appendChild(inner); chipsEl.appendChild(node); return node;
+    var pop = el("div", "pop"); pop.style.setProperty("--pd", (0.25 + ((i * 11) % 30) * 0.11).toFixed(2) + "s"); pop.appendChild(inner); node.appendChild(pop); chipsEl.appendChild(node); return node;
   });
   // a browser tab strip across the top: far too many tabs
   var strip = el("div", "tabstrip");
   ["Craigslist", "Airbnb", "Zillow", "U-Haul", "Venmo", "Gmail (47)", "Sheet v3", "Booking", "Marketplace", "Zelle", "Utilities", "311", "SpareFoot", "Notes", "Reddit: sublet?", "Landlord", "Maps", "Quote #4", "Facebook", "Apartments", "more tabs"].forEach(function (t, i) {
-    strip.appendChild(el("span", "tab", '<i style="background:' + TN_COL[i % 4] + '"></i>' + esc(t)));
+    var tb = el("span", "tab", '<i style="background:' + TN_COL[i % 4] + '"></i>' + esc(t)); tb.style.setProperty("--i", i); strip.appendChild(tb);
   });
   chipsEl.appendChild(strip);
 
@@ -257,7 +259,7 @@
   if (SITE.number) dn.textContent = SITE.number; else dn.hidden = true;
 
   /* ---------- photo strips ---------- */
-  var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["ink", "green", "amber", "neon"];
+  var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["blue", "red", "amber", "green"];
   function tiles(offset) {
     var out = [], n = SITE.nightPhotos && SITE.nightPhotos.length ? SITE.nightPhotos.length : NIGHT.length;
     for (var k = 0; k < n; k++) {
@@ -481,7 +483,7 @@
     var call = $("#call"), go = $("#callGo"), end = $("#callEnd"), caps = $("#caps"), stat = $("#callStatus"), tm = $("#callTime"), steps = $$("#demoSteps li"), wave = $("#wave");
     var phoneD = new Phone($("#phone-demo")), stageD = $(".demo-stage");
     $$("i", wave).forEach(function (b, i) { b.style.setProperty("--n", i); b.style.setProperty("--h", 14 + ((i * 29) % 38)); });
-    $(".call-av").innerHTML = avatar("ink");
+    $(".call-av").innerHTML = avatar("blue");
     var SCRIPT = [
       ["elf", "Hey, this is the Crew Lead at Elfie, your moving crew. So, walk me through the move: when you're out, where you're going, and what's coming with you."],
       ["you", "Out of my Allston place November first. Into Somerville, nothing found yet. Selling the couch and desk, keeping the bed."],
@@ -531,7 +533,7 @@
   (SITE.team || []).forEach(function (m, i) {
     var li = el("li"); li.style.setProperty("--r", ((i % 2 ? 1 : -1) * (1.2 + i * 0.5)) + "deg");
     var pic = el("div", "pic"); pic.style.setProperty("--g", TG[i % 4]);
-    if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["ink", "green", "amber", "neon"][i % 4]);
+    if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["blue", "red", "amber", "green"][i % 4]);
     li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : ""))); teamEl.appendChild(li);
   });
 

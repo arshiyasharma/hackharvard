@@ -339,7 +339,7 @@ Per-track appendix slides (swap in for that judge): Photon (4.2 + 4.4), Nessie (
 7. **Inside the Money Elf.** A working ledger simulator: Overview, Smart Plan, Coming back, Activity. Switch plans, change the budget (the odds recompute), toggle expected payments (the projected net cost updates), see the pending Nessie records.
 8. **How it fits together.** You → Photon 2.0 → router → four agents → Deal Engine, memory, Nessie, Postgres.
 9. **Pick a track.** A dropdown shows one track at a time: "Why Photon" (or Nessie, Sustainability, Cybersec and Fintech), a big statement, the APIs used, and eight tap-to-open tiles (a line each, a "more" on tap) plus a "See it in the thread" button that plays the matching conversation.
-10. **What nobody else built.** A highlighted "Our unique discovery: the Deal Engine, built by Yashashri" card, then a compact three-column list of the other originals.
+10. **What nobody else built.** A highlighted "Our unique discovery: the Deal Engine, built by Yashasree" card, then a compact three-column list of the other originals.
 11. **Every API and service.** A small, self-scrolling rail of service icons across the top, then a searchable list of everything we used inside its own scrolling panel, filterable by category (Messaging, Voice, AI, Money, Data, Housing search, Hosting, Runtime, Pictures, Sustainability data, Built by us, Dev tooling), with the test counts above it.
 12. **What's next.** Eight future items.
 13. **Text the crew.** The number, the team, the repo.

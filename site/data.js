@@ -13,7 +13,7 @@ window.SITE = {
     { name: "Gavin Zhou", role: "", photo: "" },
     { name: "Arshiya Sharma", role: "", photo: "" },
     { name: "Zohaib Shaikh", role: "", photo: "" },
-    { name: "Yashashri G.", role: "", photo: "" },
+    { name: "Yashasree G.", role: "", photo: "" },
   ],
   interviews: 15,
   waitlist: "30+",
@@ -21,10 +21,10 @@ window.SITE = {
 };
 
 window.AGENTS = {
-  crew: { name: "Crew Lead", emoji: "🧭", tone: "ink", blurb: "Meets you, listens to the whole move, and sends each text to the right Elf. Asks when it isn't sure." },
-  home: { name: "Home Elf", emoji: "🏠", tone: "green", blurb: "Finds the next place, a hotel for the gap or storage. Sublets the old one. Keeps the move-in checklist." },
+  crew: { name: "Crew Lead", emoji: "🧭", tone: "blue", blurb: "Meets you, listens to the whole move, and sends each text to the right Elf. Asks when it isn't sure." },
+  home: { name: "Home Elf", emoji: "🏠", tone: "red", blurb: "Finds the next place, a hotel for the gap or storage. Sublets the old one. Keeps the move-in checklist." },
   stuff: { name: "Stuff Elf", emoji: "📦", tone: "amber", blurb: "Prices things from a photo, deals with buyers, never under your lowest price. Runs Last Call and donations." },
-  money: { name: "Money Elf", emoji: "💸", tone: "neon", blurb: "Keeps the ledger in Nessie. Splits, deposits, escrow. Then plans the rest of your move, with odds." },
+  money: { name: "Money Elf", emoji: "💸", tone: "green", blurb: "Keeps the ledger in Nessie. Splits, deposits, escrow. Then plans the rest of your move, with odds." },
 };
 
 /* A message: { from: "you" | "elf", agent, text, img?, wait? }.  img: couch | room | ledger | plans | dash */
@@ -458,7 +458,7 @@ window.ICONS = {
   "Retell AI": ["mono:R", "#6B4EFF"], "Retell webhook (signed)": ["mono:R", "#6B4EFF"], "Retell mock call CLI": ["mono:R", "#6B4EFF"],
   "Anthropic Claude API": ["anthropic", "#191919"], "Claude Haiku 5.5": ["claude", "#D97757"], "Claude Sonnet 5.5": ["claude", "#D97757"], "Claude vision": ["claude", "#D97757"],
   "heif2jpeg": ["apple", "#111111"], "Zod structured outputs": ["zod", "#408AFF"], "Onboarding eval (simulated owners)": ["claude", "#D97757"],
-  "Capital One Nessie API": ["mono:N", "#D03027"], "Nessie pending and settle": ["mono:N", "#D03027"], "Moving Fund and Escrow accounts": ["mono:N", "#D03027"], "Smart Plan simulator": ["elf:neon"],
+  "Capital One Nessie API": ["mono:N", "#D03027"], "Nessie pending and settle": ["mono:N", "#D03027"], "Moving Fund and Escrow accounts": ["mono:N", "#D03027"], "Smart Plan simulator": ["elf:green"],
   "Supabase Postgres": ["supabase", "#3FCF8E"], "Bun.sql": ["bun", "#14151a"], "SQL migrations (11)": ["postgresql", "#4169E1"], "Postgres full-text search": ["postgresql", "#4169E1"], "Docker Postgres": ["docker", "#2496ED"],
   "Browserbase": ["mono:B", "#F26B3A"], "Stagehand v4": ["mono:S", "#14151a"], "Craigslist": ["mono:C", "#5A2D82"], "Airbnb": ["airbnb", "#FF5A5F"], "Booking.com": ["mono:B", "#003B95"],
   "SpareFoot": ["mono:S", "#00A859"], "Apartments.com": ["mono:A", "#0B5BD3"], "Zillow": ["zillow", "#006AFF"], "Facebook (logged-in context)": ["facebook", "#0866FF"],
@@ -466,7 +466,7 @@ window.ICONS = {
   "Bun": ["bun", "#14151a"], "TypeScript 5.9": ["typescript", "#3178C6"], "Biome": ["biome", "#2563EB"],
   "resvg-js": ["mono:R", "#14151a"], "Inter (Expo Google Fonts)": ["googlefonts", "#4285F4"], "Server-drawn SVG": ["mono:S", "#0A84FF"],
   "EPA WARM v13": ["mono:E", "#2E7D32"], "Boston 311 bulk pickup": ["mono:B", "#1F4E8C"], "Salvation Army, Goodwill, Habitat ReStore": ["mono:G", "#2FB36B"], "FTC Consumer Sentinel": ["mono:F", "#14151a"],
-  "Deal Engine": ["elf:amber"], "Memory": ["elf:green"], "Router and clarify flow": ["elf:ink"], "Pipeline": ["elf:ink"], "Crew Board page": ["elf:green"], "Ledger dashboard": ["elf:neon"], "Scam rules": ["elf:amber"],
+  "Deal Engine": ["elf:amber"], "Memory": ["elf:green"], "Router and clarify flow": ["elf:blue"], "Pipeline": ["elf:blue"], "Crew Board page": ["elf:green"], "Ledger dashboard": ["elf:green"], "Scam rules": ["elf:amber"],
   "Claude Code project skills (6)": ["claude", "#D97757"], "Photon operator CLI": ["mono:P", "#0A84FF"], "Offline demo and negotiation sim": ["mono:D", "#14151a"], "TESTING.md": ["mono:T", "#14151a"],
 };
 
