@@ -16,10 +16,25 @@
   var seg = function (p, a, b) { return clamp((p - a) / (b - a), 0, 1); };
 
   /* ---------- the Elves, drawn: a face and a pointed hat ---------- */
-  var TONES = { ink: ["#23262f", "#0b0c10", "#ffffff"], green: ["#52cf8c", "#2a9d63", "#0b2a1a"], amber: ["#f8bd5c", "#d98a14", "#3a2605"], lime: ["#e6f88f", "#b6d84a", "#1f2a05"] };
+  var TONES = {
+    ink: ["#3b3f4e", "#0b0c10", "#ffffff", "#3b3f4e", "#23262f"],
+    green: ["#6fdca3", "#2a9d63", "#1c2a22", "#ffffff", "#3fb87c"],
+    amber: ["#fbc96e", "#e0901a", "#2c2010", "#ffffff", "#f2a93a"],
+    neon: ["#74ccff", "#1b8fe0", "#10243a", "#ffffff", "#43aef5"],
+    elfie: ["#ffe3d0", "#0a84ff", "#241a14", "#ffffff", "#3d9bff"],
+  };
   function avatar(tone) {
-    var c = TONES[tone];
-    return '<svg class="av" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="62" r="31" fill="' + c[0] + '"/><path d="M50 5 L75 48 H25 Z" fill="' + c[1] + '"/><circle cx="50" cy="7" r="6" fill="' + c[0] + '"/><rect x="21" y="44" width="58" height="9" rx="4.5" fill="' + c[1] + '"/><circle cx="40" cy="66" r="3.6" fill="' + c[2] + '"/><circle cx="60" cy="66" r="3.6" fill="' + c[2] + '"/><path d="M42 77 Q50 83 58 77" stroke="' + c[2] + '" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+    var c = TONES[tone] || TONES.ink;
+    return '<svg class="av" viewBox="0 0 100 100" aria-hidden="true">' +
+      '<ellipse cx="15" cy="64" rx="8.5" ry="12" transform="rotate(-18 15 64)" fill="' + c[0] + '"/><ellipse cx="85" cy="64" rx="8.5" ry="12" transform="rotate(18 85 64)" fill="' + c[0] + '"/>' +
+      '<ellipse cx="16" cy="64" rx="4" ry="7" transform="rotate(-18 16 64)" fill="#ff9db3" opacity=".6"/><ellipse cx="84" cy="64" rx="4" ry="7" transform="rotate(18 84 64)" fill="#ff9db3" opacity=".6"/>' +
+      '<circle cx="50" cy="62" r="31" fill="' + c[0] + '"/>' +
+      '<path d="M21 49 Q34 20 63 6 Q72 30 79 49 Z" fill="' + c[1] + '"/><path d="M28 45 Q40 24 58 12" stroke="#fff" stroke-opacity=".28" stroke-width="3" fill="none" stroke-linecap="round"/>' +
+      '<rect x="18" y="44" width="64" height="11" rx="5.5" fill="' + c[4] + '"/><circle cx="65" cy="7" r="7.5" fill="#fff"/><circle cx="62.5" cy="5" r="2.4" fill="#eef1f6"/>' +
+      '<ellipse cx="38" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/><ellipse cx="62" cy="66" rx="4.6" ry="5.8" fill="' + c[2] + '"/>' +
+      '<circle cx="39.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="63.7" cy="63.6" r="1.8" fill="' + c[3] + '"/><circle cx="36.8" cy="68.2" r=".9" fill="' + c[3] + '"/><circle cx="60.8" cy="68.2" r=".9" fill="' + c[3] + '"/>' +
+      '<circle cx="29" cy="75" r="5" fill="#ff8fa8" opacity=".6"/><circle cx="71" cy="75" r="5" fill="#ff8fa8" opacity=".6"/>' +
+      '<path d="M44 76 Q47 80 50 76 Q53 80 56 76" stroke="' + c[2] + '" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
 
   /* ---------- pictures sent in the thread (drawn, like the product's own images) ---------- */
@@ -34,18 +49,18 @@
       '<rect x="176" y="22" width="76" height="62" rx="4" fill="#CFE4F7" stroke="#fff" stroke-width="5"/><line x1="214" y1="22" x2="214" y2="84" stroke="#fff" stroke-width="3"/>' +
       '<rect x="28" y="80" width="130" height="50" rx="10" fill="#fff" stroke="#D5DBE3"/><rect x="28" y="70" width="130" height="24" rx="10" fill="#9DB8D6"/><rect x="36" y="76" width="38" height="14" rx="7" fill="#fff"/></svg>',
     ledger:
-      '<svg viewBox="0 0 280 200" role="img" aria-label="The Ledger card"><rect width="280" height="200" fill="#F3F2EE"/>' +
-      '<rect x="14" y="14" width="18" height="18" rx="5" fill="#0E0F0C"/><rect x="18" y="19" width="10" height="2" rx="1" fill="#F3F2EE" opacity=".6"/><rect x="18" y="23" width="7" height="2" rx="1" fill="#D4F26A"/>' +
+      '<svg viewBox="0 0 280 200" role="img" aria-label="The Ledger card"><rect width="280" height="200" fill="#EAF3FF"/>' +
+      '<rect x="14" y="14" width="18" height="18" rx="5" fill="#0E0F0C"/><rect x="18" y="19" width="10" height="2" rx="1" fill="#EAF3FF" opacity=".6"/><rect x="18" y="23" width="7" height="2" rx="1" fill="#2EA8FF"/>' +
       '<text x="38" y="28" font-family="' + F + '" font-size="11" font-weight="600" fill="#0E0F0C">Elfie Ledger</text><text x="266" y="28" text-anchor="end" font-family="' + F + '" font-size="9" fill="#77786F">Live from Nessie</text>' +
       '<text x="14" y="52" font-family="' + F + '" font-size="9.5" fill="#77786F">Net cost so far</text><text x="12" y="88" font-family="' + F + '" font-size="38" font-weight="600" letter-spacing="-1.6" fill="#0E0F0C">$707</text>' +
-      '<rect x="14" y="100" width="54" height="16" rx="6" fill="#D4F26A"/><text x="22" y="111.5" font-family="' + F + '" font-size="9.5" font-weight="600" fill="#0E0F0C">Projected</text><text x="76" y="112" font-family="' + F + '" font-size="11" font-weight="600" fill="#0E0F0C">$114</text><text x="102" y="112" font-family="' + F + '" font-size="9.5" fill="#77786F">net, by Dec 1</text>' +
-      '<rect x="14" y="126" width="252" height="60" rx="12" fill="#fff" stroke="#E4E3DD"/><path d="M26 140 H92 V150 H190 V172 H254" fill="none" stroke="#0E0F0C" stroke-width="1.6" stroke-linejoin="round"/><circle cx="26" cy="140" r="3" fill="#0E0F0C"/><circle cx="254" cy="172" r="3.6" fill="#D4F26A" stroke="#0E0F0C" stroke-width="1.4"/></svg>',
+      '<rect x="14" y="100" width="54" height="16" rx="6" fill="#2EA8FF"/><text x="22" y="111.5" font-family="' + F + '" font-size="9.5" font-weight="600" fill="#0E0F0C">Projected</text><text x="76" y="112" font-family="' + F + '" font-size="11" font-weight="600" fill="#0E0F0C">$114</text><text x="102" y="112" font-family="' + F + '" font-size="9.5" fill="#77786F">net, by Dec 1</text>' +
+      '<rect x="14" y="126" width="252" height="60" rx="12" fill="#fff" stroke="#D3E4FB"/><path d="M26 140 H92 V150 H190 V172 H254" fill="none" stroke="#0E0F0C" stroke-width="1.6" stroke-linejoin="round"/><circle cx="26" cy="140" r="3" fill="#0E0F0C"/><circle cx="254" cy="172" r="3.6" fill="#2EA8FF" stroke="#0E0F0C" stroke-width="1.4"/></svg>',
     plans:
-      '<svg viewBox="0 0 280 190" role="img" aria-label="Three plans with the odds of each"><rect width="280" height="190" fill="#F3F2EE"/>' +
+      '<svg viewBox="0 0 280 190" role="img" aria-label="Three plans with the odds of each"><rect width="280" height="190" fill="#EAF3FF"/>' +
       '<text x="14" y="26" font-family="' + F + '" font-size="9.5" fill="#77786F">Move plans under $300</text><text x="14" y="50" font-family="' + F + '" font-size="18" font-weight="600" letter-spacing="-.5" fill="#0E0F0C">Three ways to finish</text>' +
       [["A", "Best odds", 92, 74], ["B", "Runner-up", 82, 112], ["C", "Least effort", 56, 150]].map(function (p) {
-        return '<rect x="14" y="' + (p[3] - 14) + '" width="252" height="34" rx="10" fill="#fff" stroke="#E4E3DD"/><rect x="22" y="' + (p[3] - 6) + '" width="18" height="18" rx="5" fill="' + (p[0] === "A" ? "#D4F26A" : "#EEEDE8") + '"/><text x="31" y="' + (p[3] + 7) + '" text-anchor="middle" font-family="' + F + '" font-size="10" font-weight="600" fill="#0E0F0C">' + p[0] + "</text>" +
-          '<text x="48" y="' + (p[3] + 2) + '" font-family="' + F + '" font-size="10.5" font-weight="500" fill="#0E0F0C">' + p[1] + '</text><rect x="48" y="' + (p[3] + 9) + '" width="150" height="3" rx="1.5" fill="#E9E8E2"/><rect x="48" y="' + (p[3] + 9) + '" width="' + (150 * p[2] / 100) + '" height="3" rx="1.5" fill="#0E0F0C"/>' +
+        return '<rect x="14" y="' + (p[3] - 14) + '" width="252" height="34" rx="10" fill="#fff" stroke="#D3E4FB"/><rect x="22" y="' + (p[3] - 6) + '" width="18" height="18" rx="5" fill="' + (p[0] === "A" ? "#2EA8FF" : "#DCE9FB") + '"/><text x="31" y="' + (p[3] + 7) + '" text-anchor="middle" font-family="' + F + '" font-size="10" font-weight="600" fill="#0E0F0C">' + p[0] + "</text>" +
+          '<text x="48" y="' + (p[3] + 2) + '" font-family="' + F + '" font-size="10.5" font-weight="500" fill="#0E0F0C">' + p[1] + '</text><rect x="48" y="' + (p[3] + 9) + '" width="150" height="3" rx="1.5" fill="#D9E6F9"/><rect x="48" y="' + (p[3] + 9) + '" width="' + (150 * p[2] / 100) + '" height="3" rx="1.5" fill="#0E0F0C"/>' +
           '<text x="256" y="' + (p[3] + 8) + '" text-anchor="end" font-family="' + F + '" font-size="14" font-weight="600" fill="#0E0F0C">' + p[2] + "%</text>";
       }).join("") + "</svg>",
   };
@@ -54,7 +69,7 @@
   function Phone(root) {
     this.root = root;
     root.innerHTML =
-      '<div class="ph-top"><div class="ph-av" aria-hidden="true">E</div><div class="ph-name"><b>Elfie</b> · iMessage</div></div>' +
+      '<div class="ph-top"><div class="ph-av" aria-hidden="true">' + avatar("elfie") + '</div><div class="ph-name"><b>Elfie</b> · iMessage</div></div>' +
       '<div class="ph-body" role="log" aria-live="polite"></div>' +
       '<div class="ph-input"><span>iMessage</span><i aria-hidden="true"></i></div>';
     this.body = $(".ph-body", root);
@@ -104,7 +119,7 @@
   var TN_COL = ["#0A84FF", "#2FB36B", "#F0A02B", "#E5484D"];
   var NODE = { crew: $("#n-crew"), home: $("#n-home"), stuff: $("#n-stuff"), money: $("#n-money") };
   var WIRE = { home: $("#w-home"), stuff: $("#w-stuff"), money: $("#w-money") };
-  var TONE = { crew: "ink", home: "green", stuff: "amber", money: "lime" };
+  var TONE = { crew: "ink", home: "green", stuff: "amber", money: "neon" };
   ["crew", "home", "stuff", "money"].forEach(function (k) {
     NODE[k].innerHTML = avatar(TONE[k]) + '<div class="nm">' + esc(STORY[k].name) + "</div>" + "<ul>" + STORY[k].tasks.map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
   });
@@ -211,10 +226,10 @@
 
   /* ---------- demo number ---------- */
   var dn = $("#demoNum");
-  if (SITE.number) dn.textContent = SITE.number; else { dn.classList.add("empty"); dn.textContent = "The number goes on this screen"; }
+  if (SITE.number) dn.textContent = SITE.number; else dn.hidden = true;
 
   /* ---------- photo strips ---------- */
-  var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["ink", "green", "amber", "lime"];
+  var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["ink", "green", "amber", "neon"];
   function tiles(offset) {
     var out = [], n = SITE.nightPhotos && SITE.nightPhotos.length ? SITE.nightPhotos.length : NIGHT.length;
     for (var k = 0; k < n; k++) {
@@ -263,7 +278,7 @@
     if (play) pickScene(SCENES.filter(function (s) { return s.agent === k; })[0].id);
   }
   function pickScene(id) {
-    var s = sceneById[id]; if (!s) return;
+    var s = sceneById[id]; if (!s) return; started = true;
     if (s.agent !== currentAgent) pickAgent(s.agent, false);
     currentScene = s;
     $$("button", funcs).forEach(function (b) { b.setAttribute("aria-current", String(b.dataset.scene === id)); });
@@ -297,7 +312,7 @@
       var x = { sam: 100, priya: 170, dep: 290 }, y = function (v) { return 14 + (1 - clamp(v / NET, 0, 1)) * 62; };
       var cur = NET, d = "M8 " + y(cur), pts = '<circle cx="8" cy="' + y(cur) + '" r="4" fill="#0E0F0C"/>';
       EXPECT.forEach(function (e) { if (!st.on[e.id]) return; d += " H" + x[e.id] + " V" + y(cur - e.a); cur -= e.a; pts += '<circle cx="' + x[e.id] + '" cy="' + y(cur + e.a) + '" r="3.8" fill="#fff" stroke="#0E0F0C" stroke-width="1.6"/>'; });
-      d += " H312"; pts += '<circle cx="312" cy="' + y(cur) + '" r="5" fill="#D4F26A" stroke="#0E0F0C" stroke-width="1.8"/>';
+      d += " H312"; pts += '<circle cx="312" cy="' + y(cur) + '" r="5" fill="#2EA8FF" stroke="#0E0F0C" stroke-width="1.8"/>';
       return '<svg class="lchart" viewBox="0 0 320 92" role="img" aria-label="Net cost stepping down as expected payments arrive"><line x1="8" y1="78" x2="312" y2="78" stroke="#9A9B93" stroke-dasharray="3 4"/><text x="10" y="90" font-size="8.5" fill="#77786F" font-family="' + F + '">break even</text><path d="' + d + '" fill="none" stroke="#0E0F0C" stroke-width="2" stroke-linejoin="round"/>' + pts + "</svg>";
     }
     function bandChart() {
@@ -308,7 +323,7 @@
       }
       for (i = N; i >= 0; i--) { t = i / N; e = ease(t); m = NET - (NET - p.mean) * e; w = 1.28 * p.sd * Math.pow(e, 0.9); lo += "L" + X(t).toFixed(1) + " " + Y(m - w).toFixed(1); }
       var by = Y(st.budget), real = [0, 0.05, 0.1].map(function (t) { return '<circle cx="' + X(t) + '" cy="' + Y(NET) + '" r="3.4" fill="#0E0F0C"/>'; }).join("");
-      return '<svg class="lchart" viewBox="0 0 340 150" role="img" aria-label="Plan ' + st.plan + ' likely cost with a 10 to 90 percent band"><path d="' + up + lo + 'Z" fill="#0E0F0C" opacity=".08"/><path d="' + mid + '" fill="none" stroke="#0E0F0C" stroke-width="2"/><line x1="22" x2="318" y1="' + by + '" y2="' + by + '" stroke="#137A47" stroke-dasharray="4 4"/><text x="318" y="' + (by - 4) + '" text-anchor="end" font-size="9" fill="#137A47" font-weight="600" font-family="' + F + '">Budget ' + usd(st.budget) + "</text>" + real + '<circle cx="318" cy="' + Y(p.mean) + '" r="5" fill="#D4F26A" stroke="#0E0F0C" stroke-width="1.8"/><text x="22" y="146" font-size="8.5" fill="#77786F" font-family="' + F + '">Today</text><text x="318" y="146" text-anchor="end" font-size="8.5" fill="#77786F" font-family="' + F + '">Move-out</text></svg>';
+      return '<svg class="lchart" viewBox="0 0 340 150" role="img" aria-label="Plan ' + st.plan + ' likely cost with a 10 to 90 percent band"><path d="' + up + lo + 'Z" fill="#0E0F0C" opacity=".08"/><path d="' + mid + '" fill="none" stroke="#0E0F0C" stroke-width="2"/><line x1="22" x2="318" y1="' + by + '" y2="' + by + '" stroke="#137A47" stroke-dasharray="4 4"/><text x="318" y="' + (by - 4) + '" text-anchor="end" font-size="9" fill="#137A47" font-weight="600" font-family="' + F + '">Budget ' + usd(st.budget) + "</text>" + real + '<circle cx="318" cy="' + Y(p.mean) + '" r="5" fill="#2EA8FF" stroke="#0E0F0C" stroke-width="1.8"/><text x="22" y="146" font-size="8.5" fill="#77786F" font-family="' + F + '">Today</text><text x="318" y="146" text-anchor="end" font-size="8.5" fill="#77786F" font-family="' + F + '">Move-out</text></svg>';
     }
     function planRows(buttons) {
       return Object.keys(PLANS).map(function (k) {
@@ -395,7 +410,7 @@
 
   /* ---------- number, repo ---------- */
   var num = $("#number");
-  if (SITE.number) num.textContent = SITE.number; else { num.classList.add("empty"); num.textContent = "The number goes here"; }
+  if (SITE.number) num.textContent = SITE.number; else num.hidden = true;
   $("#repo").href = SITE.repoUrl;
 
 
@@ -500,7 +515,7 @@
   (SITE.team || []).forEach(function (m, i) {
     var li = el("li"); li.style.setProperty("--r", ((i % 2 ? 1 : -1) * (1.2 + i * 0.5)) + "deg");
     var pic = el("div", "pic"); pic.style.setProperty("--g", TG[i % 4]);
-    if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["ink", "green", "amber", "lime"][i % 4]);
+    if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["ink", "green", "amber", "neon"][i % 4]);
     li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : ""))); teamEl.appendChild(li);
   });
 

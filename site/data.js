@@ -24,7 +24,7 @@ window.AGENTS = {
   crew: { name: "Crew Lead", emoji: "🧭", tone: "ink", blurb: "Meets you, listens to the whole move, and sends each text to the right Elf. Asks when it isn't sure." },
   home: { name: "Home Elf", emoji: "🏠", tone: "green", blurb: "Finds the next place, a hotel for the gap or storage. Sublets the old one. Keeps the move-in checklist." },
   stuff: { name: "Stuff Elf", emoji: "📦", tone: "amber", blurb: "Prices things from a photo, deals with buyers, never under your lowest price. Runs Last Call and donations." },
-  money: { name: "Money Elf", emoji: "💸", tone: "lime", blurb: "Keeps the ledger in Nessie. Splits, deposits, escrow. Then plans the rest of your move, with odds." },
+  money: { name: "Money Elf", emoji: "💸", tone: "neon", blurb: "Keeps the ledger in Nessie. Splits, deposits, escrow. Then plans the rest of your move, with odds." },
 };
 
 /* A message: { from: "you" | "elf", agent, text, img?, wait? }.  img: couch | room | ledger | plans | dash */
@@ -257,7 +257,7 @@ window.STORY = {
   home: { name: "Home Elf", tasks: ["Finds a place, a hotel, storage", "Sublets yours, writes the post", "Keeps the move-in checklist"], head: "Home Elf finds the place.", sub: "A real browser searches the sites for you, and flags the scams." },
   stuff: { name: "Stuff Elf", tasks: ["Prices a couch from a photo", "Negotiates, never under your floor", "Drops prices, then donates"], head: "Stuff Elf sells it all.", sub: "Buyers text it. You only hear about it when it matters." },
   money: { name: "Money Elf", tasks: ["Splits costs, pays roommates", "Escrow and the ledger in Nessie", "Plans your budget, with odds"], head: "Money Elf keeps it straight.", sub: "Every dollar is a Nessie record. Nothing moves without your yes." },
-  end: { head: "Four agents. One thread.", sub: "Nothing happens without your yes." },
+  end: { head: "Four agents. One chat.", sub: "Nothing happens without your yes." },
 };
 
 window.CHIPS = [
@@ -463,7 +463,7 @@ window.ICONS = {
   "Retell AI": ["mono:R", "#6B4EFF"], "Retell webhook (signed)": ["mono:R", "#6B4EFF"], "Retell mock call CLI": ["mono:R", "#6B4EFF"],
   "Anthropic Claude API": ["anthropic", "#191919"], "Claude Haiku 5.5": ["claude", "#D97757"], "Claude Sonnet 5.5": ["claude", "#D97757"], "Claude vision": ["claude", "#D97757"],
   "heif2jpeg": ["apple", "#111111"], "Zod structured outputs": ["zod", "#408AFF"], "Onboarding eval (simulated owners)": ["claude", "#D97757"],
-  "Capital One Nessie API": ["mono:N", "#D03027"], "Nessie pending and settle": ["mono:N", "#D03027"], "Moving Fund and Escrow accounts": ["mono:N", "#D03027"], "Smart Plan simulator": ["elf:lime"],
+  "Capital One Nessie API": ["mono:N", "#D03027"], "Nessie pending and settle": ["mono:N", "#D03027"], "Moving Fund and Escrow accounts": ["mono:N", "#D03027"], "Smart Plan simulator": ["elf:neon"],
   "Supabase Postgres": ["supabase", "#3FCF8E"], "Bun.sql": ["bun", "#14151a"], "SQL migrations (11)": ["postgresql", "#4169E1"], "Postgres full-text search": ["postgresql", "#4169E1"], "Docker Postgres": ["docker", "#2496ED"],
   "Browserbase": ["mono:B", "#F26B3A"], "Stagehand v4": ["mono:S", "#14151a"], "Craigslist": ["mono:C", "#5A2D82"], "Airbnb": ["airbnb", "#FF5A5F"], "Booking.com": ["mono:B", "#003B95"],
   "SpareFoot": ["mono:S", "#00A859"], "Apartments.com": ["mono:A", "#0B5BD3"], "Zillow": ["zillow", "#006AFF"], "Facebook (logged-in context)": ["facebook", "#0866FF"],
@@ -471,7 +471,7 @@ window.ICONS = {
   "Bun": ["bun", "#14151a"], "TypeScript 5.9": ["typescript", "#3178C6"], "Biome": ["biome", "#2563EB"],
   "resvg-js": ["mono:R", "#14151a"], "Inter (Expo Google Fonts)": ["googlefonts", "#4285F4"], "Server-drawn SVG": ["mono:S", "#0A84FF"],
   "EPA WARM v13": ["mono:E", "#2E7D32"], "Boston 311 bulk pickup": ["mono:B", "#1F4E8C"], "Salvation Army, Goodwill, Habitat ReStore": ["mono:G", "#2FB36B"], "FTC Consumer Sentinel": ["mono:F", "#14151a"],
-  "Deal Engine": ["elf:amber"], "Memory": ["elf:green"], "Router and clarify flow": ["elf:ink"], "Pipeline": ["elf:ink"], "Crew Board page": ["elf:green"], "Ledger dashboard": ["elf:lime"], "Scam rules": ["elf:amber"],
+  "Deal Engine": ["elf:amber"], "Memory": ["elf:green"], "Router and clarify flow": ["elf:ink"], "Pipeline": ["elf:ink"], "Crew Board page": ["elf:green"], "Ledger dashboard": ["elf:neon"], "Scam rules": ["elf:amber"],
   "Claude Code project skills (6)": ["claude", "#D97757"], "Photon operator CLI": ["mono:P", "#0A84FF"], "Offline demo and negotiation sim": ["mono:D", "#14151a"], "TESTING.md": ["mono:T", "#14151a"],
 };
 

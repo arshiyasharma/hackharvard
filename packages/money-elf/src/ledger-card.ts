@@ -1,5 +1,5 @@
 /**
- * The Ledger as pictures, drawn in the dashboard's design system (decision #64): warm neutrals, ink with one lime
+ * The Ledger as pictures, drawn in the dashboard's design system (decision #64): warm neutrals, ink with one neon-blue
  * accent, Inter, hairline panels.
  *
  *   - The card (`ledgerCardSvg`): a tall image sent inline in the Photon 2.0 thread when the owner asks for the
@@ -26,7 +26,7 @@ export const C = {
   muted: "#77786F",
   line: "#E4E3DD",
   fill: "#F3F2EE",
-  lime: "#D4F26A",
+  neon: "#2EA8FF",
   good: "#137A47",
   okInk: "#F6F6F2",
   okMuted: "#A3A49C",
@@ -77,7 +77,7 @@ function mark(x: number, y: number, s: number): string {
   const u = s / 24;
   const bar = (bx: number, by: number, w: number, fill: string, op = 1) =>
     `<rect x="${x + bx * u}" y="${y + by * u}" width="${w * u}" height="${2 * u}" rx="${u}" fill="${fill}" opacity="${op}"/>`;
-  return `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${6 * u}" fill="${C.ink}"/>${bar(6, 7, 12, C.canvas, 0.55)}${bar(6, 11, 8, C.canvas, 0.55)}${bar(6, 15, 10, C.lime)}`;
+  return `<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${6 * u}" fill="${C.ink}"/>${bar(6, 7, 12, C.canvas, 0.55)}${bar(6, 11, 8, C.canvas, 0.55)}${bar(6, 15, 10, C.neon)}`;
 }
 
 /** Mark plus "Elves Ledger", baseline-aligned at y. */
@@ -86,12 +86,12 @@ function wordmark(x: number, y: number, size: number): string {
   return `${mark(x, y - s * 0.78, s)}${text(x + s + size * 0.55, y, "Elves", size, 600, C.ink)}${text(x + s + size * 0.55 + width("Elves ", size, 600), y, "Ledger", size, 600, C.muted)}`;
 }
 
-/** A lime tag ("Projected") followed by text, baseline at y. Returns the SVG. */
+/** A neon-blue tag ("Projected") followed by text, baseline at y. Returns the SVG. */
 function tag(x: number, y: number, label: string, size: number): { svg: string; w: number } {
   const w = width(label, size, 600) + size * 1.2;
   const h = size * 1.9;
   return {
-    svg: `<rect x="${x}" y="${y - h * 0.7}" width="${w}" height="${h}" rx="${size * 0.5}" fill="${C.lime}"/>${text(x + size * 0.65, y, label, size, 600, C.ink)}`,
+    svg: `<rect x="${x}" y="${y - h * 0.7}" width="${w}" height="${h}" rx="${size * 0.5}" fill="${C.neon}"/>${text(x + size * 0.65, y, label, size, 600, C.ink)}`,
     w,
   };
 }
@@ -100,7 +100,7 @@ function panel(x: number, y: number, w: number, h: number, r: number, fill = C.s
   return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}"${stroke ? ` stroke="${stroke}" stroke-width="2"` : ""}/>`;
 }
 
-/** Where the projection lands, as the line after the lime tag. */
+/** Where the projection lands, as the line after the neon-blue tag. */
 function landing(v: LedgerView): { tag: string; rest: string; bold: string } | null {
   const p = v.projection;
   if (p.expectedCents > 0)
@@ -207,7 +207,7 @@ export function ledgerCardSvg(v: LedgerView): string {
   if (v.pending[0]) {
     const h = 150;
     parts.push(panel(PAD, y, inner, h, 32, C.ink, ""));
-    parts.push(`<circle cx="${PAD + 42}" cy="${y + 47}" r="7" fill="${C.lime}"/>`);
+    parts.push(`<circle cx="${PAD + 42}" cy="${y + 47}" r="7" fill="${C.neon}"/>`);
     parts.push(text(PAD + 60, y + 56, "Needs your OK", 24, 600, C.okInk));
     parts.push(text(W - PAD - 34, y + 56, `${v.pendingActions.length} waiting`, 24, 500, C.okMuted, "end"));
     parts.push(text(PAD + 34, y + 110, clip(capFirst(v.pending[0]), 52), 30, 500, C.okInk));

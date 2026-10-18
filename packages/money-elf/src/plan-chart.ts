@@ -30,7 +30,7 @@ export interface Font {
 
 /**
  * Card colors in the Elves Ledger system (decision #64): the plans are three ink tones, since green means money in,
- * amber means waiting and lime is kept for "projected". A function, not a constant: ledger-card.ts and this file
+ * amber means waiting and neon blue is kept for "projected". A function, not a constant: ledger-card.ts and this file
  * import each other.
  */
 export function cardColors(): PlanColors {
