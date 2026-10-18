@@ -817,3 +817,15 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 .v-beyond { display: grid; justify-items: center; gap: 12px; } .v-beyond .c .av { width: 64px; height: 64px; display: block; } .v-beyond .r { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; } .v-beyond .r span { padding: 6px 12px; border-radius: 999px; background: var(--fill); font-size: 12.5px; font-weight: 600; } .v-beyond .r span.on { background: var(--blue); color: #fff; }
 .v-deb { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .v-deb > div { padding: 12px; border-radius: 16px; display: grid; gap: 4px; font-size: 12.5px; } .v-deb b { font-size: 13.5px; margin-bottom: 2px; } .v-deb .no { background: #fdeceb; color: #7a1f1a; } .v-deb .yes { background: #e2f6ea; color: #0f5a33; } .v-deb span::before { content: "– "; }
 .sp-rail { gap: 6px; } .sp-rail span { font-size: 11.5px; }
+.sp-text .pts { margin: 14px 0 0; display: grid; gap: 7px; max-width: 52ch; }
+.sp-text .pts li { position: relative; padding-left: 20px; font-size: 0.97rem; line-height: 1.35; color: var(--ink-2); animation: arrive 0.4s var(--ease) both; }
+.sp-text .pts li::before { content: ""; position: absolute; left: 0; top: 0.52em; width: 8px; height: 8px; border-radius: 50%; background: var(--tk, var(--blue)); }
+.sp-text .pts li:nth-child(2) { animation-delay: 0.05s; } .sp-text .pts li:nth-child(3) { animation-delay: 0.1s; } .sp-text .pts li:nth-child(4) { animation-delay: 0.15s; } .sp-text .pts li:nth-child(5) { animation-delay: 0.2s; } .sp-text .pts li:nth-child(6) { animation-delay: 0.25s; }
+.sp-text .sol { margin-top: 10px; } .sp-text .sol2 { margin-top: 0; }
+.v-apis { display: grid; justify-items: center; gap: 12px; } .v-apis .hub { padding: 10px 22px; border-radius: 999px; background: var(--blue); color: #fff; font-weight: 800; letter-spacing: -0.01em; box-shadow: 0 10px 24px rgba(10, 132, 255, 0.3); } .v-apis .sat { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; } .v-apis .sat span { padding: 6px 12px; border-radius: 999px; background: var(--fill); border: 1px solid var(--line); font-size: 12.5px; font-weight: 650; }
+.track-panel.compact .sp-text .pain { font-size: clamp(1.5rem, 2.8vw, 2.25rem); }
+.track-panel.compact .sp-text .pts { margin-top: 10px; gap: 5px; }
+.track-panel.compact .sp-text .pts li { font-size: 0.93rem; }
+.track-panel.compact .sp-stage { min-height: 250px; gap: 22px; }
+.track-panel.compact .stepper { gap: 12px; }
+.track-panel.compact .why-track { font-size: clamp(1.2rem, 2.2vw, 1.7rem); }

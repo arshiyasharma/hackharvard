@@ -559,3 +559,44 @@ window.DEAL = {
     { label: "1.0 vs 2.0", vis: "debate", pain: "We debated Photon 1.0 vs 2.0.", t: "Mini apps don't work on 2.0, so we drew pictures.", s: "After hours of experiments.", more: "We built the Photon 1.0 mini-app card first: a second number, registered users only, a second app to open. We settled on 2.0 for the agent and drew the dashboard, the Smart Plan and the Move Report as pictures in the thread, with a never-expiring link to the live page behind each. They work on every phone with nothing to install." },
   ];
 })();
+
+/* Points instead of paragraphs, in story order. Overrides the earlier Photon story text. */
+(function () {
+  var P = window.TRACKS.filter(function (t) { return t.id === "photon"; })[0];
+  P.story = [
+    { label: "Agents", vis: "agents", pain: "Agents that participate, not just assist.", t: "One number. Four agents. One chat.", s: "Three hackathon ideas in one project.",
+      pts: ["A house-hunt agent, a marketplace agent and a money agent", "Led by a Crew Lead, all on one number", "One big task, with no splitting it up for the user", "They call each other, and ask you when it's unclear"] },
+    { label: "Channels", vis: "channels", pain: "Be where people already live.", t: "iMessage, SMS and a call, one Photon project.", s: "Each reply comes from the agent that person texted.",
+      pts: ["iMessage on the shared pool; SMS and voice on the same project", "Socket.IO event stream with a saved cursor, so restarts never replay", "Text, images, reactions, polls, typing and read receipts", "Dedicated-line ready: tapbacks and texting a lister first", "WhatsApp, Telegram and email are next: one transport interface"] },
+    { label: "You approve", vis: "approve", pain: "Real human in the loop, not a demo reel.", t: "One yes approves exactly one action.", s: "A viewing waits for you.",
+      pts: ["Viewings, escrow, refunds, payments and plans all wait for your yes", "Answer by text, poll tap or dashboard button", "Your lowest price never leaves your chat", "A thumbs-up counts as yes; a stale tap does nothing"] },
+    { label: "Memory", vis: "memory", pain: "Context that lasts across time, channels and teammates.", t: "One move across a call, a thread and a dashboard.", s: "Buyers and roommates keep their own threads.",
+      pts: ["Rebuilt every turn from the move, items, board and brief", "A rolling transcript summary, deduplicated facts and per-Elf notes", "The call, the thread and the dashboard all share it", "We weighed Mastra for memory, then built our own on Postgres"] },
+    { label: "Voice", vis: "voice", dark: true, pain: "Agents that talk, and remember the call.", t: "A call that ends as a thread.", s: "Retell on the Photon number, then a recap text.",
+      pts: ["Answers a real call on the Photon number, over the SMS line", "Hears the whole move first, then plays it back with blanks to fill", "Five questions at most, then one yes", "That yes lands in the same memory a text uses", "A recap text follows in the thread", "Scored against simulated callers, not guessed"] },
+    { label: "Delight", vis: "delight", pain: "A delightful default.", t: "It elevates the moment without demanding attention.", s: "One header, one emoji, short blocks.",
+      pts: ["Every text opens with its Elf's name and one emoji", "Short blocks, never walls", "Typing and read receipts around every model call; quick texts batch into one answer", "Four words open everything: HELP, STATUS, DASHBOARD, SMART PLAN", "The ledger and the plans arrive as pictures"] },
+    { label: "Trust", vis: "trust", pain: "Safety and fallbacks that earn trust.", t: "Built for what the shared pool refuses.", s: "Every feature has a fallback.",
+      pts: ["Poll refused, so reply yes. Thread refused, so a flat send", "No model key, so deterministic replies", "Nessie unreachable: \"nothing moved\", and nothing half-written", "Scam Shield ends off-escrow chats; card numbers are never stored"] },
+    { label: "APIs", vis: "apis", pain: "Agents that act on real data.", t: "Photon plus Nessie, Claude, Retell and a real browser.", s: "Not a chatbot: it moves real records.",
+      pts: ["Nessie: customers, accounts, purchases, deposits, withdrawals, pending records", "Claude: routing, drafting, and vision for photos", "Retell: the voice call", "Browserbase and Stagehand: a real browser searches Craigslist, Airbnb, Booking.com and SpareFoot", "Supabase Postgres and Railway: state and hosting"] },
+    { label: "Skills", vis: "skills", pain: "Using Photon well.", t: "We taught our tools Photon.", s: "Skills written from the live spec.",
+      pts: ["The 2.0 docs were still being written, so we verified against the live OpenAPI spec", "Saved as project skills: photon and run-elves-on-phone", "Idempotency keys on every send, long replies chunked, memory replay-safe", "A CLI for shared-pool phones, and 614 tests (640 on Postgres)"] },
+    { label: "Traction", vis: "beyond", pain: "Could this run with real users tomorrow?", t: "It already has users lined up.", s: "15+ interviews. 30+ signups.",
+      pts: ["15+ people interviewed, and 30+ already signed up", "Live on Railway with Postgres, real phones and a real Nessie sandbox", "Boston has a built-in launch day every September 1", "Swap the Elves, keep the crew: weddings, home purchases, visas, business launches, estate clean-outs"] },
+    { label: "1.0 vs 2.0", vis: "debate", pain: "We debated Photon 1.0 vs 2.0.", t: "Mini apps don't work on 2.0, so we drew pictures.", s: "After hours of experiments.",
+      pts: ["We built the Photon 1.0 mini app first: a second number, registered users only", "At 1 a.m. we called Vincent to settle the router question", "We settled on 2.0 for the agent", "The dashboard, Smart Plan and Move Report became pictures in the thread, with a live link"] },
+  ];
+  var N = window.TRACKS.filter(function (t) { return t.id === "nessie"; })[0];
+  var NP = {
+    budget: ["Asked the moment the ledger opens", "Truck, deposit, storage, gas and movers roll into one net cost", "Plan odds are measured against it", "Odds drop 10 points? One nudge, with fresh plans"],
+    split: ["$100 three ways: $33.34, $33.33, $33.33", "Split without you, or uneven", "$40-a-month plans, or paid back from the Moving Fund", "Every request waits for your yes"],
+    lastcall: ["20% off at 72 hours, 25% more at 48", "Every cut is texted with the why", "Free at 24 hours", "Whatever sells lands in the ledger"],
+    engine: ["Holds your floor, counters buyers, books slots", "An agreed price opens escrow in Nessie", "Two signals release it", "A no-show past 24 hours is refunded after your yes", "Built by Yasasree"],
+    net: ["Net cost so far, read from Nessie", "Each expected payment is a step down", "It ends in a Projected number and a date", "Hollow dots are estimated dates"],
+    plan: ["What to sell, when to drop it, donate or haul, truck, movers", "A likely cost, a 10 to 90% band and your odds under budget", "The pick is written to Nessie as pending, future-dated records", "Plan records never count toward your totals"],
+    coming: ["Roommate shares, deposits and escrow money still due", "Switch any of it off", "Or make everyone two weeks late", "Net cost and settle date recompute"],
+    books: ["Totals are read from tagged Nessie records, never remembered", "Refreshed every 5 seconds", "Every Activity row opens its record id"],
+  };
+  N.modules.forEach(function (m) { if (NP[m.vis]) m.pts = NP[m.vis]; });
+})();
