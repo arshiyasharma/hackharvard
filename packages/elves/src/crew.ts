@@ -68,7 +68,7 @@ export const CREW_ABILITIES: Ability[] = [
   {
     elf: "stuff",
     name: "Last Call",
-    text: "Stuff Elf runs Last Call: 48 hours before move-out unsold things drop in price, at 24 hours they go free, then it asks you about donating.",
+    text: "Stuff Elf runs Last Call: 72 and 48 hours before move-out unsold things drop in price, at 24 hours they go free, and \"donate it\" takes a listing off and drafts the pickup request.",
     spoken: "drops prices on what's left before move-out, then asks about donating",
   },
   {

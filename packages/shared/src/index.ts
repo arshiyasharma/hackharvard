@@ -238,10 +238,10 @@ export interface Deal {
   /** Set once the deal exits; the Move Report counts these. */
   outcome: ItemOutcome | null;
   /**
-   * Last Call progress for modes that relist before move-out. `dropped` is the T−48h price,
-   * `free` is T−24h, `closed` is the donation or 311 booking at move-out.
+   * Last Call progress for modes that relist before move-out. `drop_1` is the T−72h cut (20%),
+   * `dropped` the T−48h cut (25% more), `free` is T−24h, `closed` is move-out.
    */
-  lastCallStage: "none" | "dropped" | "free" | "closed";
+  lastCallStage: "none" | "drop_1" | "dropped" | "free" | "closed";
   /** The owner said to hold this one ("keep the couch"); Last Call leaves it alone. */
   lastCallOptOut: boolean;
   createdAt: string;

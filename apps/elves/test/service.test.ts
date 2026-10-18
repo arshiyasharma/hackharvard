@@ -854,12 +854,12 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const before = t.transport.sent.length;
     expect(await t.service.sweep()).toBe(2);
     const sent = t.transport.sent.slice(before);
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
-      "dropped to $21",
-    );
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "")).toContain(
-      "$21",
-    );
+    const ownerNote = sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "");
+    expect(ownerNote).toContain("cut the white plastic armchair by 40%, from $35 to $21");
+    expect(ownerNote).toContain("move-out is in about 38 hours");
+    const buyerNote = sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "");
+    expect(buyerNote).toContain("$21");
+    expect(buyerNote).toContain(deal.code);
     expect((await t.store.getDeal(deal.id))?.lastCallStage).toBe("dropped");
     expect(await t.service.sweep()).toBe(0);
     t.stop();
@@ -959,15 +959,71 @@ describe("Deal Engine: buyers text the listing's number", () => {
     t.stop();
   });
 
-  test("donate waits for yes, then marks the item donated", async () => {
+  test("Last Call cuts in two steps, each text sent once, each saying how much and why", async () => {
+    let now = new Date("2026-10-14T10:00:00Z");
+    const t = boot(null, { now: () => now });
+    const { move, deal } = await listChair(t);
+    await say(t, buyerA, `${deal.code} would you take 10`);
+    await t.store.updateMove(move.id, { moveOutAt: "2026-10-17" });
+    const before = t.transport.sent.length;
+    expect(await t.service.sweep()).toBe(2);
+    const first = t.transport.sent.slice(before);
+    expect(first.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
+      "cut the white plastic armchair by 20%, from $35 to $28",
+    );
+    expect(await t.service.sweep()).toBe(0);
+    now = new Date("2026-10-15T12:00:00Z");
+    const mid = t.transport.sent.length;
+    expect(await t.service.sweep()).toBe(2);
+    const second = t.transport.sent.slice(mid);
+    expect(
+      second.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, ""),
+    ).toContain("by 25%, from $28 to $21");
+    expect((await t.store.getDeal(deal.id))?.lastCallStage).toBe("dropped");
+    t.stop();
+  });
+
+  test("donate takes the listing off at once; it asks the city only when it can't tell, then lists who picks up and drafts the request", async () => {
     const t = boot(null);
     const { move, deal } = await listChair(t);
     const asked = await say(t, owner, "donate the armchair");
-    expect(body(asked[0]?.text ?? "")).toContain("Say yes");
-    expect((await t.store.getDeal(deal.id))?.state).toBe("listed");
-    await say(t, owner, "yes");
+    // No "say yes", no price question: the listing is off and the item is donated right away.
+    expect(asked).toHaveLength(1);
+    expect(body(asked[0]?.text ?? "")).not.toContain("Say yes");
+    expect(body(asked[0]?.text ?? "")).toContain("Took the white plastic armchair off sale");
+    expect(body(asked[0]?.text ?? "")).toContain("What city or neighborhood");
     expect((await t.store.getDeal(deal.id))?.state).toBe("donated");
     expect((await t.store.listItems(move.id))[0]?.outcome).toBe("donated");
+
+    const answered = await say(t, owner, "Allston");
+    expect(answered).toHaveLength(2);
+    const options = body(answered[0]?.text ?? "");
+    for (const who of ["Boston 311", "Salvation Army", "Goodwill", "Habitat ReStore"])
+      expect(options).toContain(who);
+    const draft = body(answered[1]?.text ?? "");
+    expect(draft).toContain("donate a white plastic armchair");
+    expect(draft).toContain("Boston, MA");
+    const events = await t.store.listEvents(move.id);
+    expect(events.some((e) => e.type === "donate.drafted")).toBe(true);
+    t.stop();
+  });
+
+  test("donate skips the city question when the move-out address says where", async () => {
+    const t = boot(null);
+    const { move } = await listChair(t);
+    await t.store.updateMove(move.id, { fromAddress: "12 Harvard Ave, Allston", moveOutAt: "2026-11-01" });
+    const out = await say(t, owner, "can you donate the armchair");
+    expect(out).toHaveLength(2);
+    expect(body(out[0]?.text ?? "")).toContain("Boston 311");
+    expect(body(out[1]?.text ?? "")).toContain("before Nov 1");
+    t.stop();
+  });
+
+  test("a question about donating does not take anything off sale", async () => {
+    const t = boot(null);
+    const { deal } = await listChair(t);
+    await say(t, owner, "can I donate the armchair if it doesn't sell?");
+    expect((await t.store.getDeal(deal.id))?.state).toBe("listed");
     t.stop();
   });
 

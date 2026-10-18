@@ -12,6 +12,7 @@ import {
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
 import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
+import { pendingDonateAsk } from "./donate.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
 import { parsePriceCents, pendingListings, REF_ASK, wantsListing } from "./intake.ts";
@@ -146,6 +147,20 @@ export async function route(
     const elf = open ? policyFor(open.mode).elf : null;
     if (elf && deps.elves.some((e) => e.name === elf)) return { elf, via: "deal", confidence: 0.95 };
   }
+  // The answer to "which one should I donate?" / "what city is the pickup in?" goes back to Stuff, not to Sell
+  // (which would read "the couch" as a listing) or to whichever Elf the words sound like ("Allston" sounds like Home).
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && !hasPhotos(batch) && text.length <= 60) {
+    const ask = deps.elves.some((e) => e.name === "stuff")
+      ? pendingDonateAsk(await deps.store.listEvents(opts.moveId))
+      : null;
+    if (
+      ask &&
+      (ask.step === "area"
+        ? text.trim().split(/\s+/).length <= 4
+        : (keywordRoute(text, deps.elves)?.elf ?? "stuff") === "stuff")
+    )
+      return { elf: "stuff", via: "deal", confidence: 0.9 };
+  }
   // "yes" / "no" / "$70" while a buyer's offer waits on the owner goes to the Elf that asked.
   if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
     const pending = await pendingOwnerAsks(deps.store, opts.moveId);
@@ -155,9 +170,8 @@ export async function route(
       const events = await deps.store.listEvents(opts.moveId);
       for (let i = events.length - 1; i >= 0; i--) {
         const type = events[i]?.type;
-        if (type === "buy.opened" || type === "donate.booked") break;
-        if (type === "buy.pending" || type === "donate.pending")
-          return { elf: "stuff", via: "deal", confidence: 0.9 };
+        if (type === "buy.opened") break;
+        if (type === "buy.pending") return { elf: "stuff", via: "deal", confidence: 0.9 };
       }
     }
   }

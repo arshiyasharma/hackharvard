@@ -1202,14 +1202,22 @@ async function slotAnswer(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Last Call: drop at T−48h, free at T−24h, donation or 311 at move-out
+// Last Call: 20% off at T−72h, another 25% off at T−48h (60% of the start), free at T−24h, dumped at move-out
 
 /** Hours before move-out at which each Last Call stage becomes due. */
-export const LAST_CALL_HOURS = { drop: 48, free: 24, close: 0 } as const;
+export const LAST_CALL_HOURS = { firstDrop: 72, drop: 48, free: 24, close: 0 } as const;
 
-/** 60% of the ask, rounded to the dollar, and never under $1. */
+/** What each price cut keeps of the current ask: 80% at 72h, then 75% of that (60% of the start) at 48h. */
+export const LAST_CALL_KEEP = { firstDrop: 0.8, drop: 0.75 } as const;
+
+/** The ask after a cut that keeps `keep` of it, rounded to the dollar and never under $1. */
+export function cutAsk(askCents: number, keep: number): number {
+  return Math.max(100, Math.round((askCents * keep) / 100) * 100);
+}
+
+/** 60% of the ask, rounded to the dollar, and never under $1: both cuts in one step. */
 export function droppedAsk(askCents: number): number {
-  return Math.max(100, Math.round((askCents * 0.6) / 100) * 100);
+  return cutAsk(askCents, LAST_CALL_KEEP.firstDrop * LAST_CALL_KEEP.drop);
 }
 
 const HOLD_ALL =
@@ -1257,12 +1265,14 @@ export interface SweepMessage extends EngineMessage {
 const ACTIVE_PARTY = ["talking", "awaiting_owner", "agreed", "waitlisted"];
 
 /** The next Last Call stage this deal is due for, or null when it should sit. */
-function dueLastCall(deal: Deal, hoursLeft: number): "drop" | "free" | "close" | null {
+function dueLastCall(deal: Deal, hoursLeft: number): "first_drop" | "drop" | "free" | "close" | null {
   if (deal.lastCallOptOut || deal.state === "scheduled" || deal.lastCallStage === "closed") return null;
   if (hoursLeft <= LAST_CALL_HOURS.close) return "close";
   if (hoursLeft <= LAST_CALL_HOURS.free && deal.lastCallStage !== "free") return "free";
-  if (hoursLeft <= LAST_CALL_HOURS.drop && deal.lastCallStage === "none" && (deal.askCents ?? 0) > 0)
-    return "drop";
+  const priced = (deal.askCents ?? 0) > 0;
+  const stage = deal.lastCallStage;
+  if (hoursLeft <= LAST_CALL_HOURS.drop && (stage === "none" || stage === "drop_1") && priced) return "drop";
+  if (hoursLeft <= LAST_CALL_HOURS.firstDrop && stage === "none" && priced) return "first_drop";
   return null;
 }
 
@@ -1325,30 +1335,57 @@ export async function lastCallSweep(
     const stage = dueLastCall(deal, hoursLeft);
     if (!stage) continue;
 
-    if (stage === "drop") {
-      const ask = droppedAsk(deal.askCents ?? 0);
+    if (stage === "drop" || stage === "first_drop") {
+      // A sweep that first sees the deal inside 48h makes both cuts at once (60% of the start).
+      const keep =
+        stage === "first_drop"
+          ? LAST_CALL_KEEP.firstDrop
+          : deal.lastCallStage === "none"
+            ? LAST_CALL_KEEP.firstDrop * LAST_CALL_KEEP.drop
+            : LAST_CALL_KEEP.drop;
+      const was = deal.askCents ?? 0;
+      const ask = Math.min(was, cutAsk(was, keep));
       const limit = Math.min(deal.limitCents ?? ask, ask);
       const next = await store.upsertDeal({
         ...deal,
         askCents: ask,
         limitCents: limit,
-        lastCallStage: "dropped",
+        lastCallStage: stage === "first_drop" ? "drop_1" : "dropped",
       });
+      // Too cheap to cut ($1 stays $1): the stage still advances, but there is nothing to tell anyone.
+      if (ask >= was) continue;
       await syncSubjectPrice(store, next, ask, limit);
       const parties = await resetTalking(store, next);
       events.push({
         moveId: move.id,
         type: "deal.price_dropped",
-        payload: { dealId: deal.id, askCents: ask, limitCents: limit, reason: "last_call" },
+        payload: {
+          dealId: deal.id,
+          askCents: ask,
+          fromCents: was,
+          limitCents: limit,
+          percentOff: Math.round(((was - ask) / was) * 100),
+          hoursLeft: Math.round(hoursLeft),
+          reason: "last_call",
+        },
       });
       const at = price(ask, p.unit);
+      const wasAt = price(was, p.unit);
+      const pct = Math.round(((was - ask) / was) * 100);
+      const hours = Math.max(1, Math.round(hoursLeft));
       messages.push({
         moveId: move.id,
         to: "owner",
         dealId: deal.id,
         kind: "last_call_drop",
-        text: `Last Call, 48 hours out: the ${deal.title} dropped to ${at}. Reply "keep the ${deal.title}" to hold that price.`,
-        facts: { title: deal.title, price: at },
+        text: [
+          `Last Call: move-out is in about ${hours} hours, so I cut the ${deal.title} by ${pct}%, from ${wasAt} to ${at}. Things that are still unsold get cheaper as the date gets closer so they leave before you do.`,
+          parties.length
+            ? `Buyers who were talking get the new price and the ref code ${deal.code}.`
+            : `Anyone who texts ref ${deal.code} sees the new price.`,
+          `Reply "keep the ${deal.title}" to hold this price, or "donate the ${deal.title}" and I'll take it off sale and draft the pickup request.`,
+        ].join("\n\n"),
+        facts: { title: deal.title, price: at, was: wasAt, percentOff: pct, hoursLeft: hours },
       });
       for (const party of parties) {
         messages.push({
@@ -1357,7 +1394,7 @@ export async function lastCallSweep(
           partyId: party.id,
           dealId: next.id,
           kind: "last_call_drop",
-          text: `Price drop: the ${deal.title} is now ${at}. Want it?`,
+          text: `Price drop: the ${deal.title} (ref ${deal.code}) is now ${at}. Want it?`,
           facts: publicFacts(next, p),
         });
       }
@@ -1387,7 +1424,7 @@ export async function lastCallSweep(
         to: "owner",
         dealId: deal.id,
         kind: "last_call",
-        text: `Last Call, 24 hours out: the ${deal.title} is free now for anyone who can pick it up before move-out. I'm booking a donation or 311 pickup if nobody claims it.`,
+        text: `Last Call, 24 hours out: the ${deal.title} is free now for anyone who can pick it up before move-out.\n\nIf nobody claims it, reply "donate the ${deal.title}" and I'll draft the pickup request.`,
         facts: { title: deal.title },
       });
       for (const party of parties) {
@@ -1468,7 +1505,7 @@ export async function dealBoard(
           ? (d.outcome ?? d.state)
           : d.state === "relisted"
             ? "free (Last Call)"
-            : d.lastCallStage === "dropped"
+            : d.lastCallStage === "dropped" || d.lastCallStage === "drop_1"
               ? `dropped to ${price(d.askCents, policyFor(d.mode).unit)}`
               : active
                 ? `${active} ${policyFor(d.mode).counterpartyRole}${active === 1 ? "" : "s"}`

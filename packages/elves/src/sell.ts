@@ -10,6 +10,15 @@ import {
   memoryPreamble,
 } from "./contract.ts";
 import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
+import {
+  areaAnswer,
+  areaFrom,
+  isDonateCommand,
+  nameList,
+  pendingDonateAsk,
+  pickupOptions,
+  requestDraft,
+} from "./donate.ts";
 import { moveReport, reportText } from "./impact.ts";
 import { CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB, extractFactsHeuristic } from "./facts.ts";
 import {
@@ -110,6 +119,11 @@ export const stuffElf: Elf = {
     if (decided) return decided;
     const confirmed = await confirmPending(ctx, text);
     if (confirmed) return confirmed;
+    // "donate the couch" is decided before keywords pick a skill: "couch" would otherwise win it back to Sell.
+    if (!hasPhotos(ctx.batch)) {
+      const donated = await donateFlow(ctx, text);
+      if (donated) return donated;
+    }
     // "what's the ref code?" with nothing left to list: read back the code of every open listing.
     if (
       !hasPhotos(ctx.batch) &&
@@ -143,13 +157,6 @@ export const stuffElf: Elf = {
       if (skill === BUY_SKILL) {
         const buy = await startBuy(ctx, text);
         if (buy) return buy;
-      }
-      if (
-        skill === GREEN_SKILL &&
-        /\b(donat(?:e|ion|ing)?|trash|dump|311|give away|goodwill|curb)\b/i.test(text)
-      ) {
-        const donated = await askDonate(ctx, text);
-        if (donated) return donated;
       }
       if (skill !== SELL_SKILL) return skillReply(ctx, "stuff", skill);
     }
@@ -345,25 +352,19 @@ export const stuffElf: Elf = {
   },
 };
 
-type Pending =
-  | { kind: "donate"; itemId: string; name: string }
-  | { kind: "buy"; url: string; maxCents: number | null };
+type Pending = { kind: "buy"; url: string; maxCents: number | null };
 
 async function readPending(ctx: ElfContext): Promise<Pending | null> {
   const events = await ctx.store.listEvents(ctx.move.id);
   let pending: Pending | null = null;
   for (const e of events) {
-    if (e.type === "donate.pending") {
-      const itemId = String(e.payload.itemId ?? "");
-      const name = String(e.payload.name ?? "item");
-      if (itemId) pending = { kind: "donate", itemId, name };
-    } else if (e.type === "buy.pending") {
+    if (e.type === "buy.pending") {
       pending = {
         kind: "buy",
         url: String(e.payload.url ?? ""),
         maxCents: typeof e.payload.maxCents === "number" ? e.payload.maxCents : null,
       };
-    } else if (e.type === "donate.booked" || e.type === "buy.opened") pending = null;
+    } else if (e.type === "buy.opened") pending = null;
   }
   return pending;
 }
@@ -376,38 +377,11 @@ function replyTo(ctx: ElfContext, text: string, extra: Partial<ElfResult> = {}):
   };
 }
 
-/** "yes" after a buy ceiling or a donate ask. An offer under the floor is handled earlier. */
+/** "yes" after a buy ceiling. An offer under the floor is handled earlier. */
 async function confirmPending(ctx: ElfContext, text: string): Promise<ElfResult | null> {
   if (readOwnerDecision(text)?.kind !== "yes") return null;
   const pending = await readPending(ctx);
   if (!pending) return null;
-  if (pending.kind === "donate") {
-    const deals = await ctx.store.listDeals(ctx.move.id);
-    const deal = deals.find((d) => d.subjectId === pending.itemId && d.mode === "sell_item");
-    if (deal) await markOutcome(ctx.store, deal.id, "donated");
-    else {
-      const item = (await ctx.store.listItems(ctx.move.id)).find((i) => i.id === pending.itemId);
-      if (item)
-        await ctx.store.upsertItem({
-          id: item.id,
-          moveId: item.moveId,
-          name: item.name,
-          category: item.category,
-          outcome: "donated",
-        });
-    }
-    return replyTo(ctx, `Booking a donation pickup for the ${pending.name}. It won't go on the truck.`, {
-      events: [
-        { type: "donate.booked", payload: { itemId: pending.itemId, name: pending.name } },
-        { type: "pickup.requested", payload: { itemId: pending.itemId, kinds: ["donation"] } },
-      ],
-      boardPatch: {
-        status: "working",
-        currentTask: `Donating ${pending.name}`,
-        lastUpdate: "Donation booked",
-      },
-    });
-  }
   if (!pending.url || pending.maxCents == null) return null;
   const deal = await openDeal(ctx.store, {
     moveId: ctx.move.id,
@@ -456,29 +430,138 @@ async function startBuy(ctx: ElfContext, text: string): Promise<ElfResult | null
   );
 }
 
-async function askDonate(ctx: ElfContext, text: string): Promise<ElfResult | null> {
+const DONATE_ALL =
+  /\b(the rest|everything|all of it|all of them|all (?:the )?(?:stuff|items|of the stuff))\b/i;
+
+/**
+ * Donating takes effect the moment the owner says it: the listing comes off and the item is marked donated, so
+ * there is no "say yes" step to loop on. The Elf then drafts the request (it places no call). It asks only for
+ * what it truly lacks: which item, and the city when it cannot tell.
+ */
+async function donateFlow(ctx: ElfContext, text: string): Promise<ElfResult | null> {
+  const ask = pendingDonateAsk(await ctx.store.listEvents(ctx.move.id));
+  const command = isDonateCommand(text);
+  if (!command && !ask) return null;
   const items = await ctx.store.listItems(ctx.move.id);
-  const named = namedItem(text, items);
-  const target = named ?? (items.length === 1 ? items[0]! : null);
-  if (!target)
+
+  // The answer to "what city?": the items are already off sale; this just finishes the request.
+  if (!command && ask?.step === "area") {
+    if (readOwnerDecision(text) || parsePriceCents(text) != null) return null;
+    const area = areaAnswer(text);
+    const chosen = items.filter((i) => ask.itemIds.includes(i.id));
+    if (!area || !chosen.length) return null;
+    return pickupReply(ctx, chosen, area, false);
+  }
+
+  // The command, or the answer to "which one?".
+  let targets: Item[] = [];
+  if (DONATE_ALL.test(text)) targets = items.filter((i) => i.outcome === "listed");
+  else {
+    const named = namedItem(text, items);
+    if (named) targets = [named];
+    else {
+      const heard = extractFactsHeuristic(text, ctx.now()).items[0];
+      if (heard) {
+        targets = [
+          await ctx.store.upsertItem({
+            moveId: ctx.move.id,
+            name: heard.name,
+            category: heard.category,
+            weightLb: DEFAULT_WEIGHT_LB[heard.category],
+            listPriceCents: null,
+            floorPriceCents: null,
+            outcome: "listed",
+          }),
+        ];
+      } else if (items.length === 1) targets = [items[0]!];
+    }
+  }
+  if (!targets.length) {
+    if (!command) return null;
+    const open = items.filter((i) => i.outcome === "listed");
     return replyTo(
       ctx,
-      items.length
-        ? `Which one should I donate: ${items.map((i) => i.name).join(", ")}?`
-        : "Which item should I donate? A name is enough, and I'll book the pickup once you say yes.",
+      open.length
+        ? `❓ Which one should I donate: ${open.map((i) => i.name).join(", ")}?\n\nI'll take its listing off and draft the pickup request.`
+        : '❓ What are you donating?\n\nA name is enough, like "the couch". I\'ll draft the pickup request.',
+      {
+        events: [{ type: "donate.pending", payload: { step: "item", itemIds: open.map((i) => i.id) } }],
+        boardPatch: {
+          status: "waiting",
+          currentTask: "Donate: which item?",
+          lastUpdate: "Asked which item to donate",
+        },
+      },
     );
+  }
+
+  // Take the listing off, so no buyer is quoted a price on something that is leaving for a charity.
+  const deals = await ctx.store.listDeals(ctx.move.id);
+  for (const item of targets) {
+    for (const d of deals)
+      if (d.subjectId === item.id && d.mode === "sell_item" && isOpen(d.state))
+        await markOutcome(ctx.store, d.id, "donated");
+    await ctx.store.upsertItem({
+      id: item.id,
+      moveId: item.moveId,
+      name: item.name,
+      category: item.category,
+      outcome: "donated",
+    });
+  }
+  const area = areaFrom(ctx.move.fromAddress) ?? areaFrom(text);
+  if (area) return pickupReply(ctx, targets, area, true);
+
+  const names = nameList(targets, "the");
   return replyTo(
     ctx,
-    `Say yes and I'll book a donation pickup for the ${target.name}. Nothing goes out until you do.`,
+    `✅ Took ${names} off sale and marked ${targets.length === 1 ? "it" : "them"} donated, so ${targets.length === 1 ? "it stays" : "they stay"} off the truck.\n\nWhat city or neighborhood is the pickup in? Then I'll list who picks up there and draft the request.`,
     {
-      events: [{ type: "donate.pending", payload: { itemId: target.id, name: target.name } }],
+      events: [
+        { type: "donate.pending", payload: { step: "area", itemIds: targets.map((i) => i.id) } },
+        ...targets.map((i) => ({ type: "donate.taken_off", payload: { itemId: i.id, name: i.name } })),
+      ],
       boardPatch: {
         status: "waiting",
-        currentTask: `Donate ${target.name}?`,
-        lastUpdate: "Waiting on a yes",
+        currentTask: `Donate ${targets.map((i) => i.name).join(", ")}: which city?`,
+        lastUpdate: "Took the listing off; waiting on the pickup city",
       },
     },
   );
+}
+
+/** Who picks up in the owner's area, and the request to forward. Two texts so the second can be copied as is. */
+function pickupReply(ctx: ElfContext, items: Item[], area: string, tookOff: boolean): ElfResult {
+  const names = nameList(items, "the");
+  const lead = tookOff
+    ? `✅ Took ${names} off sale and marked ${items.length === 1 ? "it" : "them"} donated, so ${items.length === 1 ? "it stays" : "they stay"} off the truck.`
+    : `✅ Pickup options for ${names} in ${area}.`;
+  const options = pickupOptions(area)
+    .map((o) => `• ${o.name}: ${o.how}`)
+    .join("\n");
+  const first = [
+    lead,
+    tookOff ? `Who picks up in ${area}:\n${options}` : options,
+    "I can't call or book for you. The next text is a request you can forward to any of them as it is.",
+  ].join("\n\n");
+  return {
+    replies: [
+      { text: first, parentMessageId: lastMessageId(ctx.batch) },
+      { text: requestDraft(items, ctx.move, area), parentMessageId: null },
+    ],
+    events: [
+      {
+        type: "donate.drafted",
+        payload: { itemIds: items.map((i) => i.id), names: items.map((i) => i.name), area },
+      },
+      ...items.map((i) => ({ type: "pickup.requested", payload: { itemId: i.id, kinds: ["donation"] } })),
+    ],
+    boardPatch: {
+      status: "working",
+      currentTask: `Donating ${items.map((i) => i.name).join(", ")}`,
+      lastUpdate: `Took ${items.map((i) => i.name).join(", ")} off sale; drafted the pickup request for ${area}`,
+    },
+  };
 }
 
 function hostOf(url: string): string {

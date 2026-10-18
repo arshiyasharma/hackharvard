@@ -92,3 +92,37 @@ describe("Move Report", () => {
     expect(r.lbDiverted).toBe(150);
   });
 });
+
+describe("donate helpers", () => {
+  test("a command takes effect; a question does not", async () => {
+    const { isDonateCommand } = await import("../src/donate.ts");
+    for (const t of [
+      "donate the couch",
+      "can you donate the lamp?",
+      "give away the desk",
+      "book a 311 pickup",
+    ])
+      expect(isDonateCommand(t)).toBe(true);
+    for (const t of [
+      "can I donate it if it doesn't sell?",
+      "what happens if I donate?",
+      "how do I donate a couch",
+    ])
+      expect(isDonateCommand(t)).toBe(false);
+  });
+
+  test("the area comes from a neighborhood, or from a short answer; Boston gets 311, elsewhere gets a search", async () => {
+    const { areaAnswer, areaFrom, pickupOptions } = await import("../src/donate.ts");
+    expect(areaFrom("12 Harvard Ave, Allston")).toBe("Boston, MA");
+    expect(areaFrom("45 Main St")).toBeNull();
+    expect(areaFrom("near Harvard Square")).toBe("Cambridge");
+    expect(areaAnswer("I'm in somerville.")).toBe("Somerville");
+    expect(pickupOptions("Boston, MA").map((o) => o.name)).toEqual([
+      "Boston 311 bulk pickup",
+      "Salvation Army",
+      "Goodwill",
+      "Habitat ReStore",
+    ]);
+    expect(pickupOptions("Somerville")[0]?.how).toContain("Somerville bulk item pickup");
+  });
+});

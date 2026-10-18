@@ -374,6 +374,17 @@ describe("find_sublet: the crew is the buyer and texted the lister first", () =>
   });
 });
 
+describe("Last Call catching up", () => {
+  test("a sweep that first sees the deal inside 48h makes both cuts at once and says 40%", async () => {
+    const { store, move, deal } = await seed();
+    await store.updateMove(move.id, { moveOutAt: "2026-10-17" });
+    const swept = await lastCallSweep(store, clock);
+    expect(swept.messages[0]!.text).toContain("40%");
+    expect(swept.messages[0]!.text).toContain("$120 to $72");
+    expect((await store.getDeal(deal.id))?.lastCallStage).toBe("dropped");
+  });
+});
+
 describe("Last Call leaves alone what was listed after move-out", () => {
   test("a deal opened once the move-out date has passed is neither dropped, freed nor dumped", async () => {
     const { store, move } = await seed();
@@ -614,23 +625,52 @@ describe("a sale end to end against the store", () => {
     expect(r.messages).toEqual([]);
   });
 
-  test("Last Call drops at 48h, goes free at 24h, then marks dumped, once each", async () => {
+  test("Last Call cuts 20% at 72h, 25% more at 48h, goes free at 24h, then marks dumped, once each", async () => {
     const { store, move, deal, item } = await seed();
     await store.updateMove(move.id, { moveOutAt: "2026-10-17" });
     let party = await buyer(store, deal.id, "b");
     party = (await counterpartyTurn({ store, move, party, text: "would you take 40", clock })).party!;
     expect(party.status).toBe("talking");
-    const early = await lastCallSweep(store, { now: new Date("2026-10-14T12:00:00Z") });
+    const early = await lastCallSweep(store, { now: new Date("2026-10-13T12:00:00Z") });
     expect(early.messages).toEqual([]);
 
-    // T−38h: 60% of $120, and the floor comes down with it.
+    // T−64h: 20% off $120, and the floor comes down with it. The owner is told how much and why.
+    const first = await lastCallSweep(store, { now: new Date("2026-10-14T12:00:00Z") });
+    expect(first.messages.map((m) => [m.to, m.kind])).toEqual([
+      ["owner", "last_call_drop"],
+      ["counterparty", "last_call_drop"],
+    ]);
+    const note = first.messages[0]!.text;
+    expect(note).toContain("move-out is in about 64 hours");
+    expect(note).toContain("cut the");
+    expect(note).toContain("20%");
+    expect(note).toContain("$120 to $96");
+    expect(note).toContain(`donate the ${deal.title}`);
+    // Buyers hear the new price and the ref code, never the floor.
+    expect(first.messages[1]!.text).toContain("$96");
+    expect(first.messages[1]!.text).toContain(deal.code);
+    expect(first.messages[1]!.text).not.toContain("floor");
+    expect(first.events.find((e) => e.type === "deal.price_dropped")?.payload).toMatchObject({
+      fromCents: 12000,
+      askCents: 9600,
+      percentOff: 20,
+      hoursLeft: 64,
+    });
+    const stepped = (await store.getDeal(deal.id))!;
+    expect(stepped.lastCallStage).toBe("drop_1");
+    expect(stepped.askCents).toBe(9600);
+    expect((await lastCallSweep(store, { now: new Date("2026-10-14T13:00:00Z") })).messages).toEqual([]);
+
+    // T−38h: 25% off the new price, which is 60% of where it started.
     expect(droppedAsk(12000)).toBe(7200);
     const drop = await lastCallSweep(store, clock);
     expect(drop.messages.map((m) => [m.to, m.kind])).toEqual([
       ["owner", "last_call_drop"],
       ["counterparty", "last_call_drop"],
     ]);
-    expect(drop.messages[0]!.text).toContain("$72");
+    expect(drop.messages[0]!.text).toContain("25%");
+    expect(drop.messages[0]!.text).toContain("$96 to $72");
+    expect(drop.messages[1]!.text).toContain("$72");
     expect(drop.messages[1]!.text).not.toContain("floor");
     const dropped = (await store.getDeal(deal.id))!;
     expect(dropped.state).toBe("negotiating");

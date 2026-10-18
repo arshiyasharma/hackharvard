@@ -74,7 +74,7 @@ export const GREEN_SKILL: Skill = {
   ],
   task: "Planning Last Call",
   reply:
-    "Anything unsold 48 hours before move-out drops in price, then goes free, and I book a donation or 311 pickup so nothing hits the curb.",
+    "Anything unsold drops in price 72 and 48 hours before move-out, then goes free. Say \"donate the couch\" and I take it off sale and draft the pickup request for 311, Goodwill, the Salvation Army or Habitat ReStore.",
 };
 
 interface GroupSpec {

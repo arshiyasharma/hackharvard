@@ -439,7 +439,7 @@ export function createService(deps: ServiceDeps): Service {
     return sent;
   }
 
-  /** Last Call: anything unsold 48h before move-out relists free; owner and interested parties hear it. */
+  /** Last Call: unsold things get cheaper at 72h and 48h, then relist free; owner and interested parties hear each step. */
   async function sweep(): Promise<number> {
     counters.sweeps++;
     const reminded = await remindMovein().catch((err) => {
@@ -461,8 +461,8 @@ export function createService(deps: ServiceDeps): Service {
           ? move.ownerSpaceId
           : (await deps.store.listDealParties(deal.id)).find((p) => p.id === m.partyId)?.spaceId;
       if (!spaceId) continue;
-      // One text per Last Call stage, deal and recipient. A later stage (free, then donation) still sends.
-      const key = sendKey("lastcall", `${m.kind}:${deal.id}:${m.partyId ?? "owner"}`);
+      // One text per Last Call stage, deal and recipient. A later stage (second cut, free, close) still sends.
+      const key = sendKey("lastcall", `${m.kind}:${deal.lastCallStage}:${deal.id}:${m.partyId ?? "owner"}`);
       if (await deps.store.getSend(key)) continue;
       await deliverTo(
         move,
@@ -481,7 +481,7 @@ export function createService(deps: ServiceDeps): Service {
         status: "working",
         currentTask: board ? `Deals: ${board}` : "Last Call",
         lastUpdate: res.messages.some((m) => m.kind === "last_call_close")
-          ? "Last Call: booking a donation or 311 pickup"
+          ? "Last Call: closed what nobody claimed"
           : res.messages.some((m) => m.kind === "last_call")
             ? "Last Call: unsold items are free now"
             : "Last Call: prices dropped",
