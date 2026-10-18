@@ -512,6 +512,7 @@
   var num = $("#number");
   if (SITE.number) num.innerHTML = '<a href="tel:' + SITE.number.replace(/[^+\d]/g, "") + '">Call ' + esc(SITE.number) + "</a>"; else num.hidden = true;
   $("#repo").href = SITE.repoUrl;
+  $("#ghLink").href = SITE.repoUrl;
 
 
   /* ---------- icons: brand marks from assets/icons, drawn monograms, or an elf face ---------- */
