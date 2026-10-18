@@ -6,6 +6,8 @@ import { parseRules } from "../src/parse.ts";
 import { FakeRails } from "../src/rails.ts";
 import type { MoneyContext, MoneyItem, MoneyResult } from "../src/types.ts";
 import { fakeLLM, NOW, OWNER, reply } from "./helpers.ts";
+import { ledgerPageHtml } from "../src/ledger-page.ts";
+import { buildLedgerView } from "../src/ledger-view.ts";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -177,5 +179,41 @@ describe("move plans: Nessie", () => {
     );
     expect(reply(await setup().say("plan my move"))).toMatch(/budget/);
     expect(reply(await setup().say("go with B"))).toMatch(/haven't drafted plans/);
+  });
+});
+
+describe("the dashboard's middle section is the Smart Plan layer", () => {
+  const page = async (steps: string[]) => {
+    const { elf, move, say } = setup();
+    for (const t of steps) await say(t);
+    const v = await buildLedgerView(elf.service, move);
+    return ledgerPageHtml(v, { imageUrl: "x.png", pageUrl: "x" });
+  };
+  const between = (html: string, a: string, b: string) => html.indexOf(a) < html.indexOf(b) && html.indexOf(a) > -1;
+
+  test("before any plan it explains the layer and how to get a plan", async () => {
+    const html = await page(["split the $360 storage unit with Sam", "yes"]);
+    expect(html).toContain("Beyond the ledger");
+    expect(html).toContain("Nessie records what happened. This plans what's next.");
+    expect(html).toContain("Your odds of finishing under budget");
+    expect(html).toContain('data-go="plan"');
+  });
+
+  test("with drafts it shows the odds of each plan; picking one marks it", async () => {
+    const drafts = await page(["plan my move under $300"]);
+    expect(drafts).toContain("Three ways to finish the move, with the odds");
+    expect(drafts).toContain("Reply A, B or C in Messages");
+    expect((drafts.match(/class="sp-row[" ]/g) ?? []).length).toBe(3);
+    const chosen = await page(["plan my move under $300", "go with A"]);
+    expect(chosen).toContain("Plan A is running your move");
+    expect(chosen).toContain("your pick");
+    expect((chosen.match(/class="sp-row chosen"/g) ?? []).length).toBe(1);
+  });
+
+  test("it sits in the middle of Overview: after the hero and approvals, before the balances", async () => {
+    const html = await page(["split the $360 storage unit with Sam", "yes", "plan my move under $300"]);
+    expect(between(html, 'id="tab-overview"', 'class="smart"')).toBe(true);
+    expect(between(html, 'class="smart"', 'class="stats"')).toBe(true);
+    expect(html.indexOf('data-tab="plan"')).toBeLessThan(html.indexOf('data-tab="back"'));
   });
 });

@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 555 tests across 40 files (581 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 579 tests across 42 files (605 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -100,12 +100,13 @@ Every text takes the same path (`apps/elves/src/service.ts`):
 
 **Money Elf** (`packages/money-elf`)
 - Splits ("split the $240 truck with Sam and Priya"), "Sam paid me on venmo", deposits and their return, loans and payment plans, "pay Sam $40", "show me the ledger" (the card image plus a signed link to the live dashboard, and a mini app card when Spectrum is set up). Every money move is a question first: one yes approves exactly one action, by text, by poll tap, or from the dashboard.
+- **Smart Plan, beyond the ledger** ("plan my move under $400"): Nessie records what happened; this layer predicts what happens next. The Money Elf tests three ways to finish the move (which items to sell and at what price, when each price drops, donate or haul, truck size, movers or not) with 2,000 simulated moves per plan, shows each plan's likely final cost, the chance it lands under your budget and how hands-on it is, and writes the plan you pick into Nessie as pending, future-dated records. Picking moves no money. See "The Smart Plan layer".
 - Sales through escrow, driven by the Stuff and Home Elves: see "Money: a sale, end to end".
 - Card and bank numbers in a text are refused and never stored; the scam check blocks off-escrow payment asks.
 
 ### Which Elf, and when it asks
 
-The Crew Lead's prompt and every Elf's routing description name exactly what each Elf does and does not do, from one list (`CREW_ABILITIES` and `CREW_LIMITS` in `crew.ts`, ten abilities: three Home, three Stuff, four Money). The Money Elf's own menu, refusals and questions (`packages/money-elf/src/menu.ts`) are tested against that list: every example text in it goes to its own Elf, and the Money Elf answers each of its examples with an action, never its "not sure" reply (`apps/elves/test/routing.test.ts`, 52 cases, plus the Money reply tests in `packages/money-elf/test/smart.test.ts`).
+The Crew Lead's prompt and every Elf's routing description name exactly what each Elf does and does not do, from one list (`CREW_ABILITIES` and `CREW_LIMITS` in `crew.ts`, eleven abilities: three Home, three Stuff, five Money). The Money Elf's own menu, refusals and questions (`packages/money-elf/src/menu.ts`) are tested against that list: every example text in it goes to its own Elf, and the Money Elf answers each of its examples with an action, never its "not sure" reply (`apps/elves/test/routing.test.ts`, 52 cases, plus the Money reply tests in `packages/money-elf/test/smart.test.ts`).
 
 When it isn't sure, it asks, and the options are the real ones:
 
@@ -297,7 +298,7 @@ What needs a dedicated Photon line: the 👍 on each of your texts, threaded rep
 
 ### Money: a sale, end to end
 
-Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (139 tests) against `PostgresMoneyStore`.
+Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (158 tests) against `PostgresMoneyStore`.
 
 The Deal Engine already says what happened as events; `apps/elves/src/money-bridge.ts` turns them into the Money Elf's flow, and the service sends what comes out under the "💸 Money Elf" header:
 
@@ -312,6 +313,16 @@ The Deal Engine already says what happened as events; `apps/elves/src/money-brid
 | Buyer never confirms (24 h past pickup) | The sweep asks the owner about a refund, once | Only on yes |
 
 A sublet's agreed rent is held as "(first month)" and released at the key hand-off. When the owner is the one paying (buying an item, renting a place), the hand-off becomes "Pay them $X? Reply yes." STATUS shows the Money Elf's own Ledger line (read back from Nessie), so it counts only money that actually moved. Tests: `apps/elves/test/money-sales.test.ts` (a full sale, a declined escrow, a walk-away before and after escrow, the no-show sweep, a sublet) and `packages/money-elf/test/pg-store.test.ts`.
+
+### The Smart Plan layer (beyond the ledger)
+
+The twist on Nessie: the ledger is the record of what happened, and on top of it the Money Elf plans what happens next. It is the Move Plans feature (`plans.ts`, `plan-service.ts`, decisions #77 to #81) presented as a first-class layer, in three places:
+
+- **At the start.** When the brief is confirmed the Money Elf texts its own hello right after the Crew Lead's "Locked in": the Moving Ledger is set up in Nessie, nothing moves without your yes, and then the one question it needs: your budget (or, if the brief had one, "You said under $300. Want the plans?"). The hello is `setupNote` in `apps/elves/src/money-bridge.ts`. Texting `plan my move under $400` at any time does the same.
+- **In the chat.** Three plans, A (best odds), B and C, each with its likely final cost and the chance it finishes under budget; `go with B` (or a poll tap where polls work) picks one, and the pick is the only yes needed because no money moves. `what plan am I on` shows the odds now; `drop the plan` cancels its pending Nessie records. The odds come from a seeded simulation over a visible assumptions table, so every likelihood is an estimate and is labelled as one; nothing is learned or hidden.
+- **On the dashboard.** The middle of Overview is the Smart Plan panel (dark, with the lime accent), between "Needs your OK" and the balances: "Beyond the ledger", the headline odds of finishing under budget, a bar per plan with its likely cost and effort, and a button into the Smart Plan tab (second in the control, ahead of Coming back and Activity), which draws the chosen plan's 10 to 90% band with your real net cost over it and lists its pending Nessie records. Before any plan exists the same panel says what the layer does and how to ask for one.
+
+Plans advise; they never edit a listing or move money. Needs the move's items (from Stuff) and move-out date (from the Crew Lead); without them the Money Elf says so instead of guessing.
 
 ### The dashboard: a web page, linked every time
 
@@ -336,6 +347,8 @@ Text the Elves number as usual; anything about money, splits, escrow, deposits o
 | `I paid a $500 sublet deposit, due back Dec 1` / `got the sublet deposit back` | Records the deposit and its return |
 | `pay Sam $40 for gas` | Asks, then pays from the Moving Fund (or your account) on `yes` |
 | `show me the ledger` / `dashboard` / `how's my money` | The Ledger as a photo, plus the dashboard link |
+| `plan my move under $400` | Smart Plan: three plans with likely cost, the odds of finishing under budget and the effort of each, plus a picture |
+| `go with B` / `what plan am I on` / `drop the plan` | Picks a plan (no money moves; it is written to Nessie as pending records), shows its odds now, or cancels it |
 | `yes` / `no` | Answers the most recent question; a poll tap or the dashboard button answers exactly that one |
 | A buyer agrees a price (Stuff) or a sublet applicant does (Home) | "Hold their payment in escrow until pickup?" → `yes` opens escrow; then the pickup, the buyer's `got it`, your `yes` to release, or a refund question if they walk. See the next section |
 | A card or bank number | Refused; never stored or repeated |

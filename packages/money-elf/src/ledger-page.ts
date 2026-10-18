@@ -391,6 +391,28 @@ input:focus-visible+.switch{outline:2px solid var(--ink);outline-offset:2px}
 .sheet .kv{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line);font-size:14px}.sheet .kv span:last-child{text-align:right;font-weight:600;word-break:break-all}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:11;background:var(--ink);color:var(--canvas);font-size:13.5px;font-weight:500;padding:10px 14px;border-radius:10px;max-width:88vw;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
+.smart{margin-top:14px;background:var(--ok-bg);color:var(--ok-ink);border-radius:18px;padding:16px 16px 14px;position:relative;overflow:hidden}
+.smart::before{content:"";position:absolute;right:-60px;top:-60px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--lime) 34%,transparent),transparent 68%);pointer-events:none}
+.smart-top{display:flex;align-items:center;gap:8px;position:relative}
+.smart-k{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.09em;color:var(--ok-muted)}
+.smart-chip{margin-left:auto;font-size:11px;font-weight:600;background:var(--lime);color:var(--lime-ink);border-radius:6px;padding:2px 8px}
+.smart h3{margin:10px 0 2px;font-size:19px;line-height:1.2;font-weight:600;letter-spacing:-.02em;text-wrap:balance;position:relative}
+.smart p{margin:0;font-size:13px;color:var(--ok-muted);position:relative}
+.smart-big{display:flex;align-items:baseline;gap:10px;margin:14px 0 2px;position:relative}
+.smart-big b{font-size:46px;line-height:1;font-weight:600;letter-spacing:-.045em;color:var(--lime)}
+.smart-big span{font-size:13.5px;color:var(--ok-ink)}
+.sp-rows{margin-top:12px;border-top:1px solid var(--ok-line);position:relative}
+.sp-row{display:grid;grid-template-columns:22px 1fr 44px;align-items:center;column-gap:10px;row-gap:3px;padding:10px 0;border-bottom:1px solid var(--ok-line);font-size:13.5px}
+.sp-row .l{width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-weight:600;font-size:12px;background:rgba(255,255,255,.1)}
+.sp-row.chosen .l{background:var(--lime);color:var(--lime-ink)}
+.sp-row .nm{font-weight:500}.sp-row .nm em{font-style:normal;color:var(--ok-muted);font-weight:400;margin-left:6px}
+.sp-row .pc{text-align:right;font-weight:600}
+.sp-row .bar{grid-column:2/4;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}.sp-row .bar i{display:block;height:100%;background:var(--lime);border-radius:2px}
+.sp-row .sub{grid-column:2/4;font-size:12px;color:var(--ok-muted)}
+.sp-steps{margin:12px 0 0;padding:0;list-style:none;position:relative}.sp-steps li{display:flex;gap:10px;font-size:13.5px;padding:6px 0;color:var(--ok-ink)}.sp-steps li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--lime);margin-top:7px}
+.smart-cta{display:flex;width:100%;align-items:center;justify-content:center;gap:6px;margin-top:12px;background:var(--lime);color:var(--lime-ink);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;text-align:center;position:relative}
+.smart-foot{margin-top:10px;font-size:11.5px;color:var(--ok-muted);text-align:center;position:relative}
+.seg button.hot{color:var(--ink);font-weight:600}
 .plan-svg{display:block;width:100%;height:auto;padding:8px 10px 4px}
 .chip{display:inline-block;font-size:11px;font-weight:600;border-radius:6px;padding:1px 7px;background:var(--fill);color:var(--muted);border:1px solid var(--line)}
 .chip.pending{background:var(--wait-soft);color:var(--wait);border-color:transparent}.chip.completed{color:var(--good)}.chip.cancelled{text-decoration:line-through}
@@ -401,14 +423,14 @@ details.how{margin:12px 2px 0}details.how summary{cursor:pointer;color:var(--mut
 <header class="top"><div class="brand">${MARK}<span>Elves <b>Ledger</b></span></div><div class="live"><i></i>Live from Nessie</div></header>
 <div class="seg-wrap"><nav class="seg" aria-label="Sections">
 <button class="on" data-tab="overview">Overview</button>
+<button class="hot" data-tab="plan">Smart Plan</button>
 <button data-tab="back">Coming back</button>
 <button data-tab="activity">Activity</button>
-<button data-tab="plan">Plan</button>
 </nav></div>
 <section class="tab on" id="tab-overview">
 <div class="fold">${hero}</div>
-${planLink(v)}
 ${approvals}
+${smartLayer(v)}
 ${stats}
 ${owes}
 ${heldOut}
@@ -486,14 +508,50 @@ const PLAN_COLORS: PlanColors = {
 };
 const PLAN_FONT = { size: 11, family: "Inter, -apple-system, BlinkMacSystemFont, sans-serif" };
 
-/** One row on Overview that opens the Plan tab. */
-function planLink(v: LedgerView): string {
+const SPARK = svg('<path d="M12 3.5 13.9 9l5.6 1.9-5.6 1.9L12 18.5l-1.9-5.7L4.5 10.9 10.1 9z"/>', 16);
+
+/** How much of the move the owner handles by hand under a plan: movers take the lifting, hauled items add to it. */
+function effortOf(p: { movers: boolean; choices: { action: string }[] }): string {
+  if (p.movers) return "movers do the lifting";
+  const hauled = p.choices.filter((c) => c.action === "haul").length;
+  return hauled >= 3 ? "most hands-on" : hauled >= 1 ? "some lifting" : "light lift";
+}
+
+/**
+ * The middle of Overview, and the page's twist: Nessie is the record of what happened, this layer is what the
+ * Money Elf predicts will happen next. Always shown; before a plan exists it says how to get one.
+ */
+function smartLayer(v: LedgerView): string {
   const ps = v.plans;
-  if (!ps || (!ps.chosen && !ps.drafts.length)) return "";
-  const text = ps.chosen
-    ? `Plan ${ps.chosen.label} · ${netPhrase(ps.chosen.stats.p50Cents)} likely · ${pctOf(ps.chosen.stats.chanceUnderBudget)} under ${fmtUsd(ps.budgetCents)}`
-    : `${ps.drafts.length} plans under ${fmtUsd(ps.budgetCents)} · pick one`;
-  return `<div class="panel" style="margin-top:14px"><button class="next" data-go="plan" style="border-top:0"><span class="k">Plan</span><span class="grow">${esc(text)}</span>${ICON.chevronRight}</button></div>`;
+  const head = (title: string, sub: string) =>
+    `<div class="smart-top">${SPARK}<span class="smart-k">Beyond the ledger</span><span class="smart-chip">Smart Plan</span></div><h3>${esc(title)}</h3><p>${esc(sub)}</p>`;
+  const foot = `<div class="smart-foot">2,000 simulated moves per plan · estimates from the assumptions table, not promises</div>`;
+  if (!ps || (!ps.chosen && !ps.drafts.length)) {
+    return `<section class="smart" aria-label="Smart Plan">${head("Nessie records what happened. This plans what's next.", "Tell the Money Elf your budget and it tests three ways to finish the move.")}
+<ul class="sp-steps"><li>Which things to sell, at what price, and when to drop it</li><li>Truck size, movers or not, donate or haul</li><li>Your odds of finishing under budget, and how much effort each way takes</li></ul>
+<button class="smart-cta" data-go="plan">See how it works ${ICON.chevronRight}</button>${foot}</section>`;
+  }
+  const rows = ps.drafts
+    .map((d) => {
+      const on = ps.chosen?.label === d.label;
+      const pct = Math.round(d.stats.chanceUnderBudget * 100);
+      return `<div class="sp-row${on ? " chosen" : ""}"><span class="l">${d.label}</span><span class="nm">${esc(capFirst(d.name))}<em>${esc(netPhrase(d.stats.p50Cents))} likely</em></span><span class="pc">${pct}%</span><div class="bar"><i style="width:${pct}%"></i></div><span class="sub">${esc(effortOf(d))}${on ? " · your pick" : ""}</span></div>`;
+    })
+    .join("");
+  const p = ps.chosen;
+  const best = [...ps.drafts].sort((a, b) => b.stats.chanceUnderBudget - a.stats.chanceUnderBudget)[0];
+  const lead = p ?? best;
+  const odds = lead ? Math.round(lead.stats.chanceUnderBudget * 100) : 0;
+  const title = p
+    ? `Plan ${p.label} is running your move`
+    : "Three ways to finish the move, with the odds";
+  const sub = p
+    ? `${netPhrase(p.stats.p50Cents)} likely final cost, ${netPhrase(p.stats.p10Cents)} to ${netPhrase(p.stats.p90Cents)} in 9 of 10 moves.`
+    : "Reply A, B or C in Messages to pick one. Picking moves no money.";
+  return `<section class="smart" aria-label="Smart Plan">${head(title, sub)}
+<div class="smart-big"><b>${odds}%</b><span>chance of finishing under ${esc(fmtUsd(ps.budgetCents))}${p ? "" : ` with Plan ${lead?.label ?? ""}`}</span></div>
+<div class="sp-rows">${rows}</div>
+<button class="smart-cta" data-go="plan">${p ? "Open the plan" : "Compare the plans"} ${ICON.chevronRight}</button>${foot}</section>`;
 }
 
 /** The written-out assumptions behind every plan percentage. */

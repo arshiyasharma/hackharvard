@@ -110,6 +110,13 @@ export const CREW_ABILITIES: Ability[] = [
   },
   {
     elf: "money",
+    name: "smart plans",
+    text: 'Money Elf goes beyond the ledger: tell it your budget ("plan my move under $400") and it tests three ways to finish the move (what to sell and at what price, when to drop it, truck or movers, donate or haul), shows the odds of each landing under budget, and writes the one you pick into Nessie as pending records. Picking moves no money.',
+    spoken: "plans the rest of the move for your budget, with the odds of each plan landing under it",
+    examples: ["plan my move under $400", "what plan am I on?", "go with plan B"],
+  },
+  {
+    elf: "money",
     name: "the ledger",
     text: 'Money Elf shows the whole ledger, read live from Nessie, as a photo and a web dashboard link: "show me the ledger", "how much have I spent?", "how much did I make?".',
     spoken: "shows your whole ledger, live from Nessie",
@@ -266,7 +273,7 @@ export function outOfScope(text: string): { cant: string; instead: string; reply
 export const ELF_JOBS: Record<Ability["elf"], string> = {
   home: "finding or subletting a place, storage, your move checklist",
   stuff: "selling, buying or donating an item",
-  money: "splitting costs, deposits, who owes what, sale money in escrow",
+  money: "splitting costs, deposits, who owes what, sale money in escrow, a plan for your budget",
 };
 
 const NUMBER_WORDS = ["", "one", "two", "three"];

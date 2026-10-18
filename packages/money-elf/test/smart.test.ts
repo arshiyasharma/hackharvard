@@ -98,6 +98,7 @@ describe("asked what it does, or what it can't place, it offers the real options
         "Log a deposit",
         "Pay a roommate",
         "See your money",
+        "Plan the rest of the move",
         "escrow",
       ])
         expect(reply(r)).toContain(w);

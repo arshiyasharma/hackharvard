@@ -102,6 +102,26 @@ export function createMoneyBridge(deps: { store: Store; service: MoneyService; n
     });
   }
 
+  /**
+   * The Money Elf's hello, sent right after the brief is confirmed: the Ledger is set up in Nessie, and the one
+   * thing it asks for is the budget, so it can plan the rest of the move (three plans, the odds of each).
+   */
+  function setupNote(move: Move, ev: Ev): BridgeResult {
+    const brief = ev.payload.brief as { money?: { budgetUsd?: number | null } } | undefined;
+    const budget = brief?.money?.budgetUsd;
+    const lines = [
+      "I've set up your Moving Ledger in Nessie. Every dollar of the move goes on it, and nothing moves without your yes.",
+      "Beyond the ledger, I can plan the rest of the move: three ways to finish it (what to sell and for how much, truck or movers, donate or haul), with the odds of each landing under your budget.",
+      budget
+        ? `You said under $${budget}. Want the plans? Text "plan my move under $${budget}", or give me a different budget.`
+        : 'What\'s your budget for the rest of the move? Text "plan my move under $400" with your number and I\'ll run it.',
+    ];
+    return {
+      notes: [{ spaceId: move.ownerSpaceId, text: formatLines(lines), elf: "money" }],
+      events: [{ type: "money.setup", payload: { budgetUsd: budget ?? null } }],
+    };
+  }
+
   async function onEvent(move: Move, ev: Ev): Promise<BridgeResult> {
     const mm = moneyMove(move);
     const dealId = String(ev.payload.dealId ?? "");
@@ -170,6 +190,12 @@ export function createMoneyBridge(deps: { store: Store; service: MoneyService; n
       const out = none();
       let touched = false;
       for (const ev of events) {
+        if (ev.type === "brief.confirmed") {
+          const r = setupNote(move, ev);
+          out.notes.push(...r.notes);
+          out.events.push(...r.events);
+          continue;
+        }
         if (!["ledger.hold", "pickup.scheduled", "ledger.release", "ledger.refund"].includes(ev.type))
           continue;
         touched = true;

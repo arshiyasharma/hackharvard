@@ -17,8 +17,10 @@ export const MONEY_CAPABILITIES: MoneyCapability[] = [
   { name: "Set up a payment plan", example: "let Sam pay the truck at $40 a month" },
   { name: "Log a deposit", example: "I paid a $500 sublet deposit, due back Dec 1" },
   { name: "Pay a roommate", example: "pay Sam $40 for gas" },
+  { name: "Plan the rest of the move (three plans, with odds)", example: "plan my move under $400" },
   { name: "See your money", example: "show me the ledger" },
 ];
+const example = (name: string) => MONEY_CAPABILITIES.find((c) => c.name === name)?.example ?? "";
 
 const INTRO = "I keep every dollar of the move on one Ledger in Nessie, and nothing moves without your yes.";
 const ALSO =
@@ -37,7 +39,7 @@ export function menuLines(): string[] {
 export function otherLines(): string[] {
   return [
     "I'm not sure what you'd like me to do with that.",
-    `I can split a cost ("${MONEY_CAPABILITIES[0]?.example}"), pay a roommate ("${MONEY_CAPABILITIES[3]?.example}"), log a deposit ("${MONEY_CAPABILITIES[2]?.example}"), or show your money ("${MONEY_CAPABILITIES[4]?.example}").`,
+    `I can split a cost ("${example("Split a cost")}"), pay a roommate ("${example("Pay a roommate")}"), log a deposit ("${example("Log a deposit")}"), plan the rest of the move ("${example("Plan the rest of the move")}"), or show your money ("${example("See your money")}").`,
     "Which of those did you mean?",
   ];
 }

@@ -18,10 +18,10 @@ import { openDeal } from "@elves/engine";
 import { MemoryStore } from "@elves/shared";
 
 describe("what the crew can and cannot do", () => {
-  test("three Elves, ten abilities, the same list in the intro, the reply and the prompt", () => {
+  test("three Elves, eleven abilities, the same list in the intro, the reply and the prompt", () => {
     expect([...new Set(CREW_ABILITIES.map((a) => a.elf))]).toEqual(["home", "stuff", "money"]);
-    expect(CREW_ABILITIES.length).toBe(10);
-    expect(CREW_ABILITIES.filter((a) => a.elf === "money").length).toBe(4);
+    expect(CREW_ABILITIES.length).toBe(11);
+    expect(CREW_ABILITIES.filter((a) => a.elf === "money").length).toBe(5);
     for (const a of CREW_ABILITIES) {
       expect(crewIntro()).toContain(abilityLine(a));
       expect(abilitiesReply()).toContain(abilityLine(a));
@@ -46,6 +46,7 @@ describe("what the crew can and cannot do", () => {
       "escrow",
       "ledger",
       "Moving Fund",
+      "odds",
       "after your yes",
     ])
       expect(money.toLowerCase()).toContain(w.toLowerCase());
@@ -56,7 +57,7 @@ describe("what the crew can and cannot do", () => {
     expect(q).toBe(
       [
         "I can take that two ways:",
-        "1. Money Elf: splitting costs, deposits, who owes what, sale money in escrow\n2. Stuff Elf: selling, buying or donating an item",
+        "1. Money Elf: splitting costs, deposits, who owes what, sale money in escrow, a plan for your budget\n2. Stuff Elf: selling, buying or donating an item",
         "❓ Which did you mean? Reply 1 or 2, or say it another way.",
       ].join("\n\n"),
     );

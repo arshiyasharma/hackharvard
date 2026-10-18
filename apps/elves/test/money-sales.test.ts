@@ -84,7 +84,7 @@ function boot(backend: Backend = "memory") {
     sent.filter((s) => s.spaceId === transport.spaceFor(owner)).map((s) => body(s.text));
   const toBuyer = (sent: { spaceId: string; text: string }[]) =>
     sent.filter((s) => s.spaceId === transport.spaceFor(buyer)).map((s) => body(s.text));
-  return { transport, store, rails, money, service, say, toOwner, toBuyer, stop: () => ctrl.abort() };
+  return { transport, store, rails, money, bridge, service, say, toOwner, toBuyer, stop: () => ctrl.abort() };
 }
 
 /** The owner lists a chair at a $28 floor; returns its deal. */
@@ -217,6 +217,33 @@ describe.each(backends)("Home's money: a sublet applicant's first month (%s)", (
     const held = (await t.money.service.store.listEntries(move.id)).find((e) => e.kind === "sale");
     expect(held?.what).toBe(`${deal.title} (first month)`);
     expect(held?.amountCents).toBe(150000);
+    t.stop();
+  });
+});
+
+describe("the Money Elf says hello once the brief is confirmed, and asks for the budget", () => {
+  test("no budget in the brief: it asks for one and offers the plans", async () => {
+    const t = boot("memory");
+    const { move } = await listChair(t);
+    const m = await t.bridge.onEvents(move, [{ type: "brief.confirmed", payload: { brief: { money: { budgetUsd: null } } } }]);
+    expect(m.notes).toHaveLength(1);
+    const note = m.notes[0]!;
+    expect(note.elf).toBe("money");
+    expect(note.text).toContain("I've set up your Moving Ledger in Nessie.");
+    expect(note.text).toContain("three ways to finish it");
+    expect(note.text).toContain("What's your budget for the rest of the move?");
+    expect(note.text).toContain('"plan my move under $400"');
+    expect(m.events.map((e) => e.type)).toContain("money.setup");
+    expect((note.text.match(/\p{Extended_Pictographic}/gu) ?? []).length).toBeLessThanOrEqual(1);
+    t.stop();
+  });
+
+  test("a budget in the brief: it offers the plans at that budget", async () => {
+    const t = boot("memory");
+    const { move } = await listChair(t);
+    const m = await t.bridge.onEvents(move, [{ type: "brief.confirmed", payload: { brief: { money: { budgetUsd: 300 } } } }]);
+    expect(m.notes[0]!.text).toContain('Text "plan my move under $300"');
+    expect(m.notes[0]!.text).not.toContain("What's your budget");
     t.stop();
   });
 });
