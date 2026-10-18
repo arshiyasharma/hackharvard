@@ -193,6 +193,8 @@ const op0 = (): OpResult => ({ lines: [], events: [], outbound: [] });
 
 async function withPlan(r: OpResult, p: PlanOp, extras: Extras, service: MoneyService, ctx: MoneyContext) {
   if (p.poll) extras.poll = p.poll;
+  // Any plan answer to the owner closes with the dashboard link, and a picture (the plans, else the Ledger card).
+  p.events.push({ type: "plan.shown", payload: {} });
   if (p.showPlans) {
     const state = await service.store.getPlans(ctx.move.id);
     if (state) {
@@ -227,7 +229,27 @@ async function handle(
   const extras: Extras = {};
   const spaceOf = await spaces(ctx);
   const reach: Reach = (h) => spaceOf(h) !== undefined;
-  const finishPlain = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links, cards);
+  const finishPlain = async (res: OpResult, ex: Extras) => {
+    if (role === "owner" && links && res.events.some((e) => e.type === "plan.shown")) {
+      if (!ex.images?.length) {
+        try {
+          const view = await buildLedgerView(service, move);
+          ex.images = [
+            {
+              contentType: "image/png",
+              filename: "ledger.png",
+              bytes: await renderLedgerPng(view),
+              alt: `Moving Ledger: ${ledgerSummaryLine(view)}`,
+            },
+          ];
+        } catch (err) {
+          ctx.log.warn("ledger card render failed; sending text", { err: String(err) });
+        }
+      }
+      if (cards) ex.miniApp ??= { url: ledgerUrl(links, move.id) };
+    }
+    return finishTurn(service, ctx, res, ex, spaceOf, links, cards);
+  };
   // Add something to the Ledger and, with no plan picked, the Smart Plan asks which one: three plans follow
   // the reply as their own text, so the owner only has to choose (or give a different budget).
   const finish = async (res: OpResult, ex: Extras) => {
@@ -675,7 +697,7 @@ async function finishTurn(
       ? { url: ledgerUrl(links, ctx.move.id) }
       : undefined);
   // Asked for the dashboard, or the owner's own turn changed the Ledger: the web page link closes the reply.
-  const asked = r.events.some((e) => e.type === "ledger.shown");
+  const asked = r.events.some((e) => e.type === "ledger.shown" || e.type === "plan.shown");
   const link =
     !cards && dashboard && ctx.participant.role === "owner" && (asked || changed) ? dashboard : null;
   return {

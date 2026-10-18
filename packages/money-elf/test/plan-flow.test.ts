@@ -31,12 +31,14 @@ function item(
   };
 }
 
-function setup(opts: { items?: MoneyItem[] | null; moveOutAt?: string | null } = {}) {
+function setup(
+  opts: { items?: MoneyItem[] | null; moveOutAt?: string | null; links?: { publicUrl: string; secret: string } } = {},
+) {
   let offset = 0;
   const clock = () => new Date(NOW.getTime() + offset * 86_400_000);
   const store = new MemoryMoneyStore();
   const rails = new FakeRails();
-  const elf = createMoneyElf({ store, rails, now: clock });
+  const elf = createMoneyElf({ store, rails, now: clock, ...(opts.links ? { links: opts.links } : {}) });
   const items =
     opts.items === undefined
       ? [
@@ -365,5 +367,25 @@ describe("the dashboard lets you choose, switch and change the smart plan", () =
       new Request("https://elves.test/ledger/mv_plan/plan?t=nope", { method: "POST", body: "{}" }),
     );
     expect(bad?.status).toBe(404);
+  });
+});
+
+describe("every plan answer carries the dashboard link and a picture", () => {
+  const links = { publicUrl: "https://elves.test", secret: "s3cret" };
+  test.each(["smart plan", "plan my move under $300", "what's my smart plan"])("%p", async (text) => {
+    const { say } = setup({ links });
+    await say("I paid a $400 sublet deposit, due back Dec 1");
+    const r = await say(text);
+    expect(reply(r)).toContain("Dashboard: https://elves.test/ledger/mv_plan?t=");
+    expect(r.images?.length).toBe(1);
+  });
+
+  test("once a plan is picked the picture is the Ledger card", async () => {
+    const { say } = setup({ links });
+    await say("plan my move under $300");
+    await say("go with A");
+    const r = await say("smart plan");
+    expect(reply(r)).toContain("Dashboard: https://elves.test/ledger/mv_plan?t=");
+    expect(r.images?.[0]?.filename).toBe("ledger.png");
   });
 });
