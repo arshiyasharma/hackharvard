@@ -6,10 +6,13 @@ import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
 import { abilityLine, CREW_ABILITIES } from "@elves/elves";
 import { ScriptTransport } from "@elves/photon";
 import { createLogger, MemoryStore, type Store } from "@elves/shared";
-import { chunkText, createService } from "../src/service.ts";
+import { chunkText, createService, withHeader } from "../src/service.ts";
 
 const quiet = createLogger("test", "error");
 const owner = "+14255269066";
+/** The text under its Elf header. */
+const HEADER = /^(?:🧭 Crew Lead|🏠 Home Elf|📦 Stuff Elf|💸 Money Elf)\n\n/;
+const body = (t: string) => t.replace(HEADER, "");
 
 /** A move-out date whose Boston midnight is inside the next `hours` hours (1–24). */
 function moveOutWithin(hours: number): string {
@@ -78,6 +81,39 @@ const CHAIR = {
   notes: null,
 };
 
+describe("every text leaves under its Elf's header", () => {
+  test("owner replies, buyer replies and the Crew Lead's two-Elf fan-out each name the Elf on line one", async () => {
+    const { transport, service, store, stop } = boot(null);
+    transport.push(owner, "hi");
+    await transport.settled();
+    await service.pipeline.idle();
+    expect(transport.sent[0]!.text).toStartWith("🧭 Crew Lead\n\n");
+    transport.push(owner, "sell my couch and find me a room in allston under 1200");
+    await transport.settled();
+    await service.pipeline.idle();
+    const heads = transport.sent.slice(1).map((s) => s.text.split("\n")[0]);
+    expect(heads).toContain("📦 Stuff Elf");
+    expect(heads).toContain("🏠 Home Elf");
+    // a buyer on a listing hears from the Stuff Elf by name too
+    const move = (await store.listMoves())[0]!;
+    await store.upsertItem({ moveId: move.id, name: "couch", category: "couch", floorPriceCents: 6000 });
+    transport.push(owner, "list it");
+    await transport.settled();
+    await service.pipeline.idle();
+    const deal = (await store.listDeals(move.id))[0]!;
+    const before = transport.sent.length;
+    transport.push("+16175550199", `${deal.code} is the couch available?`);
+    await transport.settled();
+    await service.pipeline.idle();
+    const toBuyer = transport.sent
+      .slice(before)
+      .find((s) => s.spaceId === transport.spaceFor("+16175550199"))!;
+    expect(toBuyer.text).toStartWith("📦 Stuff Elf\n\n");
+    expect(withHeader("home", "🏠 Home Elf\n\nalready")).toBe("🏠 Home Elf\n\nalready");
+    stop();
+  });
+});
+
 describe("chunkText", () => {
   test("splits at blank lines, then lines, then spaces, never over the limit, nothing lost", () => {
     const para = (n: number) => `${"word ".repeat(n)}end`;
@@ -104,8 +140,8 @@ describe("service end to end (script transport)", () => {
     expect(transport.sent.length).toBe(1); // no link in a first message
     expect(transport.sent[0]!.parentMessageId).toBe(m.id);
     expect(transport.sent[0]!.senderId).toBe(m.agentId);
-    expect(transport.sent[0]!.text).toContain("Nov 1");
-    expect(transport.sent[0]!.text).toContain("couch");
+    expect(body(transport.sent[0]!.text)).toContain("Nov 1");
+    expect(body(transport.sent[0]!.text)).toContain("couch");
     const move = (await store.listMoves())[0]!;
     expect(move.ownerHandle).toBe(owner);
     expect(move.moveOutAt).toBe("2026-11-01");
@@ -130,7 +166,7 @@ describe("service end to end (script transport)", () => {
     await transport.settled();
     await service.pipeline.idle();
     // second batch: one Money reply (stub Elves don't send the board link)
-    const haul = transport.sent.filter((s) => s.text.startsWith("💸 Money Elf"));
+    const haul = transport.sent.filter((s) => body(s.text).startsWith("I keep the move's ledger"));
     expect(haul.length).toBe(1);
     expect(transport.sent.length).toBe(2);
     const move = (await store.listMoves())[0]!;
@@ -139,7 +175,7 @@ describe("service end to end (script transport)", () => {
     transport.push(owner, "june 2 to aug 30", { parentMessageId: haul[0]!.id });
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[2]!.text.startsWith("💸 Money Elf")).toBe(true);
+    expect(body(transport.sent[2]!.text).startsWith("I keep the move's ledger")).toBe(true);
     stop();
   });
 
@@ -152,16 +188,16 @@ describe("service end to end (script transport)", () => {
       await service.pipeline.idle();
       return transport.sent
         .slice(before)
-        .map((s) => s.text)
+        .map((s) => body(s.text))
         .join("\n");
     };
     const first = await say("hi");
-    expect(first).toStartWith("👋 Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
+    expect(first).toStartWith("Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
     for (const a of CREW_ABILITIES) expect(first).toContain(abilityLine(a));
     expect(first).toContain("The crew can't book trucks, U-Hauls or movers");
     expect(first).not.toContain("Text me anything");
 
-    expect(await say("what can you do?")).toStartWith("📋 Here's what the crew can do:");
+    expect(await say("what can you do?")).toStartWith("Here's what the crew can do:");
     expect(await say("can you book me a u-haul for saturday")).toContain(
       "The crew can't book trucks, U-Hauls or movers.",
     );
@@ -199,7 +235,7 @@ describe("service end to end (script transport)", () => {
       await service.pipeline.idle();
       return transport.sent
         .slice(before)
-        .map((s) => s.text)
+        .map((s) => body(s.text))
         .join("\n");
     };
     await say("hi, moving out nov 1");
@@ -280,8 +316,8 @@ describe("photo intake and pricing", () => {
     await transport.settled();
     await service.pipeline.idle();
     expect(transport.sent.length).toBe(1);
-    expect(transport.sent[0]!.text).toContain("white plastic armchair");
-    expect(transport.sent[0]!.text).toContain("$25–$40");
+    expect(body(transport.sent[0]!.text)).toContain("white plastic armchair");
+    expect(body(transport.sent[0]!.text)).toContain("$25–$40");
     const move = (await store.listMoves())[0]!;
     const items = await store.listItems(move.id);
     expect(items.length).toBe(1);
@@ -293,8 +329,8 @@ describe("photo intake and pricing", () => {
     await transport.settled();
     await service.pipeline.idle();
     expect(transport.sent.length).toBe(2);
-    expect(transport.sent[1]!.text).toContain("Floor $4");
-    expect(transport.sent[1]!.text).toContain("$35");
+    expect(body(transport.sent[1]!.text)).toContain("Floor $4");
+    expect(body(transport.sent[1]!.text)).toContain("$35");
     const after = await store.listItems(move.id);
     expect(after[0]!.floorPriceCents).toBe(400);
     expect(after[0]!.listPriceCents).toBe(3500);
@@ -307,7 +343,7 @@ describe("photo intake and pricing", () => {
     transport.push(owner, "yes go ahead", { parentMessageId: transport.sent[1]!.id });
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[2]!.text).toContain("Listed");
+    expect(body(transport.sent[2]!.text)).toContain("Listed");
     expect((await store.listItems(move.id))[0]!.listingApproved).toBe(true);
     expect((await store.listEvents(move.id)).map((e) => e.type)).toContain("listing.approved");
 
@@ -315,8 +351,8 @@ describe("photo intake and pricing", () => {
     transport.push(owner, "moving out nov 1");
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[3]!.text).not.toContain("photo");
-    expect(transport.sent[3]!.text).not.toContain("lowest");
+    expect(body(transport.sent[3]!.text)).not.toContain("photo");
+    expect(body(transport.sent[3]!.text)).not.toContain("lowest");
     stop();
   });
 
@@ -329,7 +365,7 @@ describe("photo intake and pricing", () => {
     await transport.settled();
     await service.pipeline.idle();
     expect(transport.sent.length).toBe(2);
-    expect(transport.sent[1]!.text).toContain("couldn't read");
+    expect(body(transport.sent[1]!.text)).toContain("couldn't read");
     stop();
   });
 });
@@ -388,7 +424,7 @@ describe("memory", () => {
     expect(moveB.id).toBe(moveA.id);
     expect(moveB.moveOutAt).toBe("2026-11-01");
     expect((await store.listItems(moveB.id)).map((i) => i.name)).toEqual(["couch"]);
-    expect(b.transport.sent[0]!.text).not.toContain("Here's what we can do");
+    expect(body(b.transport.sent[0]!.text)).not.toContain("Here's what we can do");
     expect(b.transport.sent[0]!.parentMessageId).toBe(m.id);
     const ctx = await b.memory!.context({ threadId: b.transport.spaceFor(owner), moveId: moveB.id });
     expect(ctx.messageCount).toBe(4);
@@ -419,11 +455,11 @@ describe("housing hunt", () => {
     await service.pipeline.idle();
     expect(transport.sent.length).toBe(3);
     const [, ack, picks] = transport.sent;
-    expect(ack!.text).toContain("Checking Craigslist");
+    expect(body(ack!.text)).toContain("Checking Craigslist");
     expect(ack!.parentMessageId).toBe(m.id);
-    expect(picks!.text.startsWith("🔎 Top picks for a room in Allston")).toBe(true);
-    expect(picks!.text).toContain("1. Sunny furnished room");
-    expect(picks!.text).toContain("https://");
+    expect(body(picks!.text).startsWith("🔎 Top picks for a room in Allston")).toBe(true);
+    expect(body(picks!.text)).toContain("1. Sunny furnished room");
+    expect(body(picks!.text)).toContain("https://");
     expect(picks!.senderId).toBe(m.agentId);
     expect(transport.typingEvents[transport.typingEvents.length - 1]?.on).toBe(false);
     expect(await store.getThreadOwner(picks!.id)).toBe("home");
@@ -440,7 +476,7 @@ describe("housing hunt", () => {
     transport.push(owner, "2");
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[3]!.text).toContain("2. Allston Green");
+    expect(body(transport.sent[3]!.text)).toContain("2. Allston Green");
     expect(
       (await store.listEvents(move.id)).find(
         (e) => e.type === "message.routed" && e.payload.via === "followup",
@@ -450,13 +486,13 @@ describe("housing hunt", () => {
     transport.push(owner, "more");
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[4]!.text).toContain("That's everything I found");
+    expect(body(transport.sent[4]!.text)).toContain("That's everything I found");
 
     transport.push(owner, "search again");
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent.at(-2)!.text).toContain("Checking Craigslist");
-    expect(transport.sent.at(-1)!.text.startsWith("🔎 Top picks")).toBe(true);
+    expect(transport.sent.at(-2)!.text.replace(HEADER, "")).toContain("Checking Craigslist");
+    expect(transport.sent.at(-1)!.text.replace(HEADER, "").startsWith("🔎 Top picks")).toBe(true);
 
     const ctx = await memory!.context({
       threadId: transport.spaceFor(owner),
@@ -490,18 +526,18 @@ describe("housing hunt", () => {
     const listerSpace = transport.spaceFor(lister);
     expect(toLister!.spaceId).toBe(listerSpace);
     expect(toLister!.senderId).toBe(transport.dedicatedId);
-    expect(toLister!.text).toStartWith("Hi, I saw your listing for Allston Green");
-    expect(toLister!.text).not.toContain(owner);
+    expect(body(toLister!.text)).toStartWith("Hi, I saw your listing for Allston Green");
+    expect(body(toLister!.text)).not.toContain(owner);
     expect(toOwner!.spaceId).toBe(ownerSpace);
     expect(toOwner!.senderId).toBe(m.agentId);
     expect(toOwner!.parentMessageId).toBe(m.id);
-    expect(toOwner!.text).toStartWith(`Texted them from ${transport.dedicatedHandle}:`);
-    expect(toOwner!.text).toContain("I'll relay what they say");
+    expect(body(toOwner!.text)).toStartWith(`Texted them from ${transport.dedicatedHandle}:`);
+    expect(body(toOwner!.text)).toContain("I'll relay what they say");
 
     const move = (await store.listMoves())[0]!;
     const deal = (await store.listDeals(move.id)).find((d) => d.mode === "find_sublet")!;
     expect(deal.ownerThreadId).toBe(toOwner!.id);
-    expect(toOwner!.text).toContain(`Ref ${deal.code}`);
+    expect(body(toOwner!.text)).toContain(`Ref ${deal.code}`);
     const party = (await store.listDealParties(deal.id))[0]!;
     expect(party).toMatchObject({ spaceId: listerSpace, handle: lister, role: "lister" });
     expect(await store.getParticipantBySpace(listerSpace)).toMatchObject({
@@ -526,11 +562,11 @@ describe("housing hunt", () => {
     const after = transport.sent.slice(n);
     const back = after.find((s) => s.spaceId === listerSpace)!;
     expect(back.senderId).toBe(transport.dedicatedId);
-    expect(back.text).toBe("I can do $1,200/mo.");
+    expect(body(back.text)).toBe("I can do $1,200/mo.");
     const summary = after.find((s) => s.spaceId === ownerSpace)!;
     expect(summary.parentMessageId).toBe(toOwner!.id);
     expect(summary.senderId).toBe(m.agentId);
-    expect(summary.text).toBe(
+    expect(body(summary.text)).toBe(
       "💬 The lister wants $1,250/mo for the Allston Green, shared 4BR, private room; I offered $1,200/mo.",
     );
     expect((await store.getDeal(deal.id))?.state).toBe("negotiating");
@@ -542,11 +578,11 @@ describe("housing hunt", () => {
     await transport.settled();
     await service.pipeline.idle();
     const held = transport.sent.slice(firm);
-    expect(held.find((s) => s.spaceId === listerSpace)?.text).toBe(
+    expect(held.find((s) => s.spaceId === listerSpace)?.text?.replace(HEADER, "")).toBe(
       "Let me check with the person I'm helping and get back to you.",
     );
     const question = held.find((s) => s.spaceId === ownerSpace)!;
-    expect(question.text).toBe(
+    expect(body(question.text)).toBe(
       "❓ The lister wants $1,250/mo for the Allston Green, shared 4BR, private room (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
     );
     const yes = transport.sent.length;
@@ -554,10 +590,10 @@ describe("housing hunt", () => {
     await transport.settled();
     await service.pipeline.idle();
     const agreed = transport.sent.slice(yes);
-    expect(agreed.find((s) => s.spaceId === listerSpace)?.text).toStartWith(
+    expect(agreed.find((s) => s.spaceId === listerSpace)?.text?.replace(HEADER, "")).toStartWith(
       "Good news: $1,250/mo works. When could we see it? We could do 1)",
     );
-    expect(agreed.find((s) => s.spaceId === ownerSpace)?.text).toBe(
+    expect(agreed.find((s) => s.spaceId === ownerSpace)?.text?.replace(HEADER, "")).toBe(
       "✅ Done: $1,250/mo for the Allston Green, shared 4BR, private room. I'm setting up the viewing.",
     );
     expect(
@@ -587,7 +623,7 @@ describe("housing hunt", () => {
     const out = transport.sent.slice(before);
     expect(out).toHaveLength(1);
     expect(out[0]!.spaceId).toBe(transport.spaceFor(owner));
-    expect(out[0]!.text).toContain("You send this; I won't contact them");
+    expect(body(out[0]!.text)).toContain("You send this; I won't contact them");
     expect(transport.opened.size).toBe(0);
     stop();
   });
@@ -603,7 +639,7 @@ describe("housing hunt", () => {
     await transport.settled();
     await service.pipeline.idle();
     expect(service.pipeline.stats.cancelled).toBe(0);
-    const texts = transport.sent.map((s) => s.text);
+    const texts = transport.sent.map((s) => body(s.text));
     expect(texts[2]!.startsWith("🔎 Top picks")).toBe(true);
     expect(texts.length).toBe(4);
     stop();
@@ -648,8 +684,8 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const { deal, listedMsg } = await listChair(t);
     expect(deal).toMatchObject({ mode: "sell_item", state: "listed", askCents: 3500, limitCents: 2800 });
     expect(deal.code).toMatch(/^[A-Z][0-9][A-Z][0-9]$/);
-    expect(listedMsg.text).toContain(deal.code);
-    expect(listedMsg.text).toContain(t.transport.agentHandle);
+    expect(body(listedMsg.text)).toContain(deal.code);
+    expect(body(listedMsg.text)).toContain(t.transport.agentHandle);
     expect(deal.ownerThreadId).toBe(listedMsg.id);
     t.stop();
   });
@@ -665,32 +701,34 @@ describe("Deal Engine: buyers text the listing's number", () => {
     expect((await t.store.listMoves()).length).toBe(1);
     expect((await t.store.getParticipantBySpace(buyerSpace))?.role).toBe("buyer");
     expect(out.map((s) => s.spaceId)).toEqual([buyerSpace]);
-    expect(out[0]!.text).toContain("$35");
+    expect(body(out[0]!.text)).toContain("$35");
 
     out = await say(t, buyerA, "would you take 20?");
     expect(out.map((s) => s.spaceId)).toEqual([buyerSpace]);
-    expect(out[0]!.text).toBe("I can do $30.");
+    expect(body(out[0]!.text)).toBe("I can do $30.");
 
     // Past the floor and final: the buyer hears "checking", the owner gets one threaded question.
     out = await say(t, buyerA, "20 is my final offer");
     const toBuyer = out.filter((s) => s.spaceId === buyerSpace);
     const toOwner = out.filter((s) => s.spaceId === ownerSpace);
-    expect(toBuyer.map((s) => s.text)).toEqual(["Let me check with the owner and get back to you."]);
+    expect(toBuyer.map((s) => body(s.text))).toEqual(["Let me check with the owner and get back to you."]);
     expect(toOwner.length).toBe(1);
-    expect(toOwner[0]!.text).toContain("$20");
-    expect(toOwner[0]!.text).toContain("floor $28");
+    expect(body(toOwner[0]!.text)).toContain("$20");
+    expect(body(toOwner[0]!.text)).toContain("floor $28");
     expect(toOwner[0]!.parentMessageId).toBe(listedMsg.id);
 
     // The owner answers in that thread: the buyer gets the yes and three pickup times.
     out = await say(t, owner, "yes", { parentMessageId: toOwner[0]!.id });
-    expect(out.find((s) => s.spaceId === ownerSpace)?.text).toContain("Done: $20");
+    expect(out.find((s) => s.spaceId === ownerSpace)?.text?.replace(HEADER, "")).toContain("Done: $20");
     const yes = out.find((s) => s.spaceId === buyerSpace)!;
-    expect(yes.text).toStartWith("Good news: the owner said yes.");
-    expect(yes.text).toContain("1)");
+    expect(body(yes.text)).toStartWith("Good news: the owner said yes.");
+    expect(body(yes.text)).toContain("1)");
 
     out = await say(t, buyerA, "1");
-    expect(out.find((s) => s.spaceId === buyerSpace)?.text).toStartWith("Booked:");
-    expect(out.find((s) => s.spaceId === ownerSpace)?.text).toContain("picks up the white plastic armchair");
+    expect(out.find((s) => s.spaceId === buyerSpace)?.text?.replace(HEADER, "")).toStartWith("Booked:");
+    expect(out.find((s) => s.spaceId === ownerSpace)?.text?.replace(HEADER, "")).toContain(
+      "picks up the white plastic armchair",
+    );
     expect((await t.store.getDeal(deal.id))?.state).toBe("scheduled");
     // The buyer's thread memory is the public listing only.
     const ctx = await t.memory!.context({
@@ -706,14 +744,14 @@ describe("Deal Engine: buyers text the listing's number", () => {
     // A second buyer (matched by the item word) is waitlisted while the booking holds.
     out = await say(t, buyerB, "is the armchair still for sale?");
     expect(out[0]!.spaceId).toBe(t.transport.spaceFor(buyerB));
-    expect(out[0]!.text).toContain("I'll text you if it falls through");
+    expect(body(out[0]!.text)).toContain("I'll text you if it falls through");
 
     out = await say(t, buyerA, "picked it up, thanks!");
     const closed = (await t.store.getDeal(deal.id))!;
     expect(closed.state).toBe("handed_off");
     expect(closed.outcome).toBe("sold");
     expect((await t.store.listItems(move.id))[0]!.outcome).toBe("sold");
-    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerB))?.text).toContain(
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerB))?.text?.replace(HEADER, "")).toContain(
       "went to someone else",
     );
     const types = (await t.store.listEvents(move.id)).map((e) => e.type);
@@ -730,7 +768,7 @@ describe("Deal Engine: buyers text the listing's number", () => {
 
     // Nothing the buyer received carries the floor.
     for (const s of t.transport.sent.filter((s) => s.spaceId === buyerSpace))
-      expect(s.text).not.toContain("$28");
+      expect(body(s.text)).not.toContain("$28");
     // The owner's working memory has the deal with its line.
     const own = await t.memory!.context({ threadId: ownerSpace, moveId: move.id, role: "owner" });
     expect(own.workingMemory).toContain(`ref ${deal.code}`);
@@ -763,21 +801,27 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const asked = await say(t, buyerA, `${deal.code} is the chair still available?`);
     const toBuyer = asked.filter((m) => m.spaceId === t.transport.spaceFor(buyerA));
     expect(toBuyer.length).toBe(1);
-    expect(toBuyer[0]!.text).toContain("available");
-    expect(toBuyer[0]!.text).not.toContain("Crew Lead");
+    expect(body(toBuyer[0]!.text)).toContain("available");
+    expect(body(toBuyer[0]!.text)).not.toContain("Crew Lead");
     const parties = await t.store.listDealPartiesBySpace(t.transport.spaceFor(buyerA));
     expect(parties.map((p) => p.dealId)).toEqual([deal.id]);
 
     // the conversation stays on the deal: an offer inside the floor is a deal, and the owner hears it
     const offer = await say(t, buyerA, "$30");
-    expect(offer.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("Deal at $30");
-    expect(offer.find((m) => m.spaceId === t.transport.spaceFor(owner))?.text).toContain("$30");
+    expect(
+      offer.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, ""),
+    ).toContain("Deal at $30");
+    expect(offer.find((m) => m.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
+      "$30",
+    );
 
     // they walk: the chair is relisted, and their next text is about their own move again
     await say(t, buyerA, "never mind");
     expect((await t.store.getDeal(deal.id))?.state).not.toBe("scheduled");
     const back = await say(t, buyerA, "status");
-    expect(back.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text).toStartWith("📋 STATUS");
+    expect(
+      back.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, ""),
+    ).toStartWith("📋 STATUS");
     const them = await t.store.getParticipantBySpace(t.transport.spaceFor(buyerA));
     expect(them?.role).toBe("owner");
     expect(them?.moveId).not.toBe(deal.moveId);
@@ -792,8 +836,12 @@ describe("Deal Engine: buyers text the listing's number", () => {
       buyerA,
       `${deal.code} i'm overseas, my mover will pick it up and i'll send a cashier's check`,
     );
-    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("I'll pass");
-    expect(out.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("Scam Shield");
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "")).toContain(
+      "I'll pass",
+    );
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
+      "Scam Shield",
+    );
     t.stop();
   });
 
@@ -806,8 +854,12 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const before = t.transport.sent.length;
     expect(await t.service.sweep()).toBe(2);
     const sent = t.transport.sent.slice(before);
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("dropped to $21");
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("$21");
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
+      "dropped to $21",
+    );
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "")).toContain(
+      "$21",
+    );
     expect((await t.store.getDeal(deal.id))?.lastCallStage).toBe("dropped");
     expect(await t.service.sweep()).toBe(0);
     t.stop();
@@ -829,8 +881,12 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const before = t.transport.sent.length;
     expect(await t.service.sweep()).toBe(2);
     const sent = t.transport.sent.slice(before);
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text).toContain("Last Call");
-    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("free now");
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(owner))?.text?.replace(HEADER, "")).toContain(
+      "Last Call",
+    );
+    expect(sent.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "")).toContain(
+      "free now",
+    );
     expect((await t.store.getDeal(deal.id))?.state).toBe("relisted");
     expect(await t.service.sweep()).toBe(0);
     t.stop();
@@ -843,14 +899,14 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const move = (await t.store.listMoves())[0]!;
     await t.store.updateMove(move.id, { moveInAt: "2026-06-01", toAddress: "45 Harvard Ave" });
     const list = await say(t, owner, "set up internet at the new place");
-    expect(list[0]?.text).toContain("Internet: order by May 22");
+    expect(body(list[0]?.text ?? "")).toContain("Internet: order by May 22");
     expect((await t.store.listMoveinTasks(move.id)).length).toBe(7);
 
     const before = t.transport.sent.length;
     expect(await t.service.sweep()).toBe(3);
     const sent = t.transport.sent.slice(before);
     expect(sent.every((s) => s.spaceId === t.transport.spaceFor(owner))).toBe(true);
-    expect(sent.map((s) => s.text.split(" is due")[0])).toEqual([
+    expect(sent.map((s) => s.text.replace(HEADER, "").split(" is due")[0])).toEqual([
       "Move-in reminder: Electric",
       "Move-in reminder: Gas",
       "Move-in reminder: Internet",
@@ -884,7 +940,9 @@ describe("Deal Engine: buyers text the listing's number", () => {
       reaction: { emoji: "👍", action: "add" },
       parentMessageId: ask!.id,
     });
-    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("said yes");
+    expect(out.find((s) => s.spaceId === t.transport.spaceFor(buyerA))?.text?.replace(HEADER, "")).toContain(
+      "said yes",
+    );
     t.stop();
   });
 
@@ -892,10 +950,10 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const t = boot(null);
     await listChair(t);
     const asked = await say(t, owner, "buy this https://craigslist.org/desk for $40");
-    expect(asked[0]?.text).toContain("Say yes");
+    expect(body(asked[0]?.text ?? "")).toContain("Say yes");
     expect(await t.store.listDeals((await t.store.listMoves())[0]!.id)).toHaveLength(1);
     const out = await say(t, owner, "yes");
-    expect(out[0]?.text).toContain("Ceiling set at $40");
+    expect(body(out[0]?.text ?? "")).toContain("Ceiling set at $40");
     const deals = await t.store.listDeals((await t.store.listMoves())[0]!.id);
     expect(deals.some((d) => d.mode === "buy_item" && d.limitCents === 4000)).toBe(true);
     t.stop();
@@ -905,7 +963,7 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const t = boot(null);
     const { move, deal } = await listChair(t);
     const asked = await say(t, owner, "donate the armchair");
-    expect(asked[0]?.text).toContain("Say yes");
+    expect(body(asked[0]?.text ?? "")).toContain("Say yes");
     expect((await t.store.getDeal(deal.id))?.state).toBe("listed");
     await say(t, owner, "yes");
     expect((await t.store.getDeal(deal.id))?.state).toBe("donated");
@@ -917,7 +975,7 @@ describe("Deal Engine: buyers text the listing's number", () => {
     const t = boot(null);
     const { move } = await listChair(t);
     const out = await say(t, owner, "I want to sublet my room for $1500");
-    expect(out[0]?.text).toContain("Listed your room");
+    expect(body(out[0]?.text ?? "")).toContain("Listed your room");
     const deals = await t.store.listDeals(move.id);
     expect(deals.some((d) => d.mode === "sublet_out" && d.limitCents === 150000)).toBe(true);
     t.stop();

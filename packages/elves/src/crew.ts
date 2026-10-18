@@ -127,7 +127,7 @@ export function limitsSentence(): string {
 /** The first text the owner ever gets: who we are and exactly what the crew can do. */
 export function crewIntro(): string {
   return [
-    "👋 Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:",
+    "Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:",
     abilitiesText(),
     `🚫 ${limitsSentence()}`,
     STATUS_HINT,
@@ -136,7 +136,7 @@ export function crewIntro(): string {
 
 /** The answer to "what can you do?". */
 export function abilitiesReply(): string {
-  return ["📋 Here's what the crew can do:", abilitiesText(), `🚫 ${limitsSentence()}`, STATUS_HINT].join(
+  return ["Here's what the crew can do:", abilitiesText(), `🚫 ${limitsSentence()}`, STATUS_HINT].join(
     "\n\n",
   );
 }

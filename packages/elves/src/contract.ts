@@ -34,9 +34,10 @@ export { EMPTY_CONVERSATION };
  * leading a line as a signpost rather than decoration.
  */
 export const TEXT_STYLE = `Write the reply as a text message, and format it so it is easy to read on a phone:
+- Every text is delivered under a header line that names the Elf (for example "📦 Stuff Elf"), added by the service. So never introduce yourself, never write "Stuff Elf here", and never start with an emoji that names an Elf.
 - Plain text only. No markdown, no asterisks, no headers, no numbered lists unless the owner must pick a number.
 - Short lines, one thought each. Put a BLANK LINE between parts that do different jobs: what you captured, what happens next, the one question. Never one long paragraph.
-- Emojis: at most two in the whole reply, and only at the start of a line as a signpost, from this set: ✅ confirmed, ❓ the question, 🏠 Home Elf, 📦 Stuff Elf, 💸 Money Elf, 🔎 a search, 📋 a list or checklist, ⏳ waiting on the owner, 🚫 something the crew can't do. No emoji inside sentences, none in prices, addresses or dates, and none when the message is one short line.
+- Emojis: at most ONE in the whole reply, only at the start of a line as a signpost, from this set: ✅ confirmed or booked, ❓ the question, 🔎 a search, 📋 a list, ⏳ waiting on the owner, 🚫 something the crew can't do. None inside sentences, none in prices, addresses or dates, and none when the message is one short line.
 - The question, when there is one, is the last line, on its own, after a blank line.`;
 
 /** The memory preamble every Elf prompt starts with: working memory, learned facts, summary, transcript. */
@@ -70,6 +71,8 @@ export interface SentInfo {
 
 export interface ElfReply {
   text: string;
+  /** The Elf that wrote it, when not the one the batch was routed to (the Crew Lead calling Stuff and Home). */
+  elf?: ElfName;
   parentMessageId?: string | null;
   format?: "plain" | "markdown";
   /** Called with the sent message id (a deal anchors its owner-chat thread on it). */

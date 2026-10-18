@@ -6,6 +6,7 @@ import { createLogger, MemoryStore } from "@elves/shared";
 import { createService } from "../src/service.ts";
 
 const owner = "+14255269066";
+const body = (t: string) => t.replace(/^(?:🧭 Crew Lead|🏠 Home Elf|📦 Stuff Elf|💸 Money Elf)\n\n/, "");
 
 function boot() {
   const transport = new ScriptTransport();
@@ -29,7 +30,7 @@ function boot() {
     await service.pipeline.idle();
     return transport.sent
       .slice(before)
-      .map((s) => s.text)
+      .map((s) => body(s.text))
       .join("\n");
   };
   return { store, say, stop: () => ctrl.abort() };

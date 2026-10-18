@@ -1,4 +1,5 @@
 import {
+  ELF_EMOJI,
   allElves,
   batchText,
   type Elf,
@@ -19,6 +20,7 @@ import type { MoveMemory } from "@elves/memory";
 import { type InboundMessage, PhotonApiError, type Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import {
+  ELF_LABELS,
   type Deal,
   createLogger,
   type ElfName,
@@ -54,6 +56,17 @@ export interface Service {
   /** Text the owner as an Elf outside any inbound batch (a call recap). Once per `key`; false when skipped. */
   notifyOwner: (moveId: string, elf: ElfName, text: string, key: string) => Promise<boolean>;
   stats: () => Record<string, unknown>;
+}
+
+/** "📦 Stuff Elf": the first line of every text the crew sends, so the owner always knows who is talking. */
+export function elfHeader(elf: ElfName): string {
+  return `${ELF_EMOJI[elf]} ${ELF_LABELS[elf]}`;
+}
+
+/** The text under its Elf's header, with a blank line between; a text that already carries it is left alone. */
+export function withHeader(elf: ElfName, text: string): string {
+  const head = elfHeader(elf);
+  return text.startsWith(`${head}\n`) ? text : `${head}\n\n${text}`;
 }
 
 /**
@@ -362,7 +375,7 @@ export function createService(deps: ServiceDeps): Service {
         {
           spaceId,
           senderId,
-          text: note.text,
+          text: withHeader(note.elf ?? elf, note.text.trim()),
           parentMessageId: note.parentMessageId ?? undefined,
           format: note.format ?? "plain",
         },
@@ -633,11 +646,12 @@ export function createService(deps: ServiceDeps): Service {
           log.debug("send already recorded; skipping", { key });
           continue;
         }
-        const text = reply.text.trim();
-        if (!text) {
+        const bare = reply.text.trim();
+        if (!bare) {
           log.error("empty reply; nothing sent", { traceId, key, elf: elf.name });
           continue;
         }
+        const text = withHeader(reply.elf ?? elf.name, bare);
         const outbound = (t: string, k: string) =>
           deps.transport.send(
             {

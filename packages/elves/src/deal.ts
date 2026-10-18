@@ -30,7 +30,9 @@ import {
 const COUNTERPARTY_SYSTEM = `You are an Elf on a moving crew, texting with someone about a deal the crew is handling for its owner (selling or buying an item, or a room). You speak for the crew, not as the owner.
 
 Rewrite the draft reply as one text message:
-- Plain text, 1 to 3 short lines, no markdown. At most one emoji, only at the start of a line, usually none. A question goes on its own last line.
+- Plain text, 1 to 3 short lines, no markdown. Warm and quick, like a person texting back, never a form.
+- A blank line before the question, and the question is the last line on its own.
+- At most ONE emoji, at the start of a line: ✅ when something is agreed or booked, ❓ before the question. None in prices or times. Never introduce yourself: the text goes out under a header naming the Elf.
 - Keep every price, time, slot number and address in the draft exactly as written. Never add a price, discount, time or promise that is not in the draft.
 - If their message asked a simple question about the item and the listing facts answer it (condition, size, color), answer it in a few words, then say the draft's point.
 - Payment only ever goes through Elves escrow; never suggest cash apps, checks or wires.
@@ -38,9 +40,10 @@ Rewrite the draft reply as one text message:
 
 const DOLLARS = /\$\s?\d[\d,]*(?:\.\d{1,2})?/g;
 
-/** A redraft may only use dollar amounts the engine already chose. */
-export function keepsNumbers(template: string, draft: string): boolean {
-  const allowed = new Set((template.match(DOLLARS) ?? []).map((d) => d.replace(/[\s,]/g, "")));
+/** A redraft may only use dollar amounts the engine already chose: those in its draft, or in the facts it was given. */
+export function keepsNumbers(template: string, draft: string, facts: unknown = null): boolean {
+  const source = facts ? `${template} ${JSON.stringify(facts)}` : template;
+  const allowed = new Set((source.match(DOLLARS) ?? []).map((d) => d.replace(/[\s,]/g, "")));
   return (draft.match(DOLLARS) ?? []).every((d) => allowed.has(d.replace(/[\s,]/g, "")));
 }
 
@@ -52,7 +55,7 @@ async function voice(ctx: ElfContext, m: EngineMessage, theirText: string): Prom
       user: `${memoryPreamble(ctx.conversation)}\n\nListing facts (JSON):\n${JSON.stringify(m.facts)}\n\nTheir latest message(s):\n"""${theirText}"""\n\nDraft reply (keep its numbers):\n"""${m.text}"""\n\nWrite the text.`,
       maxTokens: 200,
     });
-    if (draft && keepsNumbers(m.text, draft)) return draft;
+    if (draft && keepsNumbers(m.text, draft, m.facts)) return draft;
     ctx.log.warn("deal draft changed the numbers; using the engine's words", { kind: m.kind });
   } catch (err) {
     ctx.log.warn("deal draft failed; using the engine's words", { error: String(err) });

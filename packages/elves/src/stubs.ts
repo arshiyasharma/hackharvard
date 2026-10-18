@@ -1,4 +1,3 @@
-import { ELF_EMOJI } from "./crew.ts";
 import { ELF_LABELS, type ElfName } from "@elves/shared";
 import type { Elf, ElfContext, ElfResult } from "./contract.ts";
 import { batchText, lastMessageId } from "./contract.ts";
@@ -25,7 +24,7 @@ export function pickSkill(text: string, skills: Skill[]): { skill: Skill; score:
 /** A canned acknowledgement for a skill that has no real implementation yet. */
 export function skillReply(ctx: ElfContext, elf: ElfName, skill: Skill): ElfResult {
   return {
-    replies: [{ text: `${ELF_EMOJI[elf]} ${skill.reply}`, parentMessageId: lastMessageId(ctx.batch) }],
+    replies: [{ text: skill.reply, parentMessageId: lastMessageId(ctx.batch) }],
     boardPatch: {
       status: "working",
       currentTask: skill.task,
@@ -51,7 +50,7 @@ export const BUY_SKILL: Skill = {
   ],
   task: "Evaluating a listing",
   reply:
-    "Stuff Elf here. Forward me the listing link or a screenshot and your max price; I'll check it against comps and draft the offer.",
+    "Forward me the listing link or a screenshot and your max price; I'll check it against comps and draft the offer.",
 };
 
 export const GREEN_SKILL: Skill = {
@@ -75,7 +74,7 @@ export const GREEN_SKILL: Skill = {
   ],
   task: "Planning Last Call",
   reply:
-    "Stuff Elf here. Anything unsold 48 hours before move-out drops in price, then goes free, and I book a donation or 311 pickup so nothing hits the curb.",
+    "Anything unsold 48 hours before move-out drops in price, then goes free, and I book a donation or 311 pickup so nothing hits the curb.",
 };
 
 interface GroupSpec {
@@ -110,7 +109,7 @@ const GROUPS: GroupSpec[] = [
         ],
         task: "Setting up the Moving Fund",
         reply:
-          "Money Elf here. I keep the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move. Nobody pays outside escrow, and I never send or request money for you.",
+          "I keep the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move.\n\nNobody pays outside escrow, and I never send or request money for you.",
       },
     ],
   },

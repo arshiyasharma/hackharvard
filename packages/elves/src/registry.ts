@@ -41,9 +41,9 @@ export async function callElves(ctx: ElfContext, names: ElfName[]): Promise<ElfR
     const elf = REGISTRY.get(name);
     if (!elf) continue;
     const r = await elf.handle(ctx);
-    out.replies.push(...r.replies);
+    out.replies.push(...r.replies.map((x) => ({ ...x, elf: x.elf ?? elf.name })));
     out.events.push(...(r.events ?? []));
-    out.outbound.push(...(r.outbound ?? []));
+    out.outbound.push(...(r.outbound ?? []).map((x) => ({ ...x, elf: x.elf ?? elf.name })));
     Object.assign(out.movePatch, r.movePatch ?? {});
     if (r.boardPatch) await ctx.store.patchBoard(ctx.move.id, elf.name, r.boardPatch);
   }
