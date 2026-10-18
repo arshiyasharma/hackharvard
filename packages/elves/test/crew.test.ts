@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   abilitiesReply,
+  abilityLine,
   CREW_ABILITIES,
   crewIntro,
   crewScopePrompt,
@@ -18,10 +19,15 @@ describe("what the crew can and cannot do", () => {
     expect([...new Set(CREW_ABILITIES.map((a) => a.elf))]).toEqual(["home", "stuff", "money"]);
     expect(CREW_ABILITIES.length).toBe(7);
     for (const a of CREW_ABILITIES) {
-      expect(crewIntro()).toContain(a.text);
-      expect(abilitiesReply()).toContain(a.text);
+      expect(crewIntro()).toContain(abilityLine(a));
+      expect(abilitiesReply()).toContain(abilityLine(a));
       expect(crewScopePrompt()).toContain(a.text);
     }
+    // one emoji heading per Elf, a blank line between Elves, the limits and the STATUS line as their own blocks
+    expect(crewIntro()).toContain("\n\n🏠 Home Elf\n• ");
+    expect(crewIntro()).toContain("\n\n📦 Stuff Elf\n• ");
+    expect(crewIntro()).toContain("\n\n💸 Money Elf\n• ");
+    expect(crewIntro()).toContain("\n\n🚫 The crew can't");
     expect(crewIntro()).not.toMatch(/move-day/i);
     expect(crewScopePrompt()).toContain("What the crew cannot do: book trucks, U-Hauls or movers");
   });
@@ -38,7 +44,7 @@ describe("what the crew can and cannot do", () => {
 
   test("out-of-scope asks name what the crew can't do and the closest thing it can", () => {
     expect(outOfScope("can you book me a u-haul")?.reply).toBe(
-      'The crew can\'t book trucks, U-Hauls or movers. Home Elf can find storage for the gap, and text "status" for your move checklist.',
+      '🚫 The crew can\'t book trucks, U-Hauls or movers.\n\nHome Elf can find storage for the gap, and text "status" for your move checklist.',
     );
     expect(outOfScope("hire movers for saturday")?.cant).toContain("movers");
     expect(outOfScope("can you read my lease")?.cant).toBe(

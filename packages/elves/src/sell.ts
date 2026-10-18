@@ -107,10 +107,16 @@ export const stuffElf: Elf = {
     const confirmed = await confirmPending(ctx, text);
     if (confirmed) return confirmed;
     if (!hasPhotos(ctx.batch) && REPORT_ASK.test(text)) {
-      const report = moveReport(await ctx.store.listItems(ctx.move.id), await ctx.store.listDeals(ctx.move.id));
+      const report = moveReport(
+        await ctx.store.listItems(ctx.move.id),
+        await ctx.store.listDeals(ctx.move.id),
+      );
       return replyTo(ctx, reportText(report), {
         events: [
-          { type: "report.sent", payload: { lbDiverted: report.lbDiverted, kgCo2eAvoided: report.kgCo2eAvoided } },
+          {
+            type: "report.sent",
+            payload: { lbDiverted: report.lbDiverted, kgCo2eAvoided: report.kgCo2eAvoided },
+          },
         ],
         boardPatch: {
           status: "working",
@@ -125,7 +131,10 @@ export const stuffElf: Elf = {
         const buy = await startBuy(ctx, text);
         if (buy) return buy;
       }
-      if (skill === GREEN_SKILL && /\b(donat(?:e|ion|ing)?|trash|dump|311|give away|goodwill|curb)\b/i.test(text)) {
+      if (
+        skill === GREEN_SKILL &&
+        /\b(donat(?:e|ion|ing)?|trash|dump|311|give away|goodwill|curb)\b/i.test(text)
+      ) {
         const donated = await askDonate(ctx, text);
         if (donated) return donated;
       }
@@ -261,7 +270,9 @@ export const stuffElf: Elf = {
   },
 };
 
-type Pending = { kind: "donate"; itemId: string; name: string } | { kind: "buy"; url: string; maxCents: number | null };
+type Pending =
+  | { kind: "donate"; itemId: string; name: string }
+  | { kind: "buy"; url: string; maxCents: number | null };
 
 async function readPending(ctx: ElfContext): Promise<Pending | null> {
   const events = await ctx.store.listEvents(ctx.move.id);
@@ -310,17 +321,17 @@ async function confirmPending(ctx: ElfContext, text: string): Promise<ElfResult 
           outcome: "donated",
         });
     }
-    return replyTo(
-      ctx,
-      `Booking a donation pickup for the ${pending.name}. It won't go on the truck.`,
-      {
-        events: [
-          { type: "donate.booked", payload: { itemId: pending.itemId, name: pending.name } },
-          { type: "pickup.requested", payload: { itemId: pending.itemId, kinds: ["donation"] } },
-        ],
-        boardPatch: { status: "working", currentTask: `Donating ${pending.name}`, lastUpdate: "Donation booked" },
+    return replyTo(ctx, `Booking a donation pickup for the ${pending.name}. It won't go on the truck.`, {
+      events: [
+        { type: "donate.booked", payload: { itemId: pending.itemId, name: pending.name } },
+        { type: "pickup.requested", payload: { itemId: pending.itemId, kinds: ["donation"] } },
+      ],
+      boardPatch: {
+        status: "working",
+        currentTask: `Donating ${pending.name}`,
+        lastUpdate: "Donation booked",
       },
-    );
+    });
   }
   if (!pending.url || pending.maxCents == null) return null;
   const deal = await openDeal(ctx.store, {
@@ -355,7 +366,10 @@ async function startBuy(ctx: ElfContext, text: string): Promise<ElfResult | null
   const url = extractListingUrls(text)[0] ?? (pending?.kind === "buy" ? pending.url : "");
   const max = parsePriceCents(text) ?? (pending?.kind === "buy" ? pending.maxCents : null);
   if (!url)
-    return replyTo(ctx, "Forward the listing link and the most you'll pay. I won't send an offer until you say yes.");
+    return replyTo(
+      ctx,
+      "Forward the listing link and the most you'll pay. I won't send an offer until you say yes.",
+    );
   if (max == null)
     return replyTo(ctx, `What's the most you'll pay for ${url}?`, {
       events: [{ type: "buy.pending", payload: { url, maxCents: null } }],
@@ -378,10 +392,18 @@ async function askDonate(ctx: ElfContext, text: string): Promise<ElfResult | nul
         ? `Which one should I donate: ${items.map((i) => i.name).join(", ")}?`
         : "Which item should I donate? A name is enough, and I'll book the pickup once you say yes.",
     );
-  return replyTo(ctx, `Say yes and I'll book a donation pickup for the ${target.name}. Nothing goes out until you do.`, {
-    events: [{ type: "donate.pending", payload: { itemId: target.id, name: target.name } }],
-    boardPatch: { status: "waiting", currentTask: `Donate ${target.name}?`, lastUpdate: "Waiting on a yes" },
-  });
+  return replyTo(
+    ctx,
+    `Say yes and I'll book a donation pickup for the ${target.name}. Nothing goes out until you do.`,
+    {
+      events: [{ type: "donate.pending", payload: { itemId: target.id, name: target.name } }],
+      boardPatch: {
+        status: "waiting",
+        currentTask: `Donate ${target.name}?`,
+        lastUpdate: "Waiting on a yes",
+      },
+    },
+  );
 }
 
 function hostOf(url: string): string {

@@ -1,5 +1,5 @@
 import type { Move, MoveinTask, MoveinTaskKey, MoveinTaskStatus, Store } from "@elves/shared";
-import { type ElfContext, type ElfResult, memoryPreamble } from "./contract.ts";
+import { type ElfContext, type ElfResult, memoryPreamble, TEXT_STYLE } from "./contract.ts";
 import { formatDate, parseDate, parseDateRange } from "./facts.ts";
 import { extractHousingHeuristic } from "./home-facts.ts";
 import { isSubletOutIntent } from "./home-sublet.ts";
@@ -191,36 +191,33 @@ const FOLLOWUP_HINT =
 
 /** Stuff → Home: the buyer pickups Stuff booked, as one checklist line, or "" when there are none. */
 function pickupsLine(pickups: string[]): string {
-  return pickups.length ? `Pickups booked (Stuff Elf): ${pickups.join(", ")}.` : "";
+  return pickups.length ? `🚚 Pickups booked (Stuff Elf): ${pickups.join(", ")}.` : "";
 }
 
 /** The whole checklist as the owner sees it, with Stuff's booked pickups when there are any. */
 export function formatChecklist(tasks: MoveinTask[], move: Move, pickups: string[] = []): string {
-  const head = `Move-in checklist for ${move.toAddress ?? "the new place"} (move-in ${move.moveInAt ? formatDate(move.moveInAt) : "TBD"}):`;
+  const head = `📋 Move-in checklist for ${move.toAddress ?? "the new place"} (move-in ${move.moveInAt ? formatDate(move.moveInAt) : "TBD"}):`;
   const gap = tasks.some((t) => t.key === "luggage_gap" && t.status === "open");
-  return [
-    head,
-    ...tasks.map((t) => taskLine(t, move)),
-    pickupsLine(pickups),
-    gap ? HOTEL_HINT : "",
-    FOLLOWUP_HINT,
-  ]
+  const body = tasks.map((t) => `• ${taskLine(t, move)}`).join("\n");
+  return [head, body, pickupsLine(pickups), gap ? HOTEL_HINT : "", `💬 ${FOLLOWUP_HINT}`]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 }
 
 /** Only what is still open, for "what's left", plus Stuff's booked pickups. */
 export function formatRemaining(tasks: MoveinTask[], move: Move, pickups: string[] = []): string {
   const open = tasks.filter((t) => t.status === "open");
   if (!open.length)
-    return ["Nothing left on the move-in list. You're set.", pickupsLine(pickups)].filter(Boolean).join("\n");
+    return ["✅ Nothing left on the move-in list. You're set.", pickupsLine(pickups)]
+      .filter(Boolean)
+      .join("\n\n");
   return [
-    `Still open for ${move.toAddress ?? "the new place"}:`,
-    ...open.map((t) => taskLine(t, move)),
+    `📋 Still open for ${move.toAddress ?? "the new place"}:`,
+    open.map((t) => `• ${taskLine(t, move)}`).join("\n"),
     pickupsLine(pickups),
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 }
 
 /** The cursor that remembers which move-in fact the Elf just asked for ("date" or "address"), so the answer routes back. */
@@ -231,8 +228,8 @@ type MoveinAsk = "date" | "address";
 
 const ASK_SYSTEM = `You are the Home Elf of Elves, a moving crew the owner texts. You are building their move-in week checklist (utilities, internet, renters insurance, address change, keys, condition report).
 
-Write the reply as a text message:
-- Plain text, at most 2 short lines, no markdown, no bullet symbols, no emoji.
+${TEXT_STYLE}
+- At most 3 short lines in all.
 - If facts.captured is set, line 1 confirms it in the owner's words.
 - The last line asks for exactly ONE thing, the one in facts.ask: date = what day they move in; address = the new address.
 - Never promise to order or set anything up yourself.`;

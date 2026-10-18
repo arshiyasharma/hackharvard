@@ -30,7 +30,7 @@ import {
 const COUNTERPARTY_SYSTEM = `You are an Elf on a moving crew, texting with someone about a deal the crew is handling for its owner (selling or buying an item, or a room). You speak for the crew, not as the owner.
 
 Rewrite the draft reply as one text message:
-- Plain text, 1 to 2 short lines, no markdown, no emoji.
+- Plain text, 1 to 3 short lines, no markdown. At most one emoji, only at the start of a line, usually none. A question goes on its own last line.
 - Keep every price, time, slot number and address in the draft exactly as written. Never add a price, discount, time or promise that is not in the draft.
 - If their message asked a simple question about the item and the listing facts answer it (condition, size, color), answer it in a few words, then say the draft's point.
 - Payment only ever goes through Elves escrow; never suggest cash apps, checks or wires.
@@ -58,6 +58,28 @@ async function voice(ctx: ElfContext, m: EngineMessage, theirText: string): Prom
     ctx.log.warn("deal draft failed; using the engine's words", { error: String(err) });
   }
   return m.text;
+}
+
+/** Owner-facing engine lines get one signpost emoji by kind, so the owner's chat reads like the rest of the crew's texts. */
+const OWNER_LEAD: Record<string, string> = {
+  ask: "❓",
+  booked: "✅",
+  owner_yes: "✅",
+  agreed: "🤝",
+  counter: "💬",
+  owner_counter: "💬",
+  owner_no: "💬",
+  scam: "🚨",
+  walked: "↩️",
+  handed_off: "🎉",
+  reschedule: "🔁",
+  slot_declined: "🔁",
+  slot_taken: "🔁",
+  join: "👋",
+};
+function ownerText(m: EngineMessage): string {
+  const lead = OWNER_LEAD[m.kind];
+  return lead && !/^\p{Extended_Pictographic}/u.test(m.text) ? `${lead} ${m.text}` : m.text;
 }
 
 /** Turn the engine's messages into replies (this space) and outbound texts (other spaces). */
@@ -97,10 +119,15 @@ async function deliver(ctx: ElfContext, r: TurnResult, here: { partyId: string |
         if (p) outbound.push({ spaceId: p.spaceId, text: m.text, parentMessageId: null });
       }
     } else if (inOwnerChat) {
-      replies.push({ text: m.text, parentMessageId: lastMessageId(ctx.batch), onSent });
+      replies.push({ text: ownerText(m), parentMessageId: lastMessageId(ctx.batch), onSent });
     } else {
       const deal = m.dealId === r.deal.id ? r.deal : await ctx.store.getDeal(m.dealId);
-      outbound.push({ spaceId: ctx.move.ownerSpaceId, text: m.text, parentMessageId: deal?.ownerThreadId ?? null, onSent });
+      outbound.push({
+        spaceId: ctx.move.ownerSpaceId,
+        text: ownerText(m),
+        parentMessageId: deal?.ownerThreadId ?? null,
+        onSent,
+      });
     }
   }
 

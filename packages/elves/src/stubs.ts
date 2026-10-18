@@ -1,3 +1,4 @@
+import { ELF_EMOJI } from "./crew.ts";
 import { ELF_LABELS, type ElfName } from "@elves/shared";
 import type { Elf, ElfContext, ElfResult } from "./contract.ts";
 import { batchText, lastMessageId } from "./contract.ts";
@@ -24,7 +25,7 @@ export function pickSkill(text: string, skills: Skill[]): { skill: Skill; score:
 /** A canned acknowledgement for a skill that has no real implementation yet. */
 export function skillReply(ctx: ElfContext, elf: ElfName, skill: Skill): ElfResult {
   return {
-    replies: [{ text: skill.reply, parentMessageId: lastMessageId(ctx.batch) }],
+    replies: [{ text: `${ELF_EMOJI[elf]} ${skill.reply}`, parentMessageId: lastMessageId(ctx.batch) }],
     boardPatch: {
       status: "working",
       currentTask: skill.task,

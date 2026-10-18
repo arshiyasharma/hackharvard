@@ -1,5 +1,19 @@
 import type { ElfName } from "@elves/shared";
 
+/** One signpost per Elf, used wherever an Elf is named at the start of a line. */
+export const ELF_EMOJI: Record<ElfName, string> = { crew_lead: "🧭", home: "🏠", stuff: "📦", money: "💸" };
+const ELF_LABEL: Record<Ability["elf"], string> = {
+  home: "Home Elf",
+  stuff: "Stuff Elf",
+  money: "Money Elf",
+};
+
+/** One ability as a bullet under its Elf's heading: the "Home Elf " lead is the heading's job. */
+export function abilityLine(a: Ability): string {
+  const body = a.text.replace(/^(?:Home|Stuff|Money) Elf /, "");
+  return `• ${body.charAt(0).toUpperCase()}${body.slice(1)}`;
+}
+
 /** The one line every reminder uses, so the owner learns the word once. Also exported from status.ts. */
 export const STATUS_HINT = "Text STATUS anytime to see where everything stands.";
 
@@ -93,9 +107,16 @@ export function spokenAbilities(): string {
     .join(" ");
 }
 
-/** The ability lines as one plain-text block, one line each. */
+/** The abilities grouped under an emoji heading per Elf, a blank line between Elves. */
 export function abilitiesText(): string {
-  return CREW_ABILITIES.map((a) => a.text).join("\n");
+  return (["home", "stuff", "money"] as const)
+    .map((elf) =>
+      [
+        `${ELF_EMOJI[elf]} ${ELF_LABEL[elf]}`,
+        ...CREW_ABILITIES.filter((a) => a.elf === elf).map(abilityLine),
+      ].join("\n"),
+    )
+    .join("\n\n");
 }
 
 /** The limits as one sentence. */
@@ -106,16 +127,18 @@ export function limitsSentence(): string {
 /** The first text the owner ever gets: who we are and exactly what the crew can do. */
 export function crewIntro(): string {
   return [
-    "Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:",
+    "👋 Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:",
     abilitiesText(),
-    limitsSentence(),
+    `🚫 ${limitsSentence()}`,
     STATUS_HINT,
-  ].join("\n");
+  ].join("\n\n");
 }
 
 /** The answer to "what can you do?". */
 export function abilitiesReply(): string {
-  return ["Here's what the crew can do:", abilitiesText(), limitsSentence(), STATUS_HINT].join("\n");
+  return ["📋 Here's what the crew can do:", abilitiesText(), `🚫 ${limitsSentence()}`, STATUS_HINT].join(
+    "\n\n",
+  );
 }
 
 /** The ability list and the limits, as a prompt block every Crew Lead prompt shares. */
@@ -194,6 +217,6 @@ const OUT_OF_SCOPE: OutOfScopeRule[] = [
 
 /** A request the crew can't do, with the reply that says so and names the closest thing it can do. */
 export function outOfScope(text: string): { cant: string; instead: string; reply: string } | null {
-  for (const r of OUT_OF_SCOPE) if (r.re.test(text)) return { ...r, reply: `${r.cant} ${r.instead}` };
+  for (const r of OUT_OF_SCOPE) if (r.re.test(text)) return { ...r, reply: `🚫 ${r.cant}\n\n${r.instead}` };
   return null;
 }

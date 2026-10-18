@@ -191,20 +191,21 @@ export function formatPicks(
     intro?: string;
   },
 ): string {
+  // One block per pick, a blank line between blocks, one signpost on the heading.
   const lines: string[] = [];
   if (picks.length) {
-    lines.push(opts.intro ?? `Top picks for ${describeAsk(s)}:`);
+    lines.push(`🔎 ${opts.intro ?? `Top picks for ${describeAsk(s)}:`}`);
     for (const l of picks) lines.push(pickLine(l));
   }
   if (opts.hotel) {
     const gap = opts.hotel.availableFrom ? ` for ${formatDate(opts.hotel.availableFrom)}` : "";
     lines.push(
-      `For the gap between places${gap}: ${opts.hotel.title} · ${fmtPrice(opts.hotel.priceCents, "night")}\n${opts.hotel.url}`,
+      `🏨 For the gap between places${gap}: ${opts.hotel.title} · ${fmtPrice(opts.hotel.priceCents, "night")}\n${opts.hotel.url}`,
     );
   }
   if (opts.storage) {
     lines.push(
-      `Storage: ${opts.storage.title} · ${fmtPrice(opts.storage.priceCents, "month")}\n${opts.storage.url}`,
+      `📦 Storage: ${opts.storage.title} · ${fmtPrice(opts.storage.priceCents, "month")}\n${opts.storage.url}`,
     );
   }
   const tail: string[] = [];
@@ -218,11 +219,13 @@ export function formatPicks(
     );
   }
   if (tail.length) lines.push(tail.join(" "));
-  return lines.join("\n");
+  return lines.join("\n\n");
 }
 
 export function formatDetail(l: Listing): string {
-  const lines = [`${l.rank != null ? `${l.rank}. ` : ""}${l.title} · ${fmtPrice(l.priceCents, l.priceUnit)}`];
+  const lines = [
+    `🏠 ${l.rank != null ? `${l.rank}. ` : ""}${l.title} · ${fmtPrice(l.priceCents, l.priceUnit)}`,
+  ];
   const facts: string[] = [];
   if (l.location) facts.push(l.location);
   if (l.bedrooms != null) facts.push(l.bedrooms === 0 ? "studio" : `${l.bedrooms} bed`);
@@ -231,9 +234,10 @@ export function formatDetail(l: Listing): string {
   if (facts.length) lines.push(facts.join(" · "));
   if (l.snippet) lines.push(l.snippet.length > 200 ? `${l.snippet.slice(0, 197)}...` : l.snippet);
   if (l.scamFlags.length)
-    lines.push(`Heads up: ${l.scamFlags.map((f) => SCAM_FLAG_LABELS[f as ScamFlag] ?? f).join("; ")}.`);
+    lines.push(`⚠️ Heads up: ${l.scamFlags.map((f) => SCAM_FLAG_LABELS[f as ScamFlag] ?? f).join("; ")}.`);
   if (l.contact.phone) lines.push(`Phone on the listing: ${l.contact.phone}`);
   lines.push(l.url);
+  lines.push("");
   lines.push(
     `Say "save ${l.rank ?? ""}" to shortlist it or "skip ${l.rank ?? ""}" to drop it.`.replace(/\s+"/g, ' "'),
   );

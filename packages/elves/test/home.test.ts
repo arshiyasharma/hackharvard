@@ -92,7 +92,7 @@ describe("Home Elf: hunt", () => {
 
     const done = await r3.later!();
     const t = text(done);
-    expect(t.startsWith("Top picks for a room in Allston under $1,200 (Jun 1 – Aug 30):")).toBe(true);
+    expect(t.startsWith("🔎 Top picks for a room in Allston under $1,200 (Jun 1 – Aug 30):\n\n")).toBe(true);
     expect(t).toContain("1. Sunny furnished room near Packard's Corner · $1,100/mo · Allston");
     expect(t).toContain("https://boston.craigslist.org/");
     expect(t).toContain("2. Allston Green");

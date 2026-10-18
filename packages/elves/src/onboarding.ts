@@ -11,9 +11,16 @@ import {
   parseOnboardingState,
 } from "@elves/shared";
 import { z } from "zod";
-import { batchText, type ElfContext, type ElfResult, lastMessageId, memoryPreamble } from "./contract.ts";
+import {
+  batchText,
+  type ElfContext,
+  type ElfResult,
+  lastMessageId,
+  memoryPreamble,
+  TEXT_STYLE,
+} from "./contract.ts";
 import { DEFAULT_WEIGHT_LB, formatDate } from "./facts.ts";
-import { crewIntro, crewScopePrompt, STATUS_HINT } from "./crew.ts";
+import { crewIntro, crewScopePrompt, ELF_EMOJI, STATUS_HINT } from "./crew.ts";
 import { describeItem, identifyFromPhotos } from "./intake.ts";
 
 /**
@@ -54,7 +61,7 @@ Rules for the brief:
 - Keep the owner's phrasing in notes, worries, priorities and asksVerbatim.
 
 Rules for the reply (a text message):
-- Plain text. No markdown, no bullet symbols, no numbered lists, no headers. At most one emoji, usually none.
+${TEXT_STYLE}
 - Sound like a sharp, warm coordinator who listens, not a form. Short lines, one thought each.
 - Never ask for anything already in the brief, the working memory or the conversation.
 - Never describe what the crew will do, offer options, give advice or estimate prices.
@@ -522,15 +529,17 @@ export async function dispatchBrief(
   state.confirmedAt = ctx.now().toISOString();
   await saveOnboarding(ctx, state);
 
-  const lines = ["Locked in. Here's who's on what:"];
-  for (const d of dispatches) lines.push(`${ELF_LABELS[d.elf]}: ${d.task}.`);
+  const lines = ["✅ Locked in. Here's who's on what:", ""];
+  for (const d of dispatches) lines.push(`${ELF_EMOJI[d.elf]} ${ELF_LABELS[d.elf]}: ${d.task}.`);
   if (!dispatches.length)
     lines.push("Nothing for the crew to start on yet; text me when something comes up.");
+  lines.push("");
   const moveOut = movePatch.moveOutAt ?? ctx.move.moveOutAt;
   lines.push(
     dispatches.some((d) => d.elf === "stuff")
       ? "Photos of anything you're selling, and the lowest you'd take, whenever you're ready."
       : "Text me anything that changes.",
+    "",
     STATUS_HINT,
   );
   const replies: ElfResult["replies"] = [{ text: lines.join("\n"), parentMessageId: parent }];

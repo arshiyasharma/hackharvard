@@ -117,6 +117,66 @@ Four carriers, all plain data: the **Move row** (one Elf writes `movePatch`, eve
 
 Stuff ↔ Home today: Stuff's booked pickups appear on Home's checklist, on `what's left` and in `status`; Stuff's outcomes feed the Move Report line in `status`; the move-in date and address Home captures reach Stuff and the Crew Lead through the move row the next turn. Home → Money and Stuff → Money are events only, since Money is still a stub.
 
+### How every text is formatted
+
+Every text the crew sends follows one style, `TEXT_STYLE` in [`packages/elves/src/contract.ts`](packages/elves/src/contract.ts), pasted into every drafting prompt (Crew Lead, onboarding, Home hunt and move-in, the Deal Engine's buyer-facing redraft) and applied by hand to every template: short lines, a blank line between the parts that do different jobs (what was captured, what happens next, the one question on its own last line), and at most two emojis, each at the start of a line as a signpost, never inside a sentence. The signposts: 👋 the intro, 🏠 📦 💸 an Elf by name, 🔎 the hunt's picks, 🏠 a listing's detail, ⚠️ a scam flag, 📋 a list or checklist, 🚚 pickups Stuff booked, 💬 a hint or a counter, ❓ a question for you, ✅ confirmed or booked, 🤝 agreed, 🎉 handed off, 🚨 Scam Shield, ↩️ a buyer walked, 🔁 a new time, ⏳ waiting on you, 🚫 something the crew can't do. Owner-facing Deal Engine lines get theirs by message kind in `deal.ts` (`OWNER_LEAD`); buyers and listers get plain text with at most one.
+
+The first text, for example:
+
+```
+👋 Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:
+
+🏠 Home Elf
+• Finds you a place to move into, a hotel for the gap, or storage (Craigslist, Airbnb, Booking.com, SpareFoot), flags scams and texts you the top 3.
+• Sublets your place: asks the rent, dates, area and room photos, writes the post for you to put up, and handles applicants. No viewing gets booked without your yes.
+• Keeps your move checklist (utilities, internet, renters insurance, address change, keys). Text "status" anytime for where everything stands.
+
+📦 Stuff Elf
+• Prices an item from a photo and writes the listing line; you post it yourself on Facebook Marketplace or wherever you like.
+• Negotiates with buyers who text this number, never under your lowest price, and checks with you on low offers.
+• Runs Last Call: 48 hours before move-out unsold things drop in price, at 24 hours they go free, then it asks you about donating.
+
+💸 Money Elf
+• Keeps the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move.
+
+🚫 The crew can't book trucks, U-Hauls or movers, plan the route or run move day, post listings on Facebook, Craigslist or anywhere else for you, read leases or contact your landlord, pay, send or request money for you or give legal or financial advice.
+
+Text STATUS anytime to see where everything stands.
+```
+
+The hunt's picks:
+
+```
+🔎 Top picks for a room in Allston under $1,200 (Jun 1 – Aug 30):
+
+1. Room in 3BR near Packard's Corner · $1,150/mo · Allston
+https://boston.craigslist.org/…
+Under budget, your dates, near the T.
+
+2. Furnished room, Comm Ave · $1,200/mo · Allston
+https://boston.craigslist.org/…
+At budget, furnished.
+
+3. Sunny room off Harvard Ave · $1,100/mo · Allston
+https://boston.craigslist.org/…
+Cheapest, no laundry.
+
+Skipped 1 that looks like a scam. Say "more" for the next 3, or "tell me about 1".
+```
+
+The move-in checklist:
+
+```
+📋 Move-in checklist for 12 Elm St (move-in Nov 3):
+
+• Internet: done
+• Keys: pick up on Nov 3
+
+🚚 Pickups booked (Stuff Elf): couch Sat 10am.
+
+💬 Say "done with internet", "skip insurance" or "what's left" as you go; I'll nudge you as each one comes due.
+```
+
 ### STATUS
 
 Text **STATUS** (or `status`, `where are we`, `how's it going`) at any time. The Home Elf answers from the store, nothing invented, as one block per Elf with a blank line between them and only the blocks that have something to say:

@@ -296,7 +296,7 @@ export async function handleSubletOut(
 
   const events: NonNullable<ElfResult["events"]> = [];
   const reply = (lines: string[], extra: Partial<ElfResult> = {}): ElfResult => ({
-    replies: [{ text: lines.filter(Boolean).join("\n"), parentMessageId: parent }],
+    replies: [{ text: lines.filter(Boolean).join("\n\n"), parentMessageId: parent }],
     events,
     ...extra,
   });

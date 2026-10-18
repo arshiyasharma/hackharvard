@@ -3,7 +3,7 @@ import { moveOutInstant, openDeal } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
 import { InMemoryBackend, type MemoryBackend, MoveMemory } from "@elves/memory";
-import { CREW_ABILITIES } from "@elves/elves";
+import { abilityLine, CREW_ABILITIES } from "@elves/elves";
 import { ScriptTransport } from "@elves/photon";
 import { createLogger, MemoryStore, type Store } from "@elves/shared";
 import { createService } from "../src/service.ts";
@@ -117,7 +117,7 @@ describe("service end to end (script transport)", () => {
     await transport.settled();
     await service.pipeline.idle();
     // second batch: one Money reply (stub Elves don't send the board link)
-    const haul = transport.sent.filter((s) => s.text.startsWith("Money Elf"));
+    const haul = transport.sent.filter((s) => s.text.startsWith("💸 Money Elf"));
     expect(haul.length).toBe(1);
     expect(transport.sent.length).toBe(2);
     const move = (await store.listMoves())[0]!;
@@ -126,7 +126,7 @@ describe("service end to end (script transport)", () => {
     transport.push(owner, "june 2 to aug 30", { parentMessageId: haul[0]!.id });
     await transport.settled();
     await service.pipeline.idle();
-    expect(transport.sent[2]!.text.startsWith("Money Elf")).toBe(true);
+    expect(transport.sent[2]!.text.startsWith("💸 Money Elf")).toBe(true);
     stop();
   });
 
@@ -143,12 +143,12 @@ describe("service end to end (script transport)", () => {
         .join("\n");
     };
     const first = await say("hi");
-    expect(first).toStartWith("Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
-    for (const a of CREW_ABILITIES) expect(first).toContain(a.text);
+    expect(first).toStartWith("👋 Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:");
+    for (const a of CREW_ABILITIES) expect(first).toContain(abilityLine(a));
     expect(first).toContain("The crew can't book trucks, U-Hauls or movers");
     expect(first).not.toContain("Text me anything");
 
-    expect(await say("what can you do?")).toStartWith("Here's what the crew can do:");
+    expect(await say("what can you do?")).toStartWith("📋 Here's what the crew can do:");
     expect(await say("can you book me a u-haul for saturday")).toContain(
       "The crew can't book trucks, U-Hauls or movers.",
     );
@@ -408,7 +408,7 @@ describe("housing hunt", () => {
     const [, ack, picks] = transport.sent;
     expect(ack!.text).toContain("Checking Craigslist");
     expect(ack!.parentMessageId).toBe(m.id);
-    expect(picks!.text.startsWith("Top picks for a room in Allston")).toBe(true);
+    expect(picks!.text.startsWith("🔎 Top picks for a room in Allston")).toBe(true);
     expect(picks!.text).toContain("1. Sunny furnished room");
     expect(picks!.text).toContain("https://");
     expect(picks!.senderId).toBe(m.agentId);
@@ -443,7 +443,7 @@ describe("housing hunt", () => {
     await transport.settled();
     await service.pipeline.idle();
     expect(transport.sent.at(-2)!.text).toContain("Checking Craigslist");
-    expect(transport.sent.at(-1)!.text.startsWith("Top picks")).toBe(true);
+    expect(transport.sent.at(-1)!.text.startsWith("🔎 Top picks")).toBe(true);
 
     const ctx = await memory!.context({
       threadId: transport.spaceFor(owner),
@@ -518,7 +518,7 @@ describe("housing hunt", () => {
     expect(summary.parentMessageId).toBe(toOwner!.id);
     expect(summary.senderId).toBe(m.agentId);
     expect(summary.text).toBe(
-      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room; I offered $1,200/mo.",
+      "💬 The lister wants $1,250/mo for the Allston Green, shared 4BR, private room; I offered $1,200/mo.",
     );
     expect((await store.getDeal(deal.id))?.state).toBe("negotiating");
     expect((await store.listDealParties(deal.id))[0]?.agreedCents).toBeNull();
@@ -534,7 +534,7 @@ describe("housing hunt", () => {
     );
     const question = held.find((s) => s.spaceId === ownerSpace)!;
     expect(question.text).toBe(
-      "The lister wants $1,250/mo for the Allston Green, shared 4BR, private room (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
+      "❓ The lister wants $1,250/mo for the Allston Green, shared 4BR, private room (your max rent $1,200/mo; I'm holding at $1,200/mo). Pay $1,250/mo? Reply yes, no, or a number.",
     );
     const yes = transport.sent.length;
     transport.push(owner, "yes", { parentMessageId: question.id });
@@ -545,7 +545,7 @@ describe("housing hunt", () => {
       "Good news: $1,250/mo works. When could we see it? We could do 1)",
     );
     expect(agreed.find((s) => s.spaceId === ownerSpace)?.text).toBe(
-      "Done: $1,250/mo for the Allston Green, shared 4BR, private room. I'm setting up the viewing.",
+      "✅ Done: $1,250/mo for the Allston Green, shared 4BR, private room. I'm setting up the viewing.",
     );
     expect(
       (await store.listEvents(move.id)).find(
@@ -591,7 +591,7 @@ describe("housing hunt", () => {
     await service.pipeline.idle();
     expect(service.pipeline.stats.cancelled).toBe(0);
     const texts = transport.sent.map((s) => s.text);
-    expect(texts[2]!.startsWith("Top picks")).toBe(true);
+    expect(texts[2]!.startsWith("🔎 Top picks")).toBe(true);
     expect(texts.length).toBe(4);
     stop();
   });

@@ -7,6 +7,7 @@ import {
   hasPhotos,
   lastMessageId,
   memoryPreamble,
+  TEXT_STYLE,
 } from "./contract.ts";
 import { DEFAULT_WEIGHT_LB, ExtractedFacts, extractFactsHeuristic, formatDate } from "./facts.ts";
 import {
@@ -49,9 +50,8 @@ Facts you may see:
 - justApproved: confirm those items are listed at their list price and that buyers will text this number.
 - photosUnreadable: ask them to send the photo again.
 
-Write the reply as a text message:
-- Plain text only. No markdown, no bullet symbols, no headers. At most one emoji, usually none.
-- 2 to 4 short lines, one sentence each (an ability list may run longer).
+${TEXT_STYLE}
+- 2 to 5 short lines in all (an ability list may run longer).
 - Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, or move-out is close, remind them they can text STATUS (in caps, exactly that word) to see where everything stands.`;
 
 export const crewLead: Elf = {
@@ -288,7 +288,7 @@ function templateReply(s: {
   items: { name: string; hasPhoto: boolean; floor: string | null; listPrice: string | null }[];
 }): string {
   const lines: string[] = [];
-  if (s.cantDo) lines.push(`${s.cantDo.cant} ${s.cantDo.instead}`);
+  if (s.cantDo) lines.push(`🚫 ${s.cantDo.cant}`, s.cantDo.instead);
   if (s.identifiedFromPhotos.length)
     lines.push(`From your photo: ${s.identifiedFromPhotos.join("; ")}. Stuff Elf has it.`);
   else if (s.photosUnreadable) lines.push("I couldn't read the photo you sent; can you send it again?");
@@ -310,5 +310,6 @@ function templateReply(s: {
       `Send a photo of the ${needsPhoto.name} and the lowest price you'd take, and I'll get it listed.`,
     );
   else if (!s.justApproved.length && !s.items.length) lines.push("What should the crew start on?");
-  return lines.join("\n");
+  // The template reads like the model's replies: a blank line between the parts.
+  return lines.join("\n\n");
 }

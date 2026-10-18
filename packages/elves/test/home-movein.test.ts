@@ -193,7 +193,7 @@ describe("Home Elf: move-in week", () => {
     const w = await world({ moveInAt: "2026-06-01", moveOutAt: "2026-05-28", toAddress: "45 Harvard Ave" });
     const r = await w.say("what do I need for move-in?");
     const t = text(r);
-    expect(t.startsWith("Move-in checklist for 45 Harvard Ave (move-in Jun 1):")).toBe(true);
+    expect(t.startsWith("📋 Move-in checklist for 45 Harvard Ave (move-in Jun 1):\n\n• ")).toBe(true);
     expect(t).toContain("Bags for the gap (May 28 to Jun 1): line up storage or a friend's closet by May 28");
     expect(t).toContain('Say "find a hotel for the gap"');
     expect((await w.store.listMoveinTasks(w.move.id)).map((x) => x.key)).toContain("luggage_gap");
@@ -226,11 +226,12 @@ describe("Home Elf: move-in week", () => {
     const left = await w.say("what's left?");
     expect(text(left)).toBe(
       [
-        "Still open for 45 Harvard Ave:",
-        "Electric: set up by May 22",
-        "Address change: file with USPS by May 25",
-        "Keys: pick up on Jun 1",
-        "Condition report: photograph every room and send it to the landlord on Jun 1",
+        "📋 Still open for 45 Harvard Ave:",
+        "",
+        "• Electric: set up by May 22",
+        "• Address change: file with USPS by May 25",
+        "• Keys: pick up on Jun 1",
+        "• Condition report: photograph every room and send it to the landlord on Jun 1",
       ].join("\n"),
     );
 
@@ -247,7 +248,7 @@ describe("Home Elf: move-in week", () => {
     expect((await byKey()).get("internet")).toBe("done");
 
     for (const k of ["electric", "address change", "keys", "condition report"]) await w.say(`${k} done`);
-    expect(text(await w.say("what's left"))).toBe("Nothing left on the move-in list. You're set.");
+    expect(text(await w.say("what's left"))).toBe("✅ Nothing left on the move-in list. You're set.");
   });
 
   test("a pending ask does not hijack a hunt, and lets go when the answer is not a date", async () => {
@@ -317,10 +318,12 @@ describe("Home Elf: move-in week", () => {
     expect(reminderText(task, move, new Date("2026-05-24T12:00:00Z"))).toContain("Internet was due May 22");
     expect(formatChecklist([task, { ...task, key: "gas", label: "Gas", status: "done" }], move)).toBe(
       [
-        "Move-in checklist for 45 Harvard Ave (move-in Jun 1):",
-        "Internet: order by May 22",
-        "Gas: done",
-        'Say "done with internet", "skip insurance" or "what\'s left" as you go; I\'ll nudge you as each one comes due.',
+        "📋 Move-in checklist for 45 Harvard Ave (move-in Jun 1):",
+        "",
+        "• Internet: order by May 22",
+        "• Gas: done",
+        "",
+        '💬 Say "done with internet", "skip insurance" or "what\'s left" as you go; I\'ll nudge you as each one comes due.',
       ].join("\n"),
     );
     // Stuff → Home: booked pickups ride on the checklist

@@ -123,17 +123,23 @@ describe("route()", () => {
       elf: "home",
       via: "scope",
     });
-    expect(await route(batchOf("what can you do?"), deps, { firstContact: false, moveId: "mv1" })).toMatchObject({
+    expect(
+      await route(batchOf("what can you do?"), deps, { firstContact: false, moveId: "mv1" }),
+    ).toMatchObject({
       elf: "crew_lead",
       via: "scope",
     });
   });
   test("one text that asks for Stuff and Home at once goes to the Crew Lead, which calls both", async () => {
     expect(
-      await route(batchOf("sell my couch and find me a room in allston under 1200"), deps, { firstContact: false }),
+      await route(batchOf("sell my couch and find me a room in allston under 1200"), deps, {
+        firstContact: false,
+      }),
     ).toMatchObject({ elf: "crew_lead", via: "delegate" });
     // one Elf's work still goes straight to that Elf
-    expect(await route(batchOf("find me a room in allston under 1200"), deps, { firstContact: false })).toMatchObject({
+    expect(
+      await route(batchOf("find me a room in allston under 1200"), deps, { firstContact: false }),
+    ).toMatchObject({
       elf: "home",
     });
   });
