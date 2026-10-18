@@ -48,7 +48,7 @@ describe("Moving Fund loans (roommate IOUs)", () => {
     const p1 = await s.say("paid", { from: SAM, role: "roommate" });
     expect(reply(p1)).toContain("Sam paid $40 toward the truck; $40 left on the loan.");
     expect(p1.outbound).toMatchObject([
-      { toHandle: OWNER, text: "Sam paid $40 into the Moving Fund; $40 left." },
+      { toHandle: OWNER, text: "✅ Sam paid $40 into the Moving Fund; $40 left." },
     ]);
     expect([...s.rails.loans.values()][0]?.amountCents).toBe(4000);
 

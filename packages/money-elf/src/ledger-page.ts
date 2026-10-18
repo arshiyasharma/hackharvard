@@ -1,6 +1,7 @@
 /**
- * The Move Money dashboard: what the iMessage mini app card opens (via Spectrum, decision #53) and what the
- * Photon 2.0 reply links. One design system with the card images (ledger-card.ts), decision #64: warm neutrals,
+ * The Move Money dashboard, a plain web page: the Photon 2.0 reply links to it after every Ledger change, so it
+ * opens in the phone's browser with nothing to install or register (the Spectrum mini app card that used to open
+ * it is shelved, decision #72). One design system with the card images (ledger-card.ts), decision #64: warm neutrals,
  * ink with a single lime accent, Inter with tabular figures, hairline panels, no decoration that isn't data.
  *
  *   - A segmented control: Overview, Coming back, Activity.

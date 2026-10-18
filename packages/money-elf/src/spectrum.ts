@@ -1,4 +1,7 @@
 /**
+ * SHELVED (decision #72): off unless ELVES_MINIAPP=1. The dashboard now goes out as a web page link on every
+ * Ledger change, because the card needs a second number and a registered phone. Kept whole so it can come back.
+ *
  * The Ledger mini app card, sent through Spectrum (Photon 1.0). Photon 2.0, which carries the Elves
  * conversation, has no app cards (decision #32), so the card comes from the project's Spectrum line and opens
  * the Moving Ledger dashboard (ledger-page.ts) inside Messages via Photon's Spectrum iMessage App.

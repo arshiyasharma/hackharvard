@@ -5,6 +5,7 @@
 
 create table if not exists money_people (
   id                  text primary key,
+  seq                 bigserial,
   move_id             text not null references moves(id) on delete cascade,
   name                text not null,
   handle              text,
@@ -13,10 +14,11 @@ create table if not exists money_people (
   nessie_account_id   text,
   created_at          timestamptz not null default now()
 );
-create index if not exists money_people_move_idx on money_people (move_id);
+create index if not exists money_people_move_idx on money_people (move_id, seq);
 
 create table if not exists money_entries (
   id                  text primary key,
+  seq                 bigserial,
   move_id             text not null references moves(id) on delete cascade,
   date                text not null,
   kind                text not null,
@@ -46,7 +48,7 @@ create table if not exists money_entries (
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now()
 );
-create index if not exists money_entries_move_idx on money_entries (move_id);
+create index if not exists money_entries_move_idx on money_entries (move_id, seq);
 create index if not exists money_entries_deal_idx on money_entries (deal_id, party_id) where deal_id is not null;
 
 create table if not exists money_pending (
@@ -60,6 +62,14 @@ create table if not exists money_pending (
   created_at          text not null
 );
 create index if not exists money_pending_move_idx on money_pending (move_id, seq);
+
+-- Nessie's GET /merchants doesn't list the ones we create, so the ids are remembered here and a restart
+-- doesn't make a second "U-Haul" in Nessie for the next purchase.
+create table if not exists money_merchants (
+  name                text primary key,
+  merchant_id         text not null,
+  created_at          timestamptz not null default now()
+);
 
 create table if not exists money_accounts (
   move_id             text primary key references moves(id) on delete cascade,

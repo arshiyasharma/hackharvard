@@ -120,6 +120,13 @@ export interface NessieOptions {
   baseUrl?: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** Remembers Nessie merchant ids across restarts (the crew's Postgres); without it they are cached per process. */
+  merchantCache?: MerchantCache;
+}
+
+export interface MerchantCache {
+  get(name: string): Promise<string | undefined>;
+  set(name: string, merchantId: string): Promise<void>;
 }
 
 /** Placeholder address for the customers Elves opens; Nessie requires one and the owner's real address never goes there. */
@@ -237,7 +244,14 @@ export class NessieRails implements MoneyRails {
     const key = name.slice(0, 60);
     let id = this.merchants.get(key);
     if (!id) {
-      id = this.post("/merchants", { name: key, category: "moving" }).then((m) => m._id);
+      const cache = this.opts.merchantCache;
+      id = (async () => {
+        const known = await cache?.get(key).catch(() => undefined);
+        if (known) return known;
+        const created = (await this.post("/merchants", { name: key, category: "moving" }))._id;
+        await cache?.set(key, created).catch(() => {});
+        return created;
+      })();
       // Forget a failed create so the next purchase retries it.
       id.catch(() => this.merchants.delete(key));
       this.merchants.set(key, id);

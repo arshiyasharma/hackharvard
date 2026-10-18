@@ -2,7 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createDb, migrate, PostgresStore } from "@elves/db";
 import { createLogger } from "@elves/shared";
 import { MemoryMoneyStore, type MoneyStore } from "../src/ledger.ts";
-import { PostgresMoneyStore } from "../src/pg-store.ts";
+import { PostgresMerchantCache, PostgresMoneyStore } from "../src/pg-store.ts";
+import type { MerchantCache } from "../src/rails.ts";
 import { FakeRails } from "../src/rails.ts";
 import { MoneyService } from "../src/service.ts";
 
@@ -23,6 +24,7 @@ interface Backend {
     store: MoneyStore;
     moveId: string;
     reopen: () => MoneyStore;
+    merchants: MerchantCache;
     cleanup: () => Promise<void>;
   }>;
 }
@@ -32,7 +34,14 @@ const backends: Backend[] = [
     name: "memory",
     open: async () => {
       const store = new MemoryMoneyStore();
-      return { store, moveId: "mv_mem", reopen: () => store, cleanup: async () => {} };
+      const merchants = new Map<string, string>();
+      return {
+        store,
+        moveId: "mv_mem",
+        reopen: () => store,
+        merchants: { get: async (n) => merchants.get(n), set: async (n, id) => void merchants.set(n, id) },
+        cleanup: async () => {},
+      };
     },
   },
 ];
@@ -52,7 +61,9 @@ if (pgUrl)
         store: new PostgresMoneyStore(db),
         moveId: move.id,
         reopen: () => new PostgresMoneyStore(db),
+        merchants: new PostgresMerchantCache(db),
         cleanup: async () => {
+          await db`delete from money_merchants where name = 'Truck'`;
           await db`delete from moves where id = ${move.id}`;
           await db.end();
         },
@@ -136,8 +147,16 @@ describe.each(backends)("MoneyStore contract ($name)", (backend) => {
     ]);
   });
 
+  test("Nessie merchant ids are remembered", async () => {
+    const { merchants } = await open();
+    expect(await merchants.get("Truck")).toBeUndefined();
+    await merchants.set("Truck", "m1");
+    await merchants.set("Truck", "m2");
+    expect(await merchants.get("Truck")).toBe("m2");
+  });
+
   test("a sale through escrow: the owner approves opening it, the buyer's pickup and the owner's yes release it, and a restart loses nothing", async () => {
-    const { store, moveId, reopen } = await open();
+    const { moveId, reopen } = await open();
     const rails = new FakeRails();
     const service = () => new MoneyService(reopen(), rails, () => NOW);
     const move = { id: moveId, ownerHandle: OWNER, name: "Gavin" };

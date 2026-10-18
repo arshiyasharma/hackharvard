@@ -1,10 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { allElves, type Elf } from "@elves/elves";
 import { FakeListings } from "@elves/listings";
 import { FakeLLM } from "@elves/llm";
-import { createMoneyElf, FakeRails, LEDGER_CHANGING_EVENTS, MemoryMoneyStore } from "@elves/money-elf";
+import { createDb, migrate, PostgresStore } from "@elves/db";
+import {
+  createMoneyElf,
+  FakeRails,
+  LEDGER_CHANGING_EVENTS,
+  MemoryMoneyStore,
+  PostgresMoneyStore,
+} from "@elves/money-elf";
 import { ScriptTransport } from "@elves/photon";
-import { createLogger, MemoryStore } from "@elves/shared";
+import { createLogger, MemoryStore, type Store } from "@elves/shared";
 import { createMoneyBridge } from "../src/money-bridge.ts";
 import { createService } from "../src/service.ts";
 
@@ -13,15 +20,41 @@ import { createService } from "../src/service.ts";
  * negotiates, the owner's yes to escrow, a pickup, a release into the Moving Fund. Every money move is a Nessie
  * record (FakeRails stands in for the HTTP calls) and none happens without the owner's yes.
  */
-const owner = "+16175550100";
-const buyer = "+16175550199";
+let owner = "+16175550100";
+let buyer = "+16175550199";
+const pgUrl = process.env.TEST_DATABASE_URL;
+const db = pgUrl ? createDb({ url: pgUrl, max: 3 }) : null;
+if (db) await migrate(db, createLogger("test", "error"));
+type Backend = "memory" | "postgres";
+const backends: Backend[] = db ? ["memory", "postgres"] : ["memory"];
+const digits = (n: number) => String(Math.floor(Math.random() * 10 ** n)).padStart(n, "0");
+/** Phones of the Postgres runs, so their moves (and their deals, which cascade) are removed at the end. */
+const created: string[] = [];
+afterAll(async () => {
+  if (db && created.length) await db`delete from moves where owner_handle in ${db(created)}`.catch(() => {});
+});
 const body = (t: string) => t.replace(/^(?:🧭 Crew Lead|🏠 Home Elf|📦 Stuff Elf|💸 Money Elf)\n\n/, "");
 
-function boot() {
-  const transport = new ScriptTransport();
-  const store = new MemoryStore();
+function boot(backend: Backend = "memory") {
+  // Postgres runs use fresh phone numbers, so a run never meets another run's moves
+  if (backend === "postgres") {
+    owner = `+1617${digits(7)}`;
+    buyer = `+1617${digits(7)}`;
+    created.push(owner, buyer);
+  } else {
+    owner = "+16175550100";
+    buyer = "+16175550199";
+  }
+  // message ids repeat from one test to the next, and Postgres remembers sends: a fresh prefix keeps them apart
+  // (a listing is found through its pool agent, so each run also gets its own agent id)
+  const prefix = `t${digits(6)}_`;
+  const transport = new ScriptTransport(backend === "postgres" ? `usr_${prefix}` : undefined, undefined, prefix);
+  const store: Store = backend === "postgres" && db ? new PostgresStore(db) : new MemoryStore();
   const rails = new FakeRails();
-  const money = createMoneyElf({ store: new MemoryMoneyStore(), rails });
+  const money = createMoneyElf({
+    store: backend === "postgres" && db ? new PostgresMoneyStore(db) : new MemoryMoneyStore(),
+    rails,
+  });
   const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
   const bridge = createMoneyBridge({ store, service: money.service });
   const service = createService({
@@ -64,9 +97,9 @@ async function listChair(t: ReturnType<typeof boot>) {
   return { move, deal };
 }
 
-describe("a sale runs through escrow in Nessie, with the owner's yes at each money move", () => {
+describe.each(backends)("a sale runs through escrow in Nessie, with the owner's yes at each money move (%s)", (backend) => {
   test("agreed price → owner approves escrow → pickup → release into the Moving Fund", async () => {
-    const t = boot();
+    const t = boot(backend);
     const { move, deal } = await listChair(t);
     expect(t.rails.calls.filter((c) => c.op === "moveMoney")).toHaveLength(0);
 
@@ -113,7 +146,7 @@ describe("a sale runs through escrow in Nessie, with the owner's yes at each mon
   });
 
   test("the owner declines escrow: nothing moves and the deal carries on", async () => {
-    const t = boot();
+    const t = boot(backend);
     const { move, deal } = await listChair(t);
     await t.say(buyer, `${deal.code} is the chair still available?`);
     await t.say(buyer, "yes I'll take it");
@@ -125,7 +158,7 @@ describe("a sale runs through escrow in Nessie, with the owner's yes at each mon
   });
 
   test("the buyer walks away: a question still waiting is dropped, and money already in escrow gets a refund question", async () => {
-    const t = boot();
+    const t = boot(backend);
     const { move, deal } = await listChair(t);
     await t.say(buyer, `${deal.code} is the chair still available?`);
     await t.say(buyer, "yes I'll take it");
@@ -146,7 +179,7 @@ describe("a sale runs through escrow in Nessie, with the owner's yes at each mon
   });
 
   test("the 24h no-show sweep asks the owner about a refund once, and moves nothing itself", async () => {
-    const t = boot();
+    const t = boot(backend);
     const { move, deal } = await listChair(t);
     await t.say(buyer, `${deal.code} is the chair still available?`);
     await t.say(buyer, "yes I'll take it");
@@ -168,9 +201,9 @@ describe("a sale runs through escrow in Nessie, with the owner's yes at each mon
   });
 });
 
-describe("Home's money: a sublet applicant's first month, and the owner paying a lister", () => {
+describe.each(backends)("Home's money: a sublet applicant's first month (%s)", (backend) => {
   test("an agreed sublet holds the first month in escrow after the owner's yes", async () => {
-    const t = boot();
+    const t = boot(backend);
     await t.say(owner, "hi");
     await t.say(owner, "moving out nov 1");
     await t.say(owner, "sublet my room for $1500");

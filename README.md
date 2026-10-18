@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 469 tests across 37 files (489 with `bun run test:pg`, which also runs the Postgres store contracts), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 476 tests across 38 files (502 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -19,7 +19,7 @@ Branch from here when you want the crew that actually runs. The rows marked **em
 | Stuff · Donate | "Donate the lamp" then "yes" marks that item `donated`, closes its open sell deal, and emits `pickup.requested`. | No Goodwill, 311, or bulk-pickup API. A bare "last call" / "recycle" question with no item is still the canned green reply. |
 | Last Call | Sweep in `lastCallSweep`. T−48h: ask drops to 60% of list (`droppedAsk`). T−24h: relisted free and `pickup.requested` (donation or 311). Move-out: anything still open is `dumped`. "Keep the couch" sets `last_call_opt_out`. | The pickup is an event, not a booked truck. |
 | Deal Engine | Built. Postgres state machine plus a sweep. Not Mastra. Modes: `sell_item`, `buy_item`, `sublet_out`, `find_sublet`. States: listed → negotiating → scheduled → handed_off → paid, plus relisted / donated / dumped. Floor and ceiling are code. Three pickup slots, one shared calendar. Scam Shield blocks off-escrow payment on a deal. | No no-show timeout sweep. No poll for "both accepted". A stranger whose text matches two open deals is not joined (ambiguity returns null). A counterparty already in two talks is asked which item when the text names more than one. |
-| Money · Nessie | Built (`packages/money-elf`, merged in). The Ledger lives in Nessie: every movement is a tagged Nessie record and the totals are read back from it. Splits with roommates, loans, deposits, a Moving Fund, escrow for sales, a scam check, the Ledger card (image) and a live dashboard page. **Stuff and Home sales run through it** (see "Money: a sale, end to end"): the owner's yes opens escrow, the buyer's pickup and the owner's yes release it, a walk-away stages a refund. Its own state (people, entries, waiting approvals) is in Postgres (`0010_money.sql`). | The ledger link is signed and never expires. The mini app card needs a Spectrum project and registered phones. Buying an item or renting a place becomes a "pay them?" question at hand-off, not an escrow. |
+| Money · Nessie | Built (`packages/money-elf`, merged in). The Ledger lives in Nessie: every movement is a tagged Nessie record and the totals are read back from it. Splits with roommates, loans, deposits, a Moving Fund, escrow for sales, a scam check, the Ledger card (image) and a live dashboard page. **Stuff and Home sales run through it** (see "Money: a sale, end to end"): the owner's yes opens escrow, the buyer's pickup and the owner's yes release it, a walk-away stages a refund. Its own state (people, entries, waiting approvals, Nessie ids) is in Postgres (`0010_money.sql`). The dashboard is a web page whose signed link (never expires) closes every reply that changes the Ledger. | The Spectrum mini app card is shelved (off unless `ELVES_MINIAPP=1`). Buying an item or renting a place becomes a "pay them?" question at hand-off, not an escrow. |
 | Home · Hunt | Built. One missing fact at a time (budget → area → dates), then Craigslist and Airbnb. Scam flags, rank, top 3. "more" / "tell me about 2" / "skip" / "save". "search again" bypasses the 3-minute cache. A forwarded listing URL is ranked with the picks. "Reach out to 2" opens `find_sublet`; when the listing shows a phone, the dedicated line texts the lister the drafted note, the owner hears "Texted them from <line>", and the lister's replies run through the Deal Engine as summaries in the owner chat. | Booking, SpareFoot, Apartments, Zillow, and Facebook are off the default allowlist (blocks). A listing with no phone (Craigslist, Airbnb) still gets a note the owner sends. Without a dedicated line (`PHOTON_DEDICATED_AGENT_ID` or a discoverable one) the note goes to the owner too; the shared pool cannot text first. Email contacts are not used. |
 | Home · Sublet | "Sublet my room for $1500" opens `sublet_out` at once, then asks for dates and area one at a time, reads room photos with vision, and writes the post (title + body with the ref and the number) in `sublet_posts`. "Change …" redrafts, "post it" approves. An applicant who agrees a rent is offered viewing times; the time they pick is held and the owner is asked "Book it?", and only a yes books it (a no offers them the other times). The same holds for a lister's viewing on `find_sublet`. | The owner pastes the post; nothing is posted to Craigslist or Facebook by the crew. No landlord is contacted. The crew does not read leases: "can I sublet my room?" gets "your lease and landlord decide that one". |
 | Home · Move-in | Built. "Set up internet at the new place" / "what do I need for move-in" asks for the move-in date and the new address one at a time (both written onto the move), then texts the checklist with dates from `movein_tasks`: electric, gas and internet 10 days out, renters insurance and the USPS address change 7 days out, keys and the condition report on the day, bags for the gap when move-out comes first (the hotel itself stays with the hunt). "Done with internet", "skip insurance", "what's left" and "address is …" keep it current; a moved date re-dates the open tasks. `moveinSweep` runs on the Last Call timer and texts one reminder per task within 2 days of its date. Working memory carries a "Move-in week" section so any Elf can answer "did we set up internet?". | Nothing is ordered: the owner places every order and the crew calls no utility or ISP. No provider lookup for the address. One reminder per task, no snooze. |
@@ -122,7 +122,17 @@ Stuff ↔ Home today: Stuff's booked pickups appear on Home's checklist, on `wha
 
 ### How every text is formatted
 
-Every text the crew sends follows one style, `TEXT_STYLE` in [`packages/elves/src/contract.ts`](packages/elves/src/contract.ts), pasted into every drafting prompt (Crew Lead, onboarding, Home hunt and move-in, the Deal Engine's buyer-facing redraft) and applied by hand to every template: short lines, a blank line between the parts that do different jobs (what was captured, what happens next, the one question on its own last line), and at most two emojis, each at the start of a line as a signpost, never inside a sentence. The signposts: 👋 the intro, 🏠 📦 💸 an Elf by name, 🔎 the hunt's picks, 🏠 a listing's detail, ⚠️ a scam flag, 📋 a list or checklist, 🚚 pickups Stuff booked, 💬 a hint or a counter, ❓ a question for you, ✅ confirmed or booked, 🤝 agreed, 🎉 handed off, 🚨 Scam Shield, ↩️ a buyer walked, 🔁 a new time, ⏳ waiting on you, 🚫 something the crew can't do. Owner-facing Deal Engine lines get theirs by message kind in `deal.ts` (`OWNER_LEAD`); buyers and listers get plain text with at most one.
+Every text the crew sends follows one style, `TEXT_STYLE` in [`packages/elves/src/contract.ts`](packages/elves/src/contract.ts), pasted into every drafting prompt (Crew Lead, onboarding, Home hunt and move-in, the Deal Engine's buyer-facing redraft) and applied by hand to every template: short lines, a blank line between the parts that do different jobs (what was captured, what happens next, the one question on its own last line), and at most two emojis, each at the start of a line as a signpost, never inside a sentence. The signposts: 👋 the intro, 🏠 📦 💸 an Elf by name, 🔎 the hunt's picks, 🏠 a listing's detail, ⚠️ a scam flag, 📋 a list or checklist, 🚚 pickups Stuff booked, 💬 a hint or a counter, ❓ a question for you, ✅ confirmed or booked, 🤝 agreed, 🎉 handed off, 🚨 Scam Shield, ↩️ a buyer walked, 🔁 a new time, ⏳ waiting on you, 🚫 something the crew can't do. Owner-facing Deal Engine lines get theirs by message kind in `deal.ts` (`OWNER_LEAD`); buyers and listers get plain text with at most one. The Money Elf lays out every text with `packages/money-elf/src/format.ts`: the news first, the detail together, the question alone on its own line with ❓, one emoji only (✅ moved or recorded, ❓ asking, 🚫 refused, 📋 the Ledger), and `Dashboard: <link>` as the last block, all under "💸 Money Elf":
+
+```
+💸 Money Elf
+
+Truck $240 split: you $80, Sam $80, Priya $80.
+
+❓ Send each person their share? Reply yes.
+
+Dashboard: https://elves-production.up.railway.app/ledger/mv_…?t=…
+```
 
 The first text, for example:
 
@@ -266,7 +276,7 @@ What needs a dedicated Photon line: the 👍 on each of your texts, threaded rep
 
 ### Money: a sale, end to end
 
-Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres. A restart keeps an owner's waiting yes and every open escrow; the contract test runs on memory and on Postgres (`bun run test:pg`).
+Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (116 tests) against `PostgresMoneyStore`.
 
 The Deal Engine already says what happened as events; `apps/elves/src/money-bridge.ts` turns them into the Money Elf's flow, and the service sends what comes out under the "💸 Money Elf" header:
 
@@ -282,11 +292,33 @@ The Deal Engine already says what happened as events; `apps/elves/src/money-brid
 
 A sublet's agreed rent is held as "(first month)" and released at the key hand-off. When the owner is the one paying (buying an item, renting a place), the hand-off becomes "Pay them $X? Reply yes." STATUS shows the Money Elf's own Ledger line (read back from Nessie), so it counts only money that actually moved. Tests: `apps/elves/test/money-sales.test.ts` (a full sale, a declined escrow, a walk-away before and after escrow, the no-show sweep, a sublet) and `packages/money-elf/test/pg-store.test.ts`.
 
-### The Ledger link and the mini app (Photon 1.0 → 2.0)
+### The dashboard: a web page, linked every time
 
-- **The link never expires.** `/ledger/<move>?t=<token>`, where the token is an HMAC of `LEDGER_LINK_SECRET` and the move id with no timestamp, so the demo-day link works as long as the secret is unchanged (changing it is the only way to revoke links). Set `LEDGER_LINK_SECRET` and `PUBLIC_URL` on Railway and keep them.
-- **How the card gets from 1.0 into a 2.0 conversation.** Photon 2.0, which carries the whole Elves conversation, cannot send an app card. Photon 1.0 (Spectrum) can: its iMessage provider lists mini-app cards (`app(url)`, a "Native iMessage App card" on the cloud package). So the Elves stay on 2.0, and when the Ledger changes the service also sends the owner one card from the project's separate Spectrum line, branded "Elves Ledger"; tapping it opens the dashboard inside Messages, and the same card is edited in place afterwards. The 2.0 reply always carries the plain link too, so nothing depends on the card arriving. The conversation never moves: after the card the owner keeps texting the Elves number.
-- **What the card needs (found live, not in the public docs):** a Spectrum project (`SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET`), and each phone must be a registered Spectrum user and have texted the Spectrum line once, otherwise Spectrum answers "Target not allowed for this project". Cards render in the Spectrum app (App Store id 6777616651). Both lines go through Photon's shared pool unless the project is on a Business plan, where everyone texts one dedicated number.
+The Money Elf's dashboard is a plain web page, `/ledger/<move>?t=<token>`, served by the same app (it needs `PUBLIC_URL` and `LEDGER_LINK_SECRET` set on Railway). It opens in any phone's browser: nothing to install, no second number, no registration. It re-reads Nessie every 30 seconds, shows what the move costs, what is in escrow and in the Moving Fund, who owes what and what is coming back, and has Approve / Not now buttons for anything waiting on the owner's yes (the same approval a typed "yes" gives).
+
+- **The link rides on every change.** Any reply that changes the Ledger ends with `Dashboard: <link>` as its own block: a split, a deposit, a payment, escrow opening or releasing, a loan. So does the note the owner gets when someone else's turn changed it (a roommate paid), and the answer to "show me the ledger" (which also sends the Ledger as a photo). STATUS's Money section shows the same Ledger line.
+- **The link never expires.** The token is an HMAC of `LEDGER_LINK_SECRET` and the move id with no timestamp, so the demo-day link works as long as the secret is unchanged (changing it is the only way to revoke links). Set both variables and keep them.
+- **Verified over real HTTP** (page, card image, preview image and JSON all `200`; a wrong token or another move's id is `404`; an Approve tap from the page runs the payment).
+- **The Photon 1.0 mini app card is shelved** (decision #72). Photon 2.0, which carries the Elves conversation, cannot send an app card; 1.0 (Spectrum) can, but the card comes from a second number ("Elves Ledger"), every phone has to be a registered Spectrum user that has texted that line, and it renders in a second app. The code is kept whole (`packages/money-elf/src/spectrum.ts`, the `cards` option, `miniApp` on the result) and comes back with `ELVES_MINIAPP=1` plus `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET`. Photon's docs list the native app card under the Spectrum iMessage provider; the phone-registration rule is a live finding, not documented.
+
+### Using the Money Elf: what to text
+
+Text the Elves number as usual; anything about money, splits, escrow, deposits or "ledger" reaches the Money Elf, and every reply opens with "💸 Money Elf". Nothing moves without a yes: each money move is a question first ("Reply yes", a Yes / Not now poll where Photon allows it, or the Approve button on the dashboard).
+
+| You text | What happens |
+| --- | --- |
+| `Sam is 617-555-0101` | Saves Sam's number (and sends any request that was waiting for it) |
+| `split the $240 truck with Sam and Priya` | Logs the cost and each share (you included), asks "Send each person their share?" → `yes` sends the requests |
+| `paid` (Sam, from his own phone) | Moves Sam's share into your Moving Fund and tells you, with the dashboard link |
+| `Sam paid me on venmo` | Marks his share paid outside the ledger |
+| `let Sam pay the truck at $40 a month` | Offers a payment plan → `yes` opens it; Sam texts `paid` each month |
+| `I paid a $500 sublet deposit, due back Dec 1` / `got the sublet deposit back` | Records the deposit and its return |
+| `pay Sam $40 for gas` | Asks, then pays from the Moving Fund (or your account) on `yes` |
+| `show me the ledger` / `dashboard` / `how's my money` | The Ledger as a photo, plus the dashboard link |
+| `yes` / `no` | Answers the most recent question; a poll tap or the dashboard button answers exactly that one |
+| A buyer agrees a price (Stuff) or a sublet applicant does (Home) | "Hold their payment in escrow until pickup?" → `yes` opens escrow; then the pickup, the buyer's `got it`, your `yes` to release, or a refund question if they walk. See the next section |
+| A card or bank number | Refused; never stored or repeated |
+| `STATUS` | The Money section shows the Ledger line |
 
 ### What Photon 2.0 can send, and the Docker image
 
@@ -334,8 +366,8 @@ Environment (all read in `apps/elves/src/config.ts`):
 | `ELVES_LISTINGS_SITES`, `STAGEHAND_MODEL`, `ELVES_LISTINGS_*_TIMEOUT_MS`, `ELVES_LISTINGS_CONCURRENCY` | site allowlist (default: craigslist,airbnb), extraction model, per-site / total timeouts, pages in flight |
 | `PUBLIC_URL` | HTTPS origin for mini-app links; links are only sent when set |
 | `NESSIE_API_KEY` / `NESSIE_BASE_URL` | The Money Elf's rails (Capital One's Nessie API, default `https://prod-api.nessieisreal.com`); without a key the in-memory fake runs |
-| `LEDGER_LINK_SECRET` | Signs the Ledger dashboard links; they never expire while this stays the same |
-| `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` | The Spectrum (Photon 1.0) project that sends the Ledger mini app card; optional (`SPECTRUM_LIVE_CARD=1` renders the card inline) |
+| `LEDGER_LINK_SECRET` | Signs the Ledger dashboard links; they never expire while this stays the same. With `PUBLIC_URL`, it turns the dashboard link on |
+| `ELVES_MINIAPP` | `1` brings back the shelved Spectrum (Photon 1.0) mini app card, which also needs `SPECTRUM_PROJECT_ID` / `SPECTRUM_PROJECT_SECRET` (`SPECTRUM_LIVE_CARD=1` renders it inline). Off by default |
 | `PORT` | HTTP port (`/health`, `/moves`, `/board/:moveId`, `/events/:moveId`, `/memory/:moveId`, `/b/:moveId` Crew Board page) |
 
 ## Layout

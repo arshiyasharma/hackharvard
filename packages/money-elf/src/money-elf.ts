@@ -9,6 +9,7 @@ import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
 import { renderLedgerPng } from "./ledger-card.ts";
 import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
 import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
+import { formatLines, formatOutbound } from "./format.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
@@ -64,8 +65,13 @@ export function createMoneyElf(deps: {
   store: MoneyStore | MemoryMoneyStore;
   rails: MoneyRails;
   now?: () => Date;
-  /** Public URL + signing secret for live Ledger links; without it the Ledger card is sent with no link. */
+  /** Public URL + signing secret for the live dashboard link; without it the Ledger photo goes with no link. */
   links?: LedgerLinks;
+  /**
+   * Also send the dashboard as an iMessage mini app card through Spectrum (Photon 1.0). Shelved: off by default,
+   * and the dashboard link rides on every Ledger change instead (decision #72).
+   */
+  cards?: boolean;
 }): MoneyElf {
   const service = new MoneyService(deps.store, deps.rails, deps.now);
   return {
@@ -75,7 +81,7 @@ export function createMoneyElf(deps: {
     service,
     async handle(ctx) {
       try {
-        return await handle(service, ctx, deps.links);
+        return await handle(service, ctx, deps.links, deps.cards === true);
       } catch (err) {
         ctx.log.error("money elf failed", { err: String(err), traceId: ctx.traceId });
         return {
@@ -109,8 +115,9 @@ function textOf(ctx: MoneyContext): string {
 }
 
 /**
- * Events that change what the Moving Ledger dashboard shows. After one, the crew service refreshes the owner's
- * mini app card in place so its preview stays current (the page itself re-reads Nessie every 30 seconds).
+ * Events that change what the Moving Ledger dashboard shows. After one, the owner's reply (or the note they get
+ * when someone else's turn caused it) ends with the dashboard link; with the shelved mini app on, the crew service
+ * also refreshes the owner's card in place. The page re-reads Nessie every 30 seconds.
  */
 export const LEDGER_CHANGING_EVENTS: ReadonlySet<string> = new Set([
   "ledger.entry_added",
@@ -148,7 +155,12 @@ interface Extras {
   miniApp?: { url: string };
 }
 
-async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLinks): Promise<MoneyResult> {
+async function handle(
+  service: MoneyService,
+  ctx: MoneyContext,
+  links?: LedgerLinks,
+  cards = false,
+): Promise<MoneyResult> {
   const text = textOf(ctx);
   const move = ctx.move;
   const role = ctx.participant.role;
@@ -156,7 +168,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
   const extras: Extras = {};
   const spaceOf = await spaces(ctx);
   const reach: Reach = (h) => spaceOf(h) !== undefined;
-  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links);
+  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links, cards);
 
   // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
   const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
@@ -260,7 +272,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
       );
     } else {
       r.lines.push(
-        "Money Elf here. Payments for this move run through escrow on this number, never any other way.",
+        "Payments for this move run through escrow on this number, never any other way.",
       );
     }
     return finish(r, extras);
@@ -378,7 +390,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
         ctx.log.warn("ledger card render failed; sending text", { err: String(err) });
       }
       if (png) {
-        // With the mini app on, the summary shares a line so the card intro fits in three lines.
+        // With the dashboard link on, the summary shares a line so the intro fits in three lines.
         if (links) r.lines.push(`Your money, live from Nessie: ${lowerFirst(ledgerSummaryLine(view))}`);
         else {
           r.lines.push("Here's your money, live from Nessie.");
@@ -395,9 +407,8 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
       } else {
         r.lines.push(...(await service.ledgerSummary(move)).slice(0, 2));
       }
-      if (links) {
-        // The Moving Ledger dashboard: a mini app card from "Elves Ledger" (sent by the service through
-        // Spectrum), and the same page behind this link for anyone who'd rather stay in this thread.
+      // The dashboard link closes the reply (finishTurn). Only with cards on is it also a Spectrum mini app card.
+      if (links && cards) {
         r.lines.push(`Tap the Elves Ledger card to open your dashboard, or use ${ledgerUrl(links, move.id)}`);
         extras.miniApp = { url: ledgerUrl(links, move.id) };
       }
@@ -406,7 +417,7 @@ async function handle(service: MoneyService, ctx: MoneyContext, links?: LedgerLi
     }
     default:
       r.lines.push(
-        "Money Elf here. I keep every dollar on the Ledger in Nessie: shared costs, the Moving Fund, deposits and escrow.",
+        "I keep every dollar on the Ledger in Nessie: shared costs, the Moving Fund, deposits and escrow.",
       );
       r.lines.push(
         `Tell me something like "split the $240 truck with Sam and Priya" or "I paid a $500 sublet deposit, due back Dec 1".`,
@@ -465,6 +476,7 @@ async function finishTurn(
   extras: Extras,
   spaceOf: (handle: string) => string | undefined,
   links?: LedgerLinks,
+  cards = false,
 ): Promise<MoneyResult> {
   await service.owner(ctx.move);
   const entries = await service.store.listEntries(ctx.move.id);
@@ -474,9 +486,17 @@ async function finishTurn(
   // Texts Elves can't deliver become one line telling the owner who to talk to; the Ledger already has the rest.
   const outbound: MoneyOutbound[] = [];
   const missed: OutboundMessage[] = [];
+  // The dashboard link rides on whatever changed the Ledger: the owner's own reply, or the note the owner gets
+  // when someone else's turn changed it (a roommate paid). Never on a text to anyone else.
+  const changed = r.events.some((e) => LEDGER_CHANGING_EVENTS.has(e.type));
+  const dashboard = links ? ledgerUrl(links, ctx.move.id) : null;
+  const linkForOwner = !cards && changed ? dashboard : null;
   for (const o of r.outbound) {
     const spaceId = spaceOf(o.toHandle);
-    if (spaceId) outbound.push({ ...o, spaceId });
+    const text = formatOutbound(o.text, {
+      link: o.toHandle === ctx.move.ownerHandle && ctx.participant.role !== "owner" ? linkForOwner : null,
+    });
+    if (spaceId) outbound.push({ ...o, text, spaceId });
     else missed.push(o);
   }
   const unreachable: MoneyEvent[] = missed.map((o) => ({
@@ -494,14 +514,17 @@ async function finishTurn(
   // never have to ask for it. A roommate's turn refreshes the owner's card in the crew service instead.
   const miniApp =
     extras.miniApp ??
-    (links && ctx.participant.role === "owner" && r.events.some((e) => LEDGER_CHANGING_EVENTS.has(e.type))
-      ? { url: ledgerUrl(links, ctx.move.id) }
-      : undefined);
+    (cards && links && ctx.participant.role === "owner" && changed ? { url: ledgerUrl(links, ctx.move.id) } : undefined);
+  // Asked for the dashboard, or the owner's own turn changed the Ledger: the web page link closes the reply.
+  const asked = r.events.some((e) => e.type === "ledger.shown");
+  const link = !cards && dashboard && ctx.participant.role === "owner" && (asked || changed) ? dashboard : null;
   return {
     ...(extras.images?.length ? { images: extras.images } : {}),
     ...(poll ? { poll } : {}),
     ...(miniApp ? { miniApp } : {}),
-    replies: lines.length ? [{ text: lines.join("\n"), parentMessageId: lastId(ctx) }] : [],
+    replies: lines.length
+      ? [{ text: formatLines(lines, { events: r.events, link }), parentMessageId: lastId(ctx) }]
+      : [],
     outbound,
     events: [
       ...r.events,

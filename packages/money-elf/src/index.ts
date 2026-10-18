@@ -1,5 +1,6 @@
 export * from "./amounts.ts";
 export * from "./books.ts";
+export * from "./format.ts";
 export * from "./ledger.ts";
 export * from "./ledger-card.ts";
 export * from "./ledger-http.ts";
@@ -16,12 +17,17 @@ export * from "./types.ts";
 
 import { MemoryMoneyStore, type MoneyStore } from "./ledger.ts";
 import { createMoneyElf } from "./money-elf.ts";
-import { FakeRails, type MoneyRails, NessieRails } from "./rails.ts";
+import { FakeRails, type MerchantCache, type MoneyRails, NessieRails } from "./rails.ts";
 
 /** Nessie when NESSIE_API_KEY is set, otherwise the in-memory fake (tests, offline demo). */
-export function railsFromEnv(env: Record<string, string | undefined> = process.env): MoneyRails {
+export function railsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+  opts: { merchantCache?: MerchantCache } = {},
+): MoneyRails {
   const apiKey = env.NESSIE_API_KEY;
-  return apiKey ? new NessieRails({ apiKey, baseUrl: env.NESSIE_BASE_URL }) : new FakeRails();
+  return apiKey
+    ? new NessieRails({ apiKey, baseUrl: env.NESSIE_BASE_URL, merchantCache: opts.merchantCache })
+    : new FakeRails();
 }
 
 /**
@@ -30,13 +36,14 @@ export function railsFromEnv(env: Record<string, string | undefined> = process.e
  */
 export function moneyElfFromEnv(
   env: Record<string, string | undefined> = process.env,
-  opts: { store?: MoneyStore } = {},
+  opts: { store?: MoneyStore; merchantCache?: MerchantCache } = {},
 ) {
   const publicUrl = env.PUBLIC_URL;
   const secret = env.LEDGER_LINK_SECRET;
   return createMoneyElf({
     store: opts.store ?? new MemoryMoneyStore(),
-    rails: railsFromEnv(env),
+    rails: railsFromEnv(env, { merchantCache: opts.merchantCache }),
     links: publicUrl && secret ? { publicUrl, secret } : undefined,
+    cards: env.ELVES_MINIAPP === "1",
   });
 }

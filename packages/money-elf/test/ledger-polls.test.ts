@@ -7,15 +7,16 @@ import { buildLedgerView, type LedgerView } from "../src/ledger-view.ts";
 import { createMoneyElf } from "../src/money-elf.ts";
 import { FakeRails } from "../src/rails.ts";
 import type { MoneyContext, Role } from "../src/types.ts";
-import { eventTypes, fakeLLM, NOW, OWNER, reply, setup } from "./helpers.ts";
+import { testStore, eventTypes, fakeLLM, NOW, OWNER, reply, setup } from "./helpers.ts";
 
 const SAM = "+16175550101";
 const LINKS = { publicUrl: "https://elves.test", secret: "s3cret" };
 
-function linkedSetup() {
-  const store = new MemoryMoneyStore();
+/** `cards: true` is the shelved Spectrum mini app path (ELVES_MINIAPP=1); the default is the web link only. */
+function linkedSetup(opts: { cards?: boolean } = { cards: true }) {
+  const store = testStore();
   const rails = new FakeRails();
-  const elf = createMoneyElf({ store, rails, now: () => NOW, links: LINKS });
+  const elf = createMoneyElf({ store, rails, now: () => NOW, links: LINKS, cards: opts.cards === true });
   const move = { id: "mv_test", ownerHandle: OWNER, name: "Gavin" };
   let n = 0;
   const say = (

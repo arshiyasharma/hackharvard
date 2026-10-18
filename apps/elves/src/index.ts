@@ -3,8 +3,11 @@ import { createListings } from "@elves/listings";
 import { createLLM } from "@elves/llm";
 import {
   createLedgerHandler,
+  formatLines,
+  formatOutbound,
   LEDGER_CHANGING_EVENTS,
   moneyElfFromEnv,
+  PostgresMerchantCache,
   PostgresMoneyStore,
   SpectrumMiniApps,
 } from "@elves/money-elf";
@@ -50,6 +53,7 @@ if (config.transport === "script") {
 // restart doesn't lose an owner's pending yes; Nessie stays the record of money moved.
 const money = moneyElfFromEnv(process.env, {
   store: opened.db ? new PostgresMoneyStore(opened.db) : undefined,
+  merchantCache: opened.db ? new PostgresMerchantCache(opened.db) : undefined,
 });
 const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
 const elves = allElves.map((e) => (e.name === "money" ? moneyElf : e));
@@ -57,10 +61,15 @@ const elves = allElves.map((e) => (e.name === "money" ? moneyElf : e));
 const bridge = createMoneyBridge({ store, service: money.service });
 const ledgerSecret = process.env.LEDGER_LINK_SECRET?.trim();
 // The Moving Ledger dashboard as an iMessage mini app card, sent from the Spectrum (Photon 1.0) project when configured.
-const miniApps = await SpectrumMiniApps.fromEnv(process.env, createLogger("spectrum")).catch((err) => {
-  log.warn("spectrum unavailable; no mini app cards", { error: String(err).slice(0, 200) });
-  return null;
-});
+// Shelved (decision #72): the dashboard goes out as a web page link on every Ledger change. The Spectrum card
+// stays in the code and comes back with ELVES_MINIAPP=1 (plus the SPECTRUM_* project credentials).
+const miniApps =
+  process.env.ELVES_MINIAPP === "1"
+    ? await SpectrumMiniApps.fromEnv(process.env, createLogger("spectrum")).catch((err) => {
+        log.warn("spectrum unavailable; no mini app cards", { error: String(err).slice(0, 200) });
+        return null;
+      })
+    : null;
 const ledger =
   config.publicUrl && ledgerSecret
     ? createLedgerHandler({
@@ -83,17 +92,18 @@ const ledger =
           const missed: string[] = [];
           for (const o of result.outbound) {
             const spaceId = people.find((p) => p.handle === o.toHandle)?.spaceId;
-            if (spaceId) notes.push({ spaceId, text: o.text, ...(o.poll ? { poll: o.poll } : {}) });
+            if (spaceId)
+              notes.push({ spaceId, text: formatOutbound(o.text), ...(o.poll ? { poll: o.poll } : {}) });
             else missed.push(o.toName ?? o.toHandle);
           }
           if (notes.length) await service.deliverOutbound(moveId, "money", notes, key);
           const tail = missed.length
-            ? ` I can't text ${missed.join(" or ")} until they've texted Elves once.`
-            : "";
+            ? [`I can't text ${missed.join(" or ")} until they've texted Elves once.`]
+            : [];
           await service.notifyOwner(
             moveId,
             "money",
-            `From your dashboard: ${result.lines.join(" ")}${tail}`,
+            formatLines(["From your dashboard:", ...result.lines, ...tail], { events: result.events }),
             key,
           );
           const move = await money.service.moveFromStore(moveId);

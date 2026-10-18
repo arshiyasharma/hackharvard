@@ -55,6 +55,28 @@ describe("NessieRails request shapes (as verified live)", () => {
     ]);
   });
 
+  test("a merchant already in the cache is reused after a restart, and a new one is remembered", async () => {
+    const known = new Map<string, string>([["Truck", "merch_from_last_run"]]);
+    const cache = {
+      get: async (n: string) => known.get(n),
+      set: async (n: string, id: string) => void known.set(n, id),
+    };
+    const first = recorder([]);
+    const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: first.fetchImpl, merchantCache: cache });
+    const input = { accountId: "A", merchant: "Truck", amountCents: 24000, description: "Truck [elves:expense:le_1]", date: "2026-10-17" };
+    await p.purchase(input);
+    expect(first.calls.map((c) => c.url.split("?")[0])).toEqual(["https://nessie.test/accounts/A/purchases"]);
+    expect(first.calls[0]?.body).toMatchObject({ merchant_id: "merch_from_last_run" });
+    await p.purchase({ ...input, merchant: "Storage" });
+    expect(first.calls.map((c) => c.url.split("?")[0])).toContain("https://nessie.test/merchants");
+    expect(known.get("Storage")).toBe("id_2");
+    // a "restart": a new process reads the remembered merchant and creates nothing
+    const second = recorder([]);
+    const again = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: second.fetchImpl, merchantCache: cache });
+    await again.purchase({ ...input, merchant: "Storage" });
+    expect(second.calls.map((c) => c.url.split("?")[0])).toEqual(["https://nessie.test/accounts/A/purchases"]);
+  });
+
   test("purchase creates the merchant once, then posts status and purchase_date so Nessie can list it", async () => {
     const { calls, fetchImpl } = recorder([]);
     const p = new NessieRails({ apiKey: "k", baseUrl: "https://nessie.test", fetch: fetchImpl });

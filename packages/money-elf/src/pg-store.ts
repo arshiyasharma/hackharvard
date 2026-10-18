@@ -7,6 +7,7 @@
  */
 import type { SQL } from "bun";
 import type { LedgerEntry, MoneyStore, NessieRefs, PendingAction, PendingKind, Person } from "./ledger.ts";
+import type { MerchantCache } from "./rails.ts";
 import type { Role } from "./types.ts";
 
 type Row = Record<string, unknown>;
@@ -83,6 +84,20 @@ function pendingRow(r: Row): PendingAction {
   };
 }
 
+/** Nessie merchant ids on Postgres, so a restart reuses them (NessieRails' merchantCache). */
+export class PostgresMerchantCache implements MerchantCache {
+  constructor(private readonly sql: SQL) {}
+  async get(name: string) {
+    const rows = await this.sql`select merchant_id from money_merchants where name = ${name}`;
+    return str(rows[0]?.merchant_id) ?? undefined;
+  }
+  async set(name: string, merchantId: string) {
+    await this.sql`
+      insert into money_merchants (name, merchant_id) values (${name}, ${merchantId})
+      on conflict (name) do update set merchant_id = excluded.merchant_id`;
+  }
+}
+
 export class PostgresMoneyStore implements MoneyStore {
   private seq = 0;
 
@@ -92,7 +107,7 @@ export class PostgresMoneyStore implements MoneyStore {
 
   async listEntries(moveId: string) {
     const rows = await this
-      .sql`select * from money_entries where move_id = ${moveId} order by created_at, id`;
+      .sql`select * from money_entries where move_id = ${moveId} order by seq`;
     return rows.map((r: Row) => entryRow(r));
   }
 
@@ -167,7 +182,7 @@ export class PostgresMoneyStore implements MoneyStore {
   // ---------- people
 
   async listPeople(moveId: string) {
-    const rows = await this.sql`select * from money_people where move_id = ${moveId} order by created_at, id`;
+    const rows = await this.sql`select * from money_people where move_id = ${moveId} order by seq`;
     return rows.map((r: Row) => personRow(r));
   }
 

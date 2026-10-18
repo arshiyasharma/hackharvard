@@ -3,6 +3,8 @@ import type { ElfOutbound } from "@elves/elves";
 import {
   approvalPollFor,
   boardLine,
+  formatLines,
+  formatOutbound,
   type MoneyMove,
   type MoneyService,
   type OpResult,
@@ -68,7 +70,7 @@ export function createMoneyBridge(deps: { store: Store; service: MoneyService; n
           ? move.ownerSpaceId
           : people.find((p) => p.handle === o.toHandle)?.spaceId;
       if (!spaceId) continue;
-      notes.push({ spaceId, text: o.text, elf: "money", ...(o.poll ? { poll: o.poll } : {}) });
+      notes.push({ spaceId, text: formatOutbound(o.text), elf: "money", ...(o.poll ? { poll: o.poll } : {}) });
     }
     return notes;
   }
@@ -79,7 +81,7 @@ export function createMoneyBridge(deps: { store: Store; service: MoneyService; n
     return [
       {
         spaceId: move.ownerSpaceId,
-        text: lines.filter(Boolean).join("\n\n"),
+        text: formatLines(lines),
         elf: "money",
         ...(pending ? { poll: approvalPollFor(pending) } : {}),
       },

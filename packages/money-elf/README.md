@@ -30,22 +30,21 @@ Roommates can reply `PAID` or `PAID $50` (money moves into the owner's Moving Fu
 - `outbound: {spaceId, toHandle, text, poll?}[]`: texts to other people (roommates, buyers, the owner). A handle with no space yet (they've never texted Elves, so the shared pool can't reach them) isn't sent; the owner's reply says who to talk to instead.
 - `images`: the Ledger card PNG, uploaded to Photon (`POST /attachments`, multipart/related) and sent as an attachment.
 - `poll`: approval polls (Yes / Not now). The Photon 2.0 shared pool refuses them (`422`), so the text always says "Reply yes" too. Poll taps (`poll.vote`) route back to the Money Elf by their `money:` option ids.
-- `miniApp: {url}`: **the Moving Ledger dashboard as an iMessage mini app card**, delivered through Spectrum (Photon 1.0) when `SPECTRUM_PROJECT_ID`/`SECRET` are set. Photon 2.0 stays the agent; Spectrum only carries this card (decisions #53, #60). It's set whenever the owner asks for the dashboard *or* their turn changes the Ledger, so the card arrives unasked; a second send to the same person updates their card in place. The card is static: a tap opens the dashboard nearly full screen and it scrolls (decision #63).
+- `miniApp: {url}`: **shelved** (decision #72). The Moving Ledger dashboard as an iMessage mini app card through Spectrum (Photon 1.0), only when `ELVES_MINIAPP=1` and the `SPECTRUM_*` credentials are set. By default the dashboard link rides on every Ledger change instead.
 
 The service mounts `/ledger/*` (`createLedgerHandler`) when `PUBLIC_URL` and `LEDGER_LINK_SECRET` are set:
-- `/ledger/<move>`: the dashboard page (what the mini app card opens);
+- `/ledger/<move>`: the dashboard, a plain web page that opens in any browser (signed link, never expires);
 - `.png`: the card image;
 - `.json`: the view.
 
-After any Ledger-changing event (`LEDGER_CHANGING_EVENTS`: payments, deposits, escrow, loans, new shared costs), the service refreshes the owner's card in place. Hooks for other Elves:
-- **Stuff Elf:** opens escrow with `money.service.openEscrow(move, {...})`.
-- **Deal Engine:** calls `confirmPickup`, `mapConverged`, `setPickupTime` and `sweepNoShows`.
+After any Ledger-changing event (`LEDGER_CHANGING_EVENTS`: payments, deposits, escrow, loans, new shared costs) the owner's reply, or the note they get when someone else's turn caused it, ends with `Dashboard: <link>` (with the shelved mini app on, the service also refreshes the owner's card in place). Hooks for other Elves:
+- **Stuff and Home Elves:** `apps/elves/src/money-bridge.ts` turns the Deal Engine's events into `proposeOpenEscrow` (the owner's yes opens escrow), `pickupScheduled`, `confirmPickup`, `proposeEscrow` (refund) and `sweepNoShows`; see "Money: a sale, end to end" in the root README.
 
-The Ledger is in memory (`MemoryMoneyStore`); `MoneyStore` is the interface to put Supabase behind.
+The Elf's own state (people, entries, waiting approvals, accounts, Nessie merchant ids) is in Postgres via `PostgresMoneyStore` (migration `0010_money.sql`) whenever the crew store is Postgres, and in memory (`MemoryMoneyStore`) otherwise. `bun run test:money-pg` runs this whole package's tests against Postgres.
 
-## The Moving Ledger dashboard (mini app card)
+## The Moving Ledger dashboard (a web page)
 
-"Show me the ledger" sends the Ledger image in the Photon 2.0 thread, plus a card from "Elves Ledger" that opens the dashboard (`src/ledger-page.ts`) inside Messages. The same page is linked in the reply. It's read-only, re-reads Nessie every 30 seconds, and its card caption comes from the page's Open Graph tags.
+"Show me the ledger" sends the Ledger image in the Photon 2.0 thread and the dashboard link (`src/ledger-page.ts`). It's read-only apart from the Approve / Not now buttons, re-reads Nessie every 30 seconds, and carries Open Graph tags so a link preview can show it.
 
 The dashboard, the thread image and the bubble preview share one design system, "Elves Ledger" (decision #64): warm neutrals, ink with one lime accent, Inter with tabular figures, hairline panels. The page has a segmented control (Overview, Coming back, Activity). Overview leads with net cost so far and where it lands, then the projection chart, anything waiting for your OK (Approve / Not now), balances, who owes you, and what's held or due back. Coming back is a what-if calculator. Activity lists every Nessie movement; tap a row for its record id. The bubble shows a 3:2 preview (`/ledger/<move>.preview.png`).
 

@@ -35,7 +35,7 @@ describe("splits / Moving Fund", () => {
     await say("yes");
     const r = await say("paid", { from: SAM, role: "roommate" });
     expect(reply(r)).toContain("Sam paid $45 for the cleaning.");
-    expect(r.outbound).toMatchObject([{ toHandle: OWNER, text: "Sam paid $45 into the Moving Fund." }]);
+    expect(r.outbound).toMatchObject([{ toHandle: OWNER, text: "✅ Sam paid $45 into the Moving Fund." }]);
     expect(r.boardPatch?.lastUpdate).toBe("Ledger: $90 spent, $45 in the Moving Fund");
     const move = rails.calls.find(
       (c) =>
@@ -259,7 +259,7 @@ describe("escrow for sales (SPEC §4: two signals, release into the Moving Fund)
     const r = await say("yes");
     expect(reply(r)).toContain("Refunded Jo $60.");
     expect(r.outbound).toMatchObject([
-      { toHandle: "+16175550198", text: "Your $60 for the desk has been refunded." },
+      { toHandle: "+16175550198", text: "✅ Your $60 for the desk has been refunded." },
     ]);
     expect(eventTypes(r)).toContain("escrow.refunded");
   });
@@ -323,7 +323,7 @@ describe("no-show sweep (SPEC §4: 24h past pickup refunds the buyer)", () => {
 
     const r = await s.say("yes");
     expect(reply(r)).toContain("Refunded Alex $90.");
-    expect(r.outbound).toMatchObject([{ toHandle: ALEX, text: "Your $90 for the couch has been refunded." }]);
+    expect(r.outbound).toMatchObject([{ toHandle: ALEX, text: "✅ Your $90 for the couch has been refunded." }]);
   });
 
   test("a reschedule clears the no-show question; a pickup before the deadline is not a no-show", async () => {

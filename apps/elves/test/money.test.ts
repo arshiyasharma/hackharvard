@@ -34,13 +34,15 @@ class FakeMiniApps {
 }
 
 /** The real service, with the Money Elf in place of the stub (as apps/elves/src/index.ts wires it). */
-function boot(opts: { miniApps?: FakeMiniApps } = {}) {
+function boot(opts: { miniApps?: FakeMiniApps; links?: boolean } = {}) {
   const transport = new ScriptTransport();
   const store = new MemoryStore();
   const money = createMoneyElf({
     store: new MemoryMoneyStore(),
     rails: new FakeRails(),
-    links: opts.miniApps ? { publicUrl: "https://elves.test", secret: "s3cret" } : undefined,
+    links: opts.miniApps || opts.links ? { publicUrl: "https://elves.test", secret: "s3cret" } : undefined,
+    // The mini app card is shelved: it only runs when a test asks for it, the way ELVES_MINIAPP=1 does
+    cards: opts.miniApps !== undefined,
   });
   const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
   const service = createService({
@@ -76,7 +78,35 @@ async function say(
 }
 
 describe("Money Elf through the crew service", () => {
-  test("the mini app card opens the dashboard, and comes back whenever the owner changes the Ledger", async () => {
+  test("by default the dashboard is a web link on every Ledger change, and no card is sent", async () => {
+    const miniApps = new FakeMiniApps();
+    const t = boot({ links: true });
+    const { transport, stop } = t;
+    try {
+      await say(transport, "hi im moving nov 1");
+      await say(transport, "show me the ledger");
+      const asked = transport.sent.at(-1)?.text ?? "";
+      expect(asked).toStartWith("💸 Money Elf\n\n");
+      expect(asked).toMatch(/\n\nDashboard: https:\/\/elves\.test\/ledger\/[A-Za-z0-9_-]+\?t=\S+$/);
+      expect(asked).not.toContain("Elves Ledger card");
+      expect(transport.images.length).toBe(1);
+
+      // a deposit changes the Ledger: the reply carries the same link, with the news first
+      await say(transport, "I paid a $500 holding deposit on the sublet, due back Dec 1");
+      const after = transport.sent.at(-1)?.text ?? "";
+      expect(after).toContain("Dashboard: https://elves.test/ledger/");
+      expect(after.match(/\p{Extended_Pictographic}/gu)?.length).toBe(2); // the header's 💸 and one in the body
+
+      // small talk doesn't touch the Ledger, so no link
+      await say(transport, "thanks!");
+      expect(transport.sent.at(-1)?.text ?? "").not.toContain("Dashboard:");
+      expect(miniApps.sent).toHaveLength(0);
+    } finally {
+      stop();
+    }
+  });
+
+  test("(shelved) with ELVES_MINIAPP the mini app card opens the dashboard, and comes back whenever the owner changes the Ledger", async () => {
     const miniApps = new FakeMiniApps();
     const { transport, stop } = boot({ miniApps });
     try {
