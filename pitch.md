@@ -331,7 +331,7 @@ Per-track appendix slides (swap in for that judge): Photon (4.2 + 4.4), Nessie (
 
 ## 10. The pitch website
 
-**Goal:** a page that opens like a product launch and works like a cheat sheet on stage. Built in `site/` (static HTML, CSS and JS, no build step). Name: **Elfie**.
+**Goal:** a page that opens like a product launch and works like a cheat sheet on stage. **It is the pitch page, not the product: the live demo is in person, on someone's phone, in real time.** The site says so in the hero, in Demo time and in the footer. Built in `site/` (static HTML, CSS and JS, no build step). Name: **Elfie**.
 
 ### 10.1 The flow (top to bottom)
 1. **Title screen.** A giant "Elfie" on a dotted desktop buried in far too many windows: Craigslist, Airbnb, Zillow, Gmail, a budget spreadsheet, Venmo, U-Haul, a group chat, notes, a calendar, plus floating sticky notes, notification pills, a name tag that says "Overwhelmed", kaomoji and a row of too many browser tabs. Everything drifts. The problem line sits under it: big tasks like moving take weeks of websites, people and coordination.

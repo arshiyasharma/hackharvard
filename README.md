@@ -4,6 +4,15 @@ HackHarvard 2026. A Crew Lead and three specialist agents ("Elves": Home, Stuff,
 
 Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including Room Scan: [`docs/elves-spec.md`](docs/elves-spec.md). Original design and the W1–W23 plan: [`docs/`](docs/). **This README is the state of `team-stable`.** SPEC §2, §3 and §6 still describe an older snapshot (Deal Engine "not on this branch", Buy and Donate as stubs, 202 tests, migrations stopping at `0003`). When they disagree with the table below, trust this README, then the code.
 
+## The pitch page
+
+`site/` is our **pitch page**: a static website (HTML, CSS and JS, no build step) that tells the story of Elfie for the HackHarvard judges. It is not the product and it does not run the agents. **The live demo is in person, on someone's phone, in real time**; the page's simulators and practice call only replay example conversations as a backup.
+
+- Preview: `python3 -m http.server 8788 --directory site`, then open `http://localhost:8788`.
+- Edit the content in `site/data.js` (copy, example conversations, tracks, the stack list, photos, the phone number, the interview Short).
+- Host it anywhere that serves static files: drop the `site/` folder on Netlify or Vercel, or publish it with GitHub Pages. It needs no backend and no keys.
+- The full pitch plan, per-judge angles and the demo script are in [`pitch.md`](pitch.md).
+
 ## State of this branch
 
 `bun test` is 614 tests across 42 files (640 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
