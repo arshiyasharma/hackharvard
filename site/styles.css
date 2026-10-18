@@ -725,3 +725,11 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 .float-photo img { display: block; width: 100%; height: auto; aspect-ratio: var(--ar, auto); object-fit: cover; object-position: 50% 55%; border-radius: 2px; background: #eef0f5; }
 .float-photo figcaption { position: absolute; left: 0; right: 0; bottom: 7px; text-align: center; font-size: 11.5px; font-weight: 600; color: #4a4e5b; letter-spacing: -0.005em; }
 @media (max-width: 1180px) { .float-photo { display: none; } }
+
+/* the photo strip under the team: big, polaroid, scrolling */
+#try .strip.big { align-self: stretch; margin: 64px calc(-1 * max(20px, (100vw - var(--w)) / 2)) 0; padding: 14px 0 26px; }
+.strip.big .strip-track { gap: 28px; animation-duration: 55s; align-items: center; }
+.strip.big .tile { width: auto; height: clamp(320px, 42vw, 500px); aspect-ratio: auto; padding: 12px 12px 42px; background: #fff; border-radius: 6px; box-shadow: 0 26px 50px rgba(11, 12, 16, 0.18), 0 3px 8px rgba(11, 12, 16, 0.08); display: block; }
+.strip.big .tile img { height: 100%; width: auto; max-width: none; border-radius: 3px; object-fit: cover; }
+.strip.big .tile figcaption { left: 0; right: 0; bottom: 12px; text-align: center; color: #4a4e5b; text-shadow: none; font-size: 14px; font-weight: 600; }
+.strip.big .tile:nth-child(3n+2) { transform: rotate(var(--r)) translateY(12px); }

@@ -7,12 +7,9 @@ window.SITE = {
   number: "+1 740 255 8982", // the voice line; shown in "Demo time" and "Try it"
   interviewYouTubeId: "h2k7D7NcFDU", // the interview Short (youtube.com/shorts/h2k7D7NcFDU)
   // Photos that float beside sections (not a section of their own). Hidden on narrow screens.
-  floatPhotos: [
-    { src: "assets/night/booth.jpg", alt: "The team in a photo booth at the hackathon", caption: "the crew", at: "#why", css: "right:max(10px, calc((100vw - 1120px) / 2 - 36px)); top:11%; --w:158px; --r:5deg; --k:0.06" },
-    { src: "assets/night/desk.jpg", alt: "Laptops, snacks and hoodies on a table in the middle of the night", caption: "the war room", at: "#unique", css: "right:max(10px, calc((100vw - 1120px) / 2 - 60px)); top:9%; --w:210px; --r:-4deg; --k:-0.04; --ar:4/3" },
-  ],
-  nightPhotos: [], // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
-  nightCaptions: [], // optional, one per photo, e.g. ["Fri 11pm", "Sat 3am"]
+  floatPhotos: [], // photos pinned beside sections (unused now; the photos scroll under the team)
+  nightPhotos: ["assets/night/booth.jpg", "assets/night/desk.jpg"], // scroll under the team; add more files here // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
+  nightCaptions: ["the crew", "the war room"], // one per photo
   // Team portraits for "Call Elfie": drop photos into assets/team/ and list them here (photo is optional).
   team: [
     { name: "Gavin Zhou", role: "", photo: "" },

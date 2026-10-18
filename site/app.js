@@ -262,7 +262,8 @@
   var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["blue", "red", "amber", "green"];
   function tiles(offset) {
     var out = [], n = SITE.nightPhotos && SITE.nightPhotos.length ? SITE.nightPhotos.length : NIGHT.length;
-    for (var k = 0; k < n; k++) {
+    var reps = Math.max(1, Math.ceil(5 / n));
+    for (var k = 0; k < n * reps; k++) {
       var i = (k + offset) % n, t = el("figure", "tile"); t.style.setProperty("--r", ((i % 2 ? 1 : -1) * (0.8 + (i % 3) * 0.5)) + "deg");
       if (SITE.nightPhotos && SITE.nightPhotos.length) {
         var im = new Image(); im.src = SITE.nightPhotos[i]; im.alt = "The team building Elfie through the night"; im.loading = "lazy"; t.appendChild(im);
@@ -282,7 +283,7 @@
     if (reduce) $$("figure", track).slice(Math.floor(track.children.length / 2)).forEach(function (n) { n.remove(); });
   }
   if (SITE.nightPhotos && SITE.nightPhotos.length) {
-    var ps = el("div", "strip"); ps.setAttribute("aria-label", "Photos from the build"); $("#demo").after(ps); fillStrip(ps);
+    var ps = el("div", "strip big"); ps.setAttribute("aria-label", "Photos from the build"); $("#try").appendChild(ps); fillStrip(ps);
   }
 
   /* ---------- the crew emulator ---------- */
