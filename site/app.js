@@ -256,7 +256,7 @@
 
   /* ---------- demo number ---------- */
   var dn = $("#demoNum");
-  if (SITE.number) dn.textContent = SITE.number; else dn.hidden = true;
+  if (SITE.number) dn.innerHTML = '<a href="tel:' + SITE.number.replace(/[^+\d]/g, "") + '">Call ' + esc(SITE.number) + "</a>"; else dn.hidden = true;
 
   /* ---------- photo strips ---------- */
   var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["blue", "red", "amber", "green"];
@@ -443,7 +443,7 @@
 
   /* ---------- number, repo ---------- */
   var num = $("#number");
-  if (SITE.number) num.textContent = SITE.number; else num.hidden = true;
+  if (SITE.number) num.innerHTML = '<a href="tel:' + SITE.number.replace(/[^+\d]/g, "") + '">Call ' + esc(SITE.number) + "</a>"; else num.hidden = true;
   $("#repo").href = SITE.repoUrl;
 
 

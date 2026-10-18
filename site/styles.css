@@ -715,3 +715,6 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 @keyframes tabin { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
 .scrollhint { animation: fadeup 1s 4s backwards; }
 @media (prefers-reduced-motion: reduce) { .pop, .giant, .problem, .tabstrip .tab, .scrollhint { animation: none; } }
+
+.number a, .demo-num a { color: inherit; text-decoration: none; }
+.number a:hover { text-decoration: underline; text-underline-offset: 4px; }

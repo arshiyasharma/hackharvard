@@ -4,11 +4,11 @@
 
 window.SITE = {
   // Fill these in; the page renders sensible empty states until you do.
-  number: "", // e.g. "+1 628 997 9661", shown in "Demo time" and "Try it" when set
+  number: "+1 740 255 8982", // the voice line; shown in "Demo time" and "Try it"
   interviewYouTubeId: "h2k7D7NcFDU", // the interview Short (youtube.com/shorts/h2k7D7NcFDU)
   nightPhotos: [], // e.g. ["assets/night/1.jpg", "assets/night/2.jpg"]; they scroll in the strips
   nightCaptions: [], // optional, one per photo, e.g. ["Fri 11pm", "Sat 3am"]
-  // Team portraits for "Text the crew": drop photos into assets/team/ and list them here (photo is optional).
+  // Team portraits for "Call Elfie": drop photos into assets/team/ and list them here (photo is optional).
   team: [
     { name: "Gavin Zhou", role: "", photo: "" },
     { name: "Arshiya Sharma", role: "", photo: "" },
