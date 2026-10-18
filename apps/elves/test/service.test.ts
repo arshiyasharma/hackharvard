@@ -619,3 +619,26 @@ describe("Deal Engine: buyers text the listing's number", () => {
     t.stop();
   });
 });
+
+describe("a phone re-assigned to a new pool number", () => {
+  test("later texts, and call recaps, go out from the new line", async () => {
+    const { transport, store, service, stop } = boot();
+    transport.push(owner, "hi");
+    await transport.waitForSends(1);
+    await transport.settled();
+    const space = transport.spaceFor(owner);
+    expect((await store.getParticipantBySpace(space))?.agentUserId).toBe("usr_agent");
+
+    (transport as { agentId: string }).agentId = "usr_agent_new";
+    transport.push(owner, "hello again");
+    await transport.waitForSends(2);
+    await transport.settled();
+    expect((await store.getParticipantBySpace(space))?.agentUserId).toBe("usr_agent_new");
+
+    const move = await store.getMoveByOwnerHandle(owner);
+    expect(await service.notifyOwner(move!.id, "crew_lead", "Thanks for the call.", "call_1")).toBe(true);
+    expect(transport.sent.at(-1)?.senderId).toBe("usr_agent_new");
+    expect(await service.notifyOwner(move!.id, "crew_lead", "Thanks for the call.", "call_1")).toBe(false);
+    stop();
+  });
+});

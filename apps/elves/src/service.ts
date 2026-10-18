@@ -85,10 +85,17 @@ export function createService(deps: ServiceDeps): Service {
   async function resolveMove(
     msg: InboundMessage,
   ): Promise<{ move: Move; participant: Participant; firstContact: boolean }> {
-    const existing = await deps.store.getParticipantBySpace(msg.spaceId);
+    let existing = await deps.store.getParticipantBySpace(msg.spaceId);
     if (existing) {
       const move = await deps.store.getMove(existing.moveId);
-      if (move) return { move, participant: existing, firstContact: false };
+      if (move) {
+        // The pool number a phone talks to can change (re-assigned); outbound texts must come from the current one.
+        if (msg.agentId && existing.agentUserId !== msg.agentId) {
+          const { id: _id, createdAt: _createdAt, ...rest } = existing;
+          existing = await deps.store.upsertParticipant({ ...rest, agentUserId: msg.agentId });
+        }
+        return { move, participant: existing, firstContact: false };
+      }
     }
     // A stranger quoting a listing's ref code joins that deal, even if they run a move of their own; a stranger
     // who is not an owner joins the one open deal on this number their text names ("is the couch available?").
@@ -594,7 +601,12 @@ export function createService(deps: ServiceDeps): Service {
     if (!move) return false;
     const sk = sendKey("notify", key);
     if (await deps.store.getSend(sk)) return false;
-    await deliverTo(move, elf, { spaceId: move.ownerSpaceId, text }, sk, null);
+    // The owner's newest space: after a phone is re-assigned to a new pool number, texting it opens a new space, and
+    // the old one (move.ownerSpaceId) points at a line the phone no longer talks to.
+    const newest = (await deps.store.listParticipants(move.id))
+      .filter((p) => p.role === "owner" && p.agentUserId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    await deliverTo(move, elf, { spaceId: newest?.spaceId ?? move.ownerSpaceId, text }, sk, null);
     return Boolean(await deps.store.getSend(sk));
   }
 
