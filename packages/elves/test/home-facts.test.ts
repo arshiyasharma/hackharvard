@@ -72,6 +72,9 @@ describe("housing heuristics", () => {
     ["6/1 - 8/30", "2026-06-01", "2026-08-30"],
     ["from jun 1st until sept 15", "2026-06-01", "2026-09-15"],
     ["moving in sept 1", "2026-09-01", null],
+    ["I want to sublet my room for $1500 june 1 to aug 31, furnished", "2026-06-01", "2026-08-31"],
+    ["need to find a place june 1", "2026-06-01", null],
+    ["sublet my room until aug 31", null, "2026-08-31"],
     ["no dates here", null, null],
   ])("parseDateRange(%p)", (text, start, end) => {
     expect(parseDateRange(text, now)).toEqual({ start, end });

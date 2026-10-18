@@ -1,8 +1,8 @@
-import { openDeal } from "@elves/engine";
+import { isOpen, openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
-import type { Item } from "@elves/shared";
+import type { Item, Store } from "@elves/shared";
 import { z } from "zod";
-import type { ElfContext } from "./contract.ts";
+import { type ElfContext, isImageAttachment } from "./contract.ts";
 import { CATEGORIES, CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB } from "./facts.ts";
 
 export const ItemIdentification = z.object({
@@ -30,17 +30,23 @@ export interface IntakeResult {
   notes: string | null;
 }
 
-/** Download the batch's photos, identify the items with vision, and create or enrich `items` rows. */
-export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult> {
-  const photoIds = ctx.batch.messages.flatMap((m) => m.attachments.map((a) => a.id));
-  if (photoIds.length === 0) return { items: [], failed: 0, notes: null };
-  const images: {
-    id: string;
-    mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-    base64: string;
-  }[] = [];
+export interface BatchImage {
+  id: string;
+  mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  base64: string;
+}
+
+/** Download and decode the batch's photos (HEIC included), at most `max`; unreadable ones are counted. */
+export async function loadBatchImages(
+  ctx: ElfContext,
+  max = 4,
+): Promise<{ images: BatchImage[]; failed: number }> {
+  const photoIds = ctx.batch.messages.flatMap((m) =>
+    m.attachments.filter(isImageAttachment).map((a) => a.id),
+  );
+  const images: BatchImage[] = [];
   let failed = 0;
-  for (const id of photoIds.slice(0, 4)) {
+  for (const id of photoIds.slice(0, max)) {
     try {
       const file = await ctx.fetchAttachment(id);
       if (!file) {
@@ -58,6 +64,14 @@ export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult>
       ctx.log.warn("photo intake: could not prepare image", { id, error: String(err) });
     }
   }
+  return { images, failed };
+}
+
+/** Download the batch's photos, identify the items with vision, and create or enrich `items` rows. */
+export async function identifyFromPhotos(ctx: ElfContext): Promise<IntakeResult> {
+  const photoIds = ctx.batch.messages.flatMap((m) => m.attachments.map((a) => a.id));
+  if (photoIds.length === 0) return { items: [], failed: 0, notes: null };
+  const { images, failed } = await loadBatchImages(ctx);
   if (images.length === 0 || ctx.signal.aborted) return { items: [], failed, notes: null };
 
   let ident: ItemIdentification;
@@ -122,21 +136,62 @@ export function isApproval(text: string): boolean {
   return APPROVAL.test(text) && !DECLINE.test(text);
 }
 
+/** "what's the ref code", "tell me the code for the buyer", "did you make a ref yet": the owner wants the code. */
+export const REF_ASK = /\b(ref(?:erence)?(?:\s*code)?|the code|a code|listing code|post line)\b/i;
+
+/** Anything that should end with the item listed and its ref code in the owner's hands. */
+export function wantsListing(text: string): boolean {
+  return isApproval(text) || (REF_ASK.test(text) && !DECLINE.test(text));
+}
+
 /** An approved item and the sell deal it opened: buyers quote `dealCode` in their first text. */
 export type ApprovedItem = Item & { dealId: string; dealCode: string };
 
 /** Mark every priced, unapproved item as approved and open its sell deal; returns the items that flipped. */
-export async function approvePendingListings(ctx: ElfContext): Promise<ApprovedItem[]> {
-  const items = await ctx.store.listItems(ctx.move.id);
-  const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
+/**
+ * Items a "list it" can cover: a floor is set, the item is still the owner's, and no sell deal is open on it. An
+ * item whose last listing closed (Last Call dumped it, a buyer walked after hand-off fell through) is pending
+ * again, so "list it" reopens it with a fresh ref code instead of silently doing nothing.
+ */
+export async function pendingListings(store: Store, moveId: string): Promise<Item[]> {
+  const items = await store.listItems(moveId);
+  const open = new Set(
+    (await store.listDeals(moveId))
+      .filter((d) => d.mode === "sell_item" && isOpen(d.state))
+      .map((d) => d.subjectId),
+  );
+  return items.filter(
+    (i) => i.floorPriceCents != null && !open.has(i.id) && !["sold", "given", "donated"].includes(i.outcome),
+  );
+}
+
+/** "list it at 200": a list price named in the approval itself. */
+const LIST_AT = /\b(?:at|for)\s*\$?\s?(\d{2,5})(?:\.\d{1,2})?\b(?!\s*(?:am|pm|%))/i;
+
+export async function approvePendingListings(ctx: ElfContext, text = ""): Promise<ApprovedItem[]> {
+  const pending = await pendingListings(ctx.store, ctx.move.id);
+  return approveListings(ctx, chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id)), text);
+}
+
+/** List exactly these items: each gets listingApproved, outcome listed, and an open sell deal with a ref code. */
+export async function approveListings(ctx: ElfContext, chosen: Item[], text = ""): Promise<ApprovedItem[]> {
+  const at = text.match(LIST_AT);
+  const listAt = at ? Number(at[1]) * 100 : null;
   const out: ApprovedItem[] = [];
-  for (const it of pending) {
+  for (const it of chosen) {
+    if (it.floorPriceCents == null) continue;
+    const listPriceCents =
+      listAt != null && it.floorPriceCents != null && listAt >= it.floorPriceCents
+        ? listAt
+        : it.listPriceCents;
     const item = await ctx.store.upsertItem({
       id: it.id,
       moveId: it.moveId,
       name: it.name,
       category: it.category,
+      listPriceCents,
       listingApproved: true,
+      outcome: "listed",
     });
     const deal = await openDeal(ctx.store, {
       moveId: item.moveId,
@@ -151,8 +206,40 @@ export async function approvePendingListings(ctx: ElfContext): Promise<ApprovedI
   return out;
 }
 
+const ALL_OF_THEM = /\b(all of them|them all|both|everything|(?:list|post) (?:them )?all)\b/i;
+
+/**
+ * Which pending items a yes covers: the item the text names; every pending item for "both" / "all of them";
+ * the only one when just one is waiting; else the one whose floor was set most recently, which is the item the
+ * last "want me to list it?" was about.
+ */
+export function chooseToApprove(
+  text: string,
+  pending: Item[],
+  events: { type: string; payload: Record<string, unknown> }[],
+): Item[] {
+  if (pending.length <= 1) return pending;
+  const t = text.toLowerCase();
+  const named = pending.find((i) => t.includes(i.name.toLowerCase()));
+  if (named) return [named];
+  for (const [cat, words] of Object.entries(CATEGORY_WORDS) as [Category, string[]][]) {
+    if (words.some((w) => new RegExp(`(^|[^a-z])${w}(es|s)?([^a-z]|$)`).test(t))) {
+      const m = pending.find((i) => i.category === cat);
+      if (m) return [m];
+    }
+  }
+  if (ALL_OF_THEM.test(t)) return pending;
+  const last = [...events]
+    .reverse()
+    .find((e) => e.type === "item.floor_set" && pending.some((p) => p.id === e.payload.itemId));
+  return [pending.find((p) => p.id === last?.payload.itemId) ?? (pending[pending.length - 1] as Item)];
+}
+
 /** onSent for the owner-chat message that announced these listings: their deal summaries thread under it. */
-export function anchorDeals(ctx: ElfContext, approved: ApprovedItem[]): ((id: string) => Promise<void>) | undefined {
+export function anchorDeals(
+  ctx: ElfContext,
+  approved: ApprovedItem[],
+): ((id: string) => Promise<void>) | undefined {
   if (!approved.length) return undefined;
   return async (messageId) => {
     for (const a of approved) {

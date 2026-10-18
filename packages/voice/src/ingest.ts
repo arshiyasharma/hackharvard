@@ -77,6 +77,26 @@ async function extract(deps: IngestDeps, call: RetellCall, now: Date): Promise<E
  * behind the owner's explicit yes by text.
  */
 export async function ingestCall(deps: IngestDeps, evt: RetellEvent): Promise<IngestResult> {
+  // Retell sends call_ended and call_analyzed within milliseconds of each other. The saved-event check below can't
+  // see a call that is still being written, so a second delivery waits for the first instead of repeating it.
+  const id = evt.call.call_id;
+  const running = inflight.get(id);
+  if (running) {
+    const r = await running;
+    return r.status === "ingested" ? { status: "duplicate", moveId: r.moveId } : r;
+  }
+  const work = ingestOnce(deps, evt);
+  inflight.set(id, work);
+  try {
+    return await work;
+  } finally {
+    inflight.delete(id);
+  }
+}
+
+const inflight = new Map<string, Promise<IngestResult>>();
+
+async function ingestOnce(deps: IngestDeps, evt: RetellEvent): Promise<IngestResult> {
   const log = deps.logger ?? createLogger("voice");
   const call = evt.call;
   if (!HANDLED.has(evt.event)) return { status: "ignored" };
@@ -331,8 +351,8 @@ async function writeBriefs(
   const briefs: Partial<Record<ElfName, Record<string, unknown>>> = {
     crew_lead: { ...base, summary, conflicts: b.conflicts, asks: b.asks },
     stuff: { ...base, toSell: b.selling, keeping: b.keeping, toBuy: b.toBuy, moveOut: b.moveOut },
-    home: { ...base, moveOut: b.moveOut, moveIn: b.moveIn, from: b.from, to: b.to, asks: asks(HOME_WORDS) },
-    moveday: {
+    // Home took over what Move-day had: the keep list, who's helping, and move-day asks.
+    home: {
       ...base,
       moveOut: b.moveOut,
       moveIn: b.moveIn,
@@ -340,7 +360,7 @@ async function writeBriefs(
       to: b.to,
       keeping: b.keeping,
       roommates: b.roommates,
-      asks: asks(MOVE_WORDS),
+      asks: [...new Set([...asks(HOME_WORDS), ...asks(MOVE_WORDS)])],
     },
     money: { ...base, roommates: b.roommates, asks: asks(MONEY_WORDS) },
   };

@@ -37,6 +37,7 @@ if (config.transport === "script") {
     inbound: config.photon.inbound,
     pollMs: config.photon.pollMs,
     since: config.photon.since,
+    dedicatedAgentId: config.photon.dedicatedAgentId,
     cursor: { get: (n) => store.getCursor(n), set: (n, v) => store.setCursor(n, v) },
     logger: createLogger("photon2"),
   });
@@ -120,9 +121,7 @@ const app = createServer({
             memory,
             apiKey: retellKey,
             logger: createLogger("voice"),
-            sendRecap: async (moveId, text, callId) => {
-              await service.notifyOwner(moveId, "crew_lead", text, callId);
-            },
+            sendRecap: (moveId, text, callId) => service.notifyOwner(moveId, "crew_lead", text, callId),
           },
           raw,
           signature,

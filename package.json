@@ -10,6 +10,7 @@
     "dev": "bun run --watch apps/elves/src/index.ts",
     "start": "bun run apps/elves/src/index.ts",
     "demo": "bun run scripts/demo.ts",
+    "eval:onboarding": "bun run scripts/onboarding-eval.ts",
     "photon": "bun run scripts/photon.ts",
     "mock-call": "bun run scripts/mock-call.ts",
     "browser": "bun run scripts/browser.ts",

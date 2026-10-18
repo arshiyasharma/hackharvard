@@ -12,15 +12,30 @@ Elves is a moving crew the owner texts. Five Elves share one phone number: the C
 | Stuff Elf | `stuff` | Everything the owner owns or wants | Sell, Buy, Donate / Last Call | Sell only |
 | Money Elf | `money` | Every dollar that moves | Escrow, Ledger, splits, scam check. Nessie is the ledger | No (fixed reply) |
 | Move-day Elf | `moveday` | Getting the stuff from A to B, after the Home Elf has planned everything | Room Scan, U-Haul pick and quote, Move Map route, return-time planning | No (fixed reply); Room Scan is new |
-| Home Elf | `home` | The place you leave, the place you go, the gap between | Lease, Hunt, Move-in week | No (fixed reply) |
+| Home Elf | `home` | The place you leave, the place you go, the gap between | Sublet out, Hunt, Move-in week | Yes |
 
 Every Elf has the same shape in code: `handle(ctx)` returns replies, a board update, events and changes to the move record (`packages/elves/src/contract.ts`). Elves never send messages themselves; the service does.
 
 ## 1. Crew Lead (`crew_lead`)
 
-The Crew Lead is the owner's single point of contact: it captures the move's facts, says which Elf is on what, and asks for one missing thing per turn.
+The Crew Lead is the owner's single point of contact. A move starts with the onboarding call; after the brief is confirmed it captures the move's facts turn by turn, says which Elf is on what, and asks for one missing thing per turn.
 
-**Gets the message when:** it is the owner's first contact; it's a greeting, a thank-you or a status check; it mentions dates, addresses, roommates or the plan; or nothing else matches.
+**Gets the message when:** it is the owner's first contact; the owner's brief is not confirmed yet (every owner text during the call); it's a greeting, a thank-you or a status check; it mentions dates, addresses, roommates or the plan; or nothing else matches.
+
+### 1a. The onboarding call (`packages/elves/src/onboarding.ts`)
+
+From the owner's first text until they say yes to the brief, the Crew Lead only gathers. It does not plan, list, price, search, book, name an Elf or say what happens next. The goal is the fewest owner texts for the most nuance.
+
+1. State lives in the store's cursor `onboarding:<moveId>`: `gathering` → `confirming` → `confirmed`, with the brief, the number of asking turns and the prompt variant. A move that predates this has no state and skips the call. With the fake model there is no call.
+2. Each turn is one Sonnet call with structured output: the memory preamble, the brief so far, today's date and `turnsLeft`, the owner's text; back comes the updated brief, the phase (`ask` or `confirm`), the fields being asked about, and the text. Photos during the call are identified and added to the brief as `undecided` items, not priced.
+3. The brief (`packages/shared/src/brief.ts`): move (dates and how firm, from, to, distance, reason), people (household, roommates, helpers, availability), stuff (items with intent and notes, volume, big or awkward, attitude), home (lease situation and notes, needs a place and what, the gap, move-in needs), money (budget, payment, splits, what they optimize for), move day (transport, storage, access, timing), worries, priorities, verbatim asks, open questions. On the wire unknown strings are `""` and unknown numbers `-1` (the API caps nullable fields per schema); the store keeps nulls.
+4. Essentials, in order: move-out date; from; to or "needs a place"; what goes and what has to go; how it moves; who else is involved; the lease. The Lead confirms as soon as the essentials are known, and after four asking turns no matter what.
+5. The confirm text plays the brief back in the owner's words, lists what is still TBD instead of asking again, and ends "Reply yes to lock it in, or tell me what to change." A bare yes (or 👍) dispatches; anything else is a correction, applied and played back again.
+6. Dispatch (`dispatchBrief`): dates and addresses onto the move; sell / donate / buy / undecided items created; one board row per Elf with work (Stuff: sell, donate, find, decide; Home: find a place, sublet out or lease exit, move-in week; Move-day: truck, movers, storage, awkward items; Money: escrow on sales, splits, budget); events `brief.confirmed` and `elf.dispatched`; the reply names who starts on what, and the Crew Board link goes out with it. Working memory renders the brief for every Elf from then on.
+
+**Voice variant** (`VOICE_ONBOARDING_PROMPTS` in `packages/elves/src/onboarding-voice.ts`): the same call as a Retell single-prompt voice agent. `story_first` (the one on trial) hands the caller the floor, mirrors the move back with the gaps as blanks and states assumptions aloud, plays the brief back, and on a yes calls the `submit_brief` custom function, then `end_call`. The prompt is in Retell's shape (Role, Call flow steps, Closing, Rules; built-in `{{current_time}}` and `{{user_number}}`); the brief's shape lives in the function's JSON schema, generated from `BriefWire` plus `status` by `retellSubmitBriefTool()`, so `args` is the wire brief (`""` / `-1` for unknowns) and the webhook parses it with `SubmitBriefArgs` and `briefFromWire`. `bun run scripts/retell-agent.ts` prints everything to paste into the dashboard. The service-side `submit_brief` webhook is not built yet. The other two voice variants (`sweep`, `thread`) are in `docs/crew-lead-retell-prompts.md`, still in long form.
+
+**Prompt variants** (`ONBOARDING_PROMPTS`, chosen by `ELVES_ONBOARDING_PROMPT`): `one_at_a_time` (one question per text, the old habit), `sweep` (one bundle of the top three or four gaps per text with an open tail for nuance, two asking turns), `mirror` (plays the move back with the gaps as blanks, states assumptions instead of asking). `bun run eval:onboarding` runs all three against three simulated owners and scores them; the results are in the README section "Onboarding call eval".
 
 **Inputs:** the owner's batched messages, any photos, the move record, the item list, the Crew Board, and memory (the conversation so far plus working memory).
 
@@ -47,7 +62,7 @@ The Crew Lead is the owner's single point of contact: it captures the move's fac
 
 **Writes:** move record fields, items, the board rows for Crew Lead and Stuff Elf, and the events `move.date_captured`, `item.captured`, `item.identified`, `listing.approved`.
 
-**Status:** built (`packages/elves/src/crew-lead.ts`). The Room Scan hand-off and the room-photo ask are new.
+**Status:** built (`packages/elves/src/crew-lead.ts`, `onboarding.ts`). The Room Scan hand-off and the room-photo ask are new.
 
 ## 2. Stuff Elf (`stuff`)
 
@@ -179,16 +194,15 @@ Vehicle capacities are approximate and must be checked against the rental compan
 
 ## 5. Home Elf (`home`)
 
-The Home Elf covers housing at both ends: getting out of the current lease cleanly, finding the next place, and getting through move-in week.
+The Home Elf covers housing at both ends: subletting the current place out, finding the next place, and getting through move-in week. It does not read leases or draft landlord notices; "can I sublet?" is the lease's and the landlord's call, and the Elf says so.
 
-**Gets the message when:** it mentions the lease, subletting, the landlord, notice, the security deposit, a room or apartment search, budget, neighborhoods, utilities, internet, an address change, insurance, hotels or luggage.
+**Gets the message when:** it mentions subletting, a room or apartment search, budget, neighborhoods, utilities, internet, an address change, insurance, hotels or luggage.
 
-### 5a. Lease
+### 5a. Sublet out
 
-- **Input:** the lease PDF or photos of its pages.
-- **Does:** answers whether the owner can sublet or break early and at what cost, quotes the exact clauses with page numbers, and lists the notice deadline as a date.
-- **Drafts:** the landlord notice, a sublet request, and a move-out checklist for getting the deposit back (photos of each room, cleaning, keys).
-- **Deposit:** tracks the return deadline and reminds the owner, with the Money Elf logging the amount.
+- **Input:** rent, dates, area and room photos, one at a time.
+- **Does:** writes the post the owner pastes; applicants text the number with the ref, and the Deal Engine (`sublet_out`) screens them, holds the rent floor and asks the owner on low offers.
+- **Viewings:** an applicant who agrees a rent is offered times; the time they pick is held and put to the owner ("Book it? yes or no"). Only a yes books it; a no offers the applicant the other times. The same rule covers a lister's viewing on `find_sublet`.
 
 ### 5b. Hunt
 
@@ -203,11 +217,11 @@ The Home Elf covers housing at both ends: getting out of the current lease clean
 - **Checklist:** electricity, gas, internet, renters insurance, USPS address change, keys and a move-in condition report with photos, each with a due date relative to move-in.
 - **Reminders:** sends one text per due item, in the days before move-in.
 
-**Guardrails:** it never signs, submits or pays for anything; it drafts, and the owner sends. It gives lease readings as summaries with the clause quoted, not legal advice.
+**Guardrails:** it never signs, submits or pays for anything; it drafts, and the owner sends. It never books a viewing time without the owner's yes.
 
-**Writes:** move-in date and to-address (if the Crew Lead doesn't have them yet), checklist items, the Home board row, and the events `lease.read`, `listing.ranked`, `checklist.created` (proposed).
+**Writes:** move-in date and to-address (if the Crew Lead doesn't have them yet), checklist items, the Home board row, and the events `listing.ranked`, `checklist.created` (proposed).
 
-**Status:** fixed reply today, one per sub-skill.
+**Status:** built: sublet out (`home-sublet.ts` + the `sublet_out` deal), Hunt (`home.ts`), move-in week (`home-movein.ts`). The lease reader was removed on 2026-10-17.
 
 ## 6. Shared rules
 
@@ -223,7 +237,7 @@ Every Elf follows the same routing, reply style and approval rules, so the owner
 6. Keyword scores decide; ties go to the earlier Elf (Crew Lead, Stuff, Money, Move-day, Home).
 7. Otherwise the message goes to the Crew Lead.
 
-**Inside an Elf:** each grouped Elf scores its sub-skills by keyword; ties and no-match go to its first sub-skill (Sell, Room Scan, Lease).
+**Inside an Elf:** each grouped Elf scores its sub-skills by keyword; ties and no-match go to its first sub-skill (Sell, Room Scan, Hunt).
 
 **Reply style:** plain text only, no markdown, 2–4 short lines, at most one emoji. Each reply threads under the owner's message when the space allows it, and falls back to a flat send when it doesn't. Every reply asks for at most one thing.
 
@@ -244,7 +258,6 @@ Every Elf follows the same routing, reply style and approval rules, so the owner
 - [ ] Estimation tables: whose numbers do we calibrate against (past moves, a moving company's calculator)?
 - [ ] Payments: which provider handles escrow and payment requests in production?
 - [ ] Move Map: what location consent flow do roommates and buyers see?
-- [ ] Lease reading: what disclaimer appears with lease summaries?
 
 **Proposed build order**
 
@@ -252,6 +265,18 @@ Every Elf follows the same routing, reply style and approval rules, so the owner
 2. Haul quotes from the Move Estimate, with booking on approval.
 3. Stuff Elf buyer conversations and Last Call.
 4. Money Elf escrow and Ledger, tied to sales and split quotes.
-5. Home Elf lease reading and the move-in checklist.
+5. Home Elf sublet-out and the move-in checklist.
 6. Hunt and Move Map.
+
+## 8. Elf connections (Home ↔ Money, Home ↔ Move-day)
+
+The Home Elf is a sublet agent in both directions. Each direction ends in a hand-off to another Elf; these are the seams to build against, recorded here so they are not lost between branches.
+
+| Direction | Home does | Hands off to | Carrier today |
+| --- | --- | --- | --- |
+| Sublet out | Collects rent, dates, area, photos; writes the post (owner pastes it); applicants text the number with the ref; the Deal Engine (`sublet_out`) screens, holds the rent floor, asks the owner on low offers, offers viewing slots and books one only on the owner's yes | **Money Elf**: sublease agreement and deposit/escrow once an applicant is agreed | `deal.agreed` + `ledger.hold` events; Money is still a canned stub, no contract exists |
+| Hunt | Finds listings by cost, area, dates; ranks, flags scams; "reach out to N" opens `find_sublet` (and, on the outreach branch, texts the lister from the dedicated line) | **Money Elf**: verify the landlord/lister before any deposit (identity, lease authority, payment outside escrow) | listing `scamFlags` + the engine's Scam Shield (`scam.flagged`); no landlord verification exists |
+| The gap | Hotel nights between move-out and move-in (Airbnb), storage query (SpareFoot behind a flag), luggage-gap task on the move-in checklist branch | **Move-day Elf**: consumes hotel, storage and flight plans with `pickup.scheduled` when it plans the day | nothing emits a gap plan yet; flights are not searched |
+
+Verified 2026-10-17 on branch `gavin` with the fake model and the script transport: the sublet_out applicant conversation above runs end to end (join by ref → floor held → owner asked/answered → agreed → viewing slots → `ledger.hold`). Gaps seen in the same run: an applicant asking to view *before* agreeing gets the availability line again; "how do I pay the deposit?" is not answered (Money's job); flights have no recipe.
 

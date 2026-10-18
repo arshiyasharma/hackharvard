@@ -1,7 +1,5 @@
 /** Short replies to a list of picks: "more", "tell me about 2", "skip 1", "save 3". */
-export type FollowUp =
-  | { kind: "more" }
-  | { kind: "detail" | "skip" | "shortlist" | "reach"; n: number };
+export type FollowUp = { kind: "more" } | { kind: "detail" | "skip" | "shortlist" | "reach"; n: number };
 
 const MORE = /^(?:more|next|show me more|any more|anything else|what else|others?|more options)\s*[?!.]*$/i;
 const DETAIL =

@@ -13,6 +13,11 @@ import { ScriptTransport } from "@elves/photon";
 import { createLogger, MemoryStore } from "@elves/shared";
 import { createService } from "../src/service.ts";
 
+function must<T>(v: T | undefined): T {
+  if (v === undefined) throw new Error("expected a value");
+  return v;
+}
+
 const quiet = createLogger("test", "error");
 const OWNER = "+14155550100";
 
@@ -110,16 +115,16 @@ describe("Money Elf through the crew service", () => {
       expect(ask).toContain("Truck $240 split: you $120, Sam $120.");
       expect(ask).toContain("Reply yes");
       expect(transport.polls).toHaveLength(1);
-      const poll = transport.polls[0]!;
+      const poll = must(transport.polls[0]);
       expect(poll.poll.options.map((o) => o.text)).toEqual(["Yes", "Not now"]);
       expect(poll.spaceId).toBe(transport.sent.at(-1)?.spaceId ?? "");
 
       // The tap has no text; the router sends it back to the Money Elf by its option id.
-      const yes = poll.poll.options[0]!;
+      const yes = must(poll.poll.options[0]);
       await say(transport, null, { pollVote: { selectedOptions: [yes] } });
       const after = transport.sent.at(-1)?.text ?? "";
       expect(after).toContain("What's Sam's number");
-      const move = (await store.listMoves())[0]!;
+      const move = must((await store.listMoves())[0]);
       const types = (await store.listEvents(move.id)).map((e) => e.type);
       expect(types).toContain("poll.sent");
       expect(types).toContain("approval.granted");
@@ -137,10 +142,10 @@ describe("Money Elf through the crew service", () => {
       await say(transport, "show me the ledger");
       expect(transport.sent.at(-1)?.text).toContain("Here's your money, live from Nessie.");
       expect(transport.images).toHaveLength(1);
-      const img = transport.images[0]!.image;
+      const img = must(transport.images[0]).image;
       expect(img.contentType).toBe("image/png");
       expect([...img.bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
-      const move = (await store.listMoves())[0]!;
+      const move = must((await store.listMoves())[0]);
       expect((await store.listEvents(move.id)).map((e) => e.type)).toContain("image.sent");
     } finally {
       stop();
@@ -174,7 +179,8 @@ describe("delivering texts from outside a batch", () => {
       expect(await service.deliverOutbound(move.id, "money", notes, "dashboard:pa_1")).toBe(1);
       expect(await service.deliverOutbound(move.id, "money", notes, "dashboard:pa_1")).toBe(0);
       expect(transport.sent.length).toBe(before + 1);
-      expect(transport.sent.at(-1)?.text).toBe("From your dashboard: Sent the request.");
+      // Every crew text opens with its Elf's name.
+      expect(transport.sent.at(-1)?.text).toEndWith("From your dashboard: Sent the request.");
     } finally {
       ctrl.abort();
     }

@@ -9,18 +9,38 @@ import {
   type EventRow,
   type HousingSearch,
   type Item,
+  type LeaseReading,
   type Listing,
   listingDefaults,
+  MOVEIN_TASK_KEYS,
   type Move,
+  type MoveinTask,
+  type MoveinTaskInput,
+  moveinTaskDefaults,
   newId,
   type Participant,
   type SendRecord,
   type Slot,
   type Store,
+  type SubletPost,
 } from "@elves/shared";
 import type { SQL } from "bun";
 
 type Row = Record<string, unknown>;
+
+const MOVEIN_KEY_ORDER = [...MOVEIN_TASK_KEYS];
+
+/**
+ * Checklist order: by due date, then the checklist's own key order. Sorted here, not in SQL: Bun.sql sends a JS
+ * array parameter as "a,b,c", which Postgres rejects as a malformed array literal (seen live on 2026-10-17).
+ */
+function sortMoveinTasks(tasks: MoveinTask[]): MoveinTask[] {
+  const pos = (k: string) => {
+    const i = MOVEIN_KEY_ORDER.indexOf(k as (typeof MOVEIN_KEY_ORDER)[number]);
+    return i === -1 ? MOVEIN_KEY_ORDER.length : i;
+  };
+  return [...tasks].sort((a, b) => a.dueAt.localeCompare(b.dueAt) || pos(a.key) - pos(b.key));
+}
 
 const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v));
 const str = (v: unknown): string | null => (v == null ? null : String(v));
@@ -97,6 +117,48 @@ function itemRow(r: Row): Item {
     listingApproved: Boolean(r.listing_approved),
     outcome: r.outcome as Item["outcome"],
     createdAt: iso(r.created_at),
+  };
+}
+
+function leaseRow(r: Row): LeaseReading {
+  return {
+    moveId: r.move_id as string,
+    attachmentId: r.attachment_id as string,
+    filename: str(r.filename),
+    reading: (json(r.reading) ?? {}) as Record<string, unknown>,
+    readAt: iso(r.read_at),
+  };
+}
+
+function moveinTaskRow(r: Row): MoveinTask {
+  return {
+    moveId: r.move_id as string,
+    key: r.key as MoveinTask["key"],
+    label: r.label as string,
+    dueAt: r.due_at as string,
+    status: (r.status as MoveinTask["status"]) ?? "open",
+    notes: str(r.notes),
+    remindedAt: r.reminded_at == null ? null : iso(r.reminded_at),
+    updatedAt: iso(r.updated_at),
+  };
+}
+function subletPostRow(r: Row): SubletPost {
+  return {
+    moveId: r.move_id as string,
+    dealId: str(r.deal_id),
+    rentCents: num(r.rent_cents),
+    availableFrom: str(r.available_from),
+    availableUntil: str(r.available_until),
+    area: str(r.area),
+    furnished: r.furnished == null ? null : Boolean(r.furnished),
+    roomType: str(r.room_type),
+    details: ((json(r.details) as string[]) ?? []).map(String),
+    photoAttachmentIds: ((json(r.photo_attachment_ids) as string[]) ?? []).map(String),
+    photoNotes: str(r.photo_notes),
+    title: str(r.title),
+    body: str(r.body),
+    status: (r.status as SubletPost["status"]) ?? "collecting",
+    updatedAt: iso(r.updated_at),
   };
 }
 
@@ -288,7 +350,10 @@ export class PostgresStore implements Store {
       boardRow,
     );
     const order = new Map(ELF_NAMES.map((e, i) => [e, i] as const));
-    return rows.sort((a, b) => (order.get(a.elf) ?? 99) - (order.get(b.elf) ?? 99));
+    // Rows for an Elf no longer on the crew (Move-day) stay in the table but leave the board.
+    return rows
+      .filter((r) => order.has(r.elf))
+      .sort((a, b) => (order.get(a.elf) ?? 99) - (order.get(b.elf) ?? 99));
   }
   async patchBoard(
     moveId: string,
@@ -360,6 +425,70 @@ export class PostgresStore implements Store {
         outcome = excluded.outcome
       returning *`;
     return itemRow(rows[0] as Row);
+  }
+
+  async getLeaseReading(moveId: string) {
+    const rows = await this.sql`select * from lease_readings where move_id = ${moveId}`;
+    return rows[0] ? leaseRow(rows[0]) : undefined;
+  }
+  async saveLeaseReading(input: Omit<LeaseReading, "readAt">) {
+    const rows = await this.sql`
+      insert into lease_readings (move_id, attachment_id, filename, reading)
+      values (${input.moveId}, ${input.attachmentId}, ${input.filename}, ${JSON.stringify(input.reading)}::jsonb)
+      on conflict (move_id) do update set
+        attachment_id = excluded.attachment_id, filename = excluded.filename, reading = excluded.reading,
+        read_at = now()
+      returning *`;
+    return leaseRow(rows[0] as Row);
+  }
+
+  async getSubletPost(moveId: string) {
+    const rows = await this.sql`select * from sublet_posts where move_id = ${moveId}`;
+    return rows[0] ? subletPostRow(rows[0]) : undefined;
+  }
+  async saveSubletPost(input: Omit<SubletPost, "updatedAt">) {
+    const rows = await this.sql`
+      insert into sublet_posts (move_id, deal_id, rent_cents, available_from, available_until, area, furnished,
+        room_type, details, photo_attachment_ids, photo_notes, title, body, status)
+      values (${input.moveId}, ${input.dealId}, ${input.rentCents}, ${input.availableFrom}, ${input.availableUntil},
+        ${input.area}, ${input.furnished}, ${input.roomType}, ${JSON.stringify(input.details)}::jsonb,
+        ${JSON.stringify(input.photoAttachmentIds)}::jsonb, ${input.photoNotes}, ${input.title}, ${input.body},
+        ${input.status})
+      on conflict (move_id) do update set
+        deal_id = excluded.deal_id, rent_cents = excluded.rent_cents, available_from = excluded.available_from,
+        available_until = excluded.available_until, area = excluded.area, furnished = excluded.furnished,
+        room_type = excluded.room_type, details = excluded.details,
+        photo_attachment_ids = excluded.photo_attachment_ids, photo_notes = excluded.photo_notes,
+        title = excluded.title, body = excluded.body, status = excluded.status, updated_at = now()
+      returning *`;
+    return subletPostRow(rows[0] as Row);
+  }
+
+  async listMoveinTasks(moveId: string) {
+    const rows = await this.sql`
+      select * from movein_tasks where move_id = ${moveId}`;
+    return sortMoveinTasks(rows.map((r: Row) => moveinTaskRow(r)));
+  }
+  async upsertMoveinTask(input: MoveinTaskInput) {
+    const prev = (
+      await this.sql`select * from movein_tasks where move_id = ${input.moveId} and key = ${input.key}`
+    )[0];
+    const task = { ...moveinTaskDefaults(), ...(prev ? moveinTaskRow(prev) : {}), ...input };
+    const rows = await this.sql`
+      insert into movein_tasks (move_id, key, label, due_at, status, notes, reminded_at)
+      values (${task.moveId}, ${task.key}, ${task.label}, ${task.dueAt}, ${task.status}, ${task.notes},
+        ${task.remindedAt})
+      on conflict (move_id, key) do update set
+        label = excluded.label, due_at = excluded.due_at, status = excluded.status, notes = excluded.notes,
+        reminded_at = excluded.reminded_at, updated_at = now()
+      returning *`;
+    return moveinTaskRow(rows[0] as Row);
+  }
+  async listDueMoveinTasks(through: string) {
+    const rows = await this.sql`
+      select * from movein_tasks
+      where status = 'open' and reminded_at is null and due_at <= ${through}`;
+    return sortMoveinTasks(rows.map((r: Row) => moveinTaskRow(r)));
   }
 
   async getSearch(moveId: string) {

@@ -50,7 +50,7 @@ export const BUY_SKILL: Skill = {
   ],
   task: "Evaluating a listing",
   reply:
-    "Stuff Elf here. Forward me the listing link or a screenshot and your max price; I'll check it against comps and draft the offer.",
+    "Forward me the listing link or a screenshot and your max price; I'll check it against comps and draft the offer.",
 };
 
 export const GREEN_SKILL: Skill = {
@@ -74,7 +74,7 @@ export const GREEN_SKILL: Skill = {
   ],
   task: "Planning Last Call",
   reply:
-    "Stuff Elf here. Anything unsold 48 hours before move-out drops in price, then goes free, and I book a donation or 311 pickup so nothing hits the curb.",
+    "Anything unsold 48 hours before move-out drops in price, then goes free, and I book a donation or 311 pickup so nothing hits the curb.",
 };
 
 interface GroupSpec {
@@ -87,7 +87,7 @@ const GROUPS: GroupSpec[] = [
   {
     name: "money",
     description:
-      "Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the ledger, scams",
+      "Money: the move's ledger on Nessie (sales, escrow holds and releases, money set aside for the move), escrow questions, scams",
     skills: [
       {
         id: "money",
@@ -109,57 +109,13 @@ const GROUPS: GroupSpec[] = [
         ],
         task: "Setting up the Moving Fund",
         reply:
-          "Money Elf here. Every sale and deposit goes through escrow and lands on the Ledger; nobody pays outside it. Tell me who's splitting what and I'll track it.",
-      },
-    ],
-  },
-  {
-    name: "moveday",
-    description:
-      "Move day logistics: trucks, movers, U-Haul, storage units, moving permits, the route, where everyone is, ETAs, the Move Map",
-    skills: [
-      {
-        id: "haul",
-        keywords: [
-          "truck",
-          "u-haul",
-          "uhaul",
-          "movers",
-          "mover",
-          "storage",
-          "unit",
-          "permit",
-          "van",
-          "rent a",
-          "book storage",
-          "haul",
-        ],
-        task: "Getting quotes",
-        reply:
-          "Move-day Elf here. Give me your dates and roughly how much stuff and I'll get storage and truck quotes, then book on your OK.",
-      },
-      {
-        id: "map",
-        keywords: [
-          "where are you",
-          "eta",
-          "on my way",
-          "location",
-          "map",
-          "address",
-          "meet",
-          "running late",
-          "arrive",
-        ],
-        task: "Standing by for move day",
-        reply:
-          "Move-day Elf here. On pickup day I'll send everyone a Move Map link so you can see each other approaching.",
+          "I keep the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move.\n\nNobody pays outside escrow, and I never send or request money for you.",
       },
     ],
   },
 ];
 
-/** The Home Elf lives in home.ts; Money and Move-day are still canned groups. */
+/** The Home Elf lives in home.ts; Money is still a canned group. */
 function makeGroup(spec: GroupSpec): Elf {
   return {
     name: spec.name,
