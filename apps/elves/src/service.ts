@@ -12,13 +12,14 @@ import {
   type SentInfo,
   spaceOwnerKey,
 } from "@elves/elves";
-import { dealBoard, inquiryFor, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
+import { codesIn, dealBoard, inquiryFor, isOpen, joinDeal, lastCallSweep, policyFor } from "@elves/engine";
 import { FakeListings, type ListingSource } from "@elves/listings";
 import type { LLM } from "@elves/llm";
 import type { MoveMemory } from "@elves/memory";
 import { type InboundMessage, PhotonApiError, type Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import {
+  type Deal,
   createLogger,
   type ElfName,
   type Logger,
@@ -114,20 +115,72 @@ export function createService(deps: ServiceDeps): Service {
     }
   }
 
+  const LIVE_PARTY = ["talking", "agreed", "awaiting_owner", "scheduled", "waitlisted"];
+
+  /**
+   * On the shared pool every phone that texts in runs a move of its own, so a buyer is usually also an owner.
+   * A phone is treated as the counterparty on another move's deal while it is inside that conversation: from the
+   * text that quotes the deal's ref code until the deal closes. Returns null when this phone is just an owner.
+   */
+  async function elsewhere(
+    existing: Participant,
+    msg: InboundMessage,
+  ): Promise<{ move: Move; participant: Participant } | null> {
+    const as = async (deal: Deal) => {
+      const move = await deps.store.getMove(deal.moveId);
+      if (!move) return null;
+      const role = policyFor(deal.mode).counterpartyRole;
+      const { id: _id, createdAt: _createdAt, ...rest } = existing;
+      const participant = await deps.store.upsertParticipant({ ...rest, moveId: deal.moveId, role });
+      return { move, participant };
+    };
+    for (const code of codesIn(msg.text ?? "")) {
+      const deal = await deps.store.getDealByCode(code);
+      if (deal && isOpen(deal.state) && deal.moveId !== existing.moveId) return as(deal);
+    }
+    const parties = (await deps.store.listDealPartiesBySpace(msg.spaceId))
+      .filter((p) => LIVE_PARTY.includes(p.status))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    for (const p of parties) {
+      const deal = await deps.store.getDeal(p.dealId);
+      if (deal && isOpen(deal.state)) return existing.moveId === deal.moveId ? null : as(deal);
+    }
+    return null;
+  }
+
   async function resolveMove(
     msg: InboundMessage,
   ): Promise<{ move: Move; participant: Participant; firstContact: boolean }> {
     let existing = await deps.store.getParticipantBySpace(msg.spaceId);
     if (existing) {
-      const move = await deps.store.getMove(existing.moveId);
-      if (move) {
-        // The pool number a phone talks to can change (re-assigned); outbound texts must come from the current one.
-        if (msg.agentId && existing.agentUserId !== msg.agentId) {
-          const { id: _id, createdAt: _createdAt, ...rest } = existing;
-          existing = await deps.store.upsertParticipant({ ...rest, agentUserId: msg.agentId });
-        }
-        return { move, participant: existing, firstContact: false };
+      // The pool number a phone talks to can change (re-assigned); outbound texts must come from the current one.
+      if (msg.agentId && existing.agentUserId !== msg.agentId) {
+        const { id: _id, createdAt: _createdAt, ...rest } = existing;
+        existing = await deps.store.upsertParticipant({ ...rest, agentUserId: msg.agentId });
       }
+      // An owner quoting another move's ref code (or still inside that deal) is that deal's buyer for this text.
+      const away = await elsewhere(existing, msg);
+      if (away) {
+        log.info("owner acting as counterparty on another move", {
+          spaceId: msg.spaceId,
+          moveId: away.move.id,
+        });
+        return { ...away, firstContact: false };
+      }
+      // A counterparty whose deal has closed, and who runs a move of their own, is that move's owner again.
+      if (existing.role !== "owner") {
+        const live = (await deps.store.listDealPartiesBySpace(msg.spaceId)).some((p) =>
+          LIVE_PARTY.includes(p.status),
+        );
+        const own = live ? undefined : await deps.store.getMoveByOwnerHandle(msg.senderHandle);
+        if (own && own.id !== existing.moveId) {
+          const { id: _id, createdAt: _createdAt, ...rest } = existing;
+          existing = await deps.store.upsertParticipant({ ...rest, moveId: own.id, role: "owner" });
+          return { move: own, participant: existing, firstContact: false };
+        }
+      }
+      const move = await deps.store.getMove(existing.moveId);
+      if (move) return { move, participant: existing, firstContact: false };
     }
     // A stranger quoting a listing's ref code joins that deal, even if they run a move of their own; a stranger
     // who is not an owner joins the one open deal on this number their text names ("is the couch available?").

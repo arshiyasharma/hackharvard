@@ -1,4 +1,4 @@
-import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
+import { codesIn, isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
 import {
@@ -91,7 +91,16 @@ export async function route(
   opts: { firstContact: boolean; moveId?: string; role?: Role },
 ): Promise<RouteDecision> {
   if (opts.role && COUNTERPARTY_ROLES.includes(opts.role)) {
-    const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
+    let elf = await counterpartyElf(deps, batch.spaceId);
+    if (!elf)
+      for (const code of codesIn(batchText(batch))) {
+        const deal = await deps.store.getDealByCode(code);
+        if (deal) {
+          elf = policyFor(deal.mode).elf;
+          break;
+        }
+      }
+    elf ??= "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };

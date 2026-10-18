@@ -625,12 +625,14 @@ describe("Deal Engine: buyers text the listing's number", () => {
     transport.push(owner, "28 dollars");
     await transport.settled();
     await service.pipeline.idle();
-    transport.push(owner, "yes list it", { parentMessageId: transport.sent[1]!.id });
+    const floorMsg = transport.sent.at(-1)!;
+    transport.push(owner, "yes list it", { parentMessageId: floorMsg.id });
     await transport.settled();
     await service.pipeline.idle();
-    const move = (await store.listMoves())[0]!;
+    // the owner's move, whatever else is on the store (another phone may have texted first)
+    const move = (await store.listMoves()).find((m) => m.ownerHandle === owner)!;
     const deal = (await store.listDeals(move.id))[0]!;
-    return { move, deal, listedMsg: transport.sent[2]! };
+    return { move, deal, listedMsg: transport.sent.at(-1)! };
   }
 
   async function say(t: ReturnType<typeof boot>, from: string, text: string, extra = {}) {
@@ -746,6 +748,39 @@ describe("Deal Engine: buyers text the listing's number", () => {
     expect((await t.store.listMoves()).length).toBe(1);
     const parties = await t.store.listDealPartiesBySpace(t.transport.spaceFor(buyerA));
     expect(parties.map((p) => p.dealId)).toEqual([deal.id]);
+    t.stop();
+  });
+
+  test("a phone with its own move buys another owner's listing by quoting the ref code, then gets its move back", async () => {
+    const t = boot(null);
+    // the friend texts in first as themselves: they get a move of their own (on the shared pool every phone
+    // that texts its own number becomes an owner); the chair is listed on the owner's line after that
+    await say(t, buyerA, "hi, moving out dec 1");
+    const { deal } = await listChair(t);
+    expect((await t.store.listMoves()).length).toBe(2);
+
+    // quoting the ref code makes them the buyer on the owner's chair deal, not a Crew Lead chat about their own move
+    const asked = await say(t, buyerA, `${deal.code} is the chair still available?`);
+    const toBuyer = asked.filter((m) => m.spaceId === t.transport.spaceFor(buyerA));
+    expect(toBuyer.length).toBe(1);
+    expect(toBuyer[0]!.text).toContain("available");
+    expect(toBuyer[0]!.text).not.toContain("Crew Lead");
+    const parties = await t.store.listDealPartiesBySpace(t.transport.spaceFor(buyerA));
+    expect(parties.map((p) => p.dealId)).toEqual([deal.id]);
+
+    // the conversation stays on the deal: an offer inside the floor is a deal, and the owner hears it
+    const offer = await say(t, buyerA, "$30");
+    expect(offer.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text).toContain("Deal at $30");
+    expect(offer.find((m) => m.spaceId === t.transport.spaceFor(owner))?.text).toContain("$30");
+
+    // they walk: the chair is relisted, and their next text is about their own move again
+    await say(t, buyerA, "never mind");
+    expect((await t.store.getDeal(deal.id))?.state).not.toBe("scheduled");
+    const back = await say(t, buyerA, "status");
+    expect(back.find((m) => m.spaceId === t.transport.spaceFor(buyerA))?.text).toStartWith("📋 STATUS");
+    const them = await t.store.getParticipantBySpace(t.transport.spaceFor(buyerA));
+    expect(them?.role).toBe("owner");
+    expect(them?.moveId).not.toBe(deal.moveId);
     t.stop();
   });
 
