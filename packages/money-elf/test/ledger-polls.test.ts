@@ -124,6 +124,7 @@ describe("the Ledger view, card and page", () => {
       hasEstimates: false,
       points: [{ date: "2026-10-17", netCents: 0 }],
     },
+    plans: null,
   };
 
   test("names are escaped in the SVG card and the HTML page", () => {

@@ -3,7 +3,8 @@
  * (ledger-card.ts) and the web page (ledger-page.ts) draw. Owner-only: it names who owes what.
  */
 import { fmtUsd } from "./amounts.ts";
-import type { Activity } from "./books.ts";
+import type { Activity, PlannedRecord } from "./books.ts";
+import type { Plan } from "./plans.ts";
 import { type Projection, projectMove } from "./projection.ts";
 import type { MoneyService } from "./service.ts";
 import type { MoneyMove } from "./types.ts";
@@ -35,14 +36,24 @@ export interface LedgerView {
   records: number;
   /** What the move costs, what's still coming back and when (projection.ts). */
   projection: Projection;
+  /** Move Plans: the latest drafts and the chosen plan, with its records read live from Nessie. */
+  plans: {
+    budgetCents: number;
+    moveOutDate: string;
+    drafts: Plan[];
+    chosen: Plan | null;
+    history: { date: string; netCents: number }[];
+    records: PlannedRecord[];
+  } | null;
 }
 
 export async function buildLedgerView(service: MoneyService, move: MoneyMove): Promise<LedgerView> {
-  const [books, entries, pending, owner] = await Promise.all([
+  const [books, entries, pending, owner, planState] = await Promise.all([
     service.books(move),
     service.store.listEntries(move.id),
     service.store.listPending(move.id),
     service.owner(move),
+    service.store.getPlans(move.id),
   ]);
   const owes: OweRow[] = books.owes.map((o) => {
     const loanEntry = entries.find((e) => e.owedBy === o.personId && e.loanId && e.status === "pending");
@@ -81,6 +92,18 @@ export async function buildLedgerView(service: MoneyService, move: MoneyMove): P
     pending: pending.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((p) => p.summary),
     records: books.records,
     projection: projectMove({ books, entries, names: people, now: service.clock() }),
+    plans: planState
+      ? {
+          budgetCents: planState.budgetCents,
+          moveOutDate: planState.moveOutDate,
+          drafts: planState.drafts,
+          chosen: planState.chosen,
+          history: planState.history,
+          records: planState.chosenPrefix
+            ? books.planned.filter((r) => r.lineId.startsWith(`${planState.chosenPrefix}_`))
+            : [],
+        }
+      : null,
   };
 }
 

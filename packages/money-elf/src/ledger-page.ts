@@ -6,6 +6,8 @@
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import { capFirst, esc } from "./ledger-card.ts";
 import { type LedgerView, ledgerSummaryLine } from "./ledger-view.ts";
+import { type PlanColors, planGrid, planPath, planRace } from "./plan-chart.ts";
+import { ASSUMPTIONS, pct } from "./plans.ts";
 import { ASSUMED_DAYS, netPhrase } from "./projection.ts";
 import { projectionChart } from "./projection-chart.ts";
 
@@ -64,6 +66,8 @@ ${p.hasEstimates ? `<div class="rs note">Estimated dates assume a requested shar
 </section>`
       : "";
 
+  const planSection = plansHtml(v, row);
+
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -90,12 +94,16 @@ section{border-top:1px solid var(--line);margin-top:18px;padding-top:12px}h2{fon
 .foot{color:var(--muted);font-size:12px;margin-top:18px}
 .kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 4px}.kl{font-size:12px;color:var(--muted);font-weight:600}.kv{font-size:24px;font-weight:700}.ks{font-size:12px;color:var(--muted)}.fundc{color:var(--fund)}
 .chart{width:100%;height:auto;display:block;margin:10px 0 4px}.note{margin-top:8px}
+.chip{display:inline-block;font-size:11px;font-weight:600;border-radius:8px;padding:1px 7px;margin-right:6px;background:var(--line);color:var(--muted)}
+.chip.completed{background:var(--fundbg);color:var(--fund)}.chip.pending{background:var(--escbg);color:var(--esc)}.chip.cancelled{text-decoration:line-through}
+details{margin-top:10px}summary{cursor:pointer;color:var(--muted);font-size:13px}
 </style></head>
 <body><main><div class="card">
 <h1>Moving Ledger</h1>
 <div class="sub">${esc(v.ownerName)} move · updated ${esc(fmtDate(v.asOf.slice(0, 10)))} · live from Nessie</div>
 <div class="tiles">${tile("Moving Fund", v.fundCents, "fund")}${tile("Owed to you", v.owedCents, "owedt")}${tile("In escrow", v.escrowCents, "esct")}</div>
 ${v.pending[0] ? `<div class="wait">Waiting on your OK: ${esc(v.pending[0])}. Reply yes in Messages, or tap the poll.</div>` : ""}
+${planSection}
 ${projection}
 ${section("Who owes you", owes)}
 ${section(
@@ -114,4 +122,72 @@ ${section("Recent", recent)}
 ${!v.owes.length && !v.escrow.length && !v.deposits.length && !v.recent.length ? `<section><div class="rs">Nothing on the Ledger yet. Text the Money Elf a shared cost or a deposit.</div></section>` : ""}
 <div class="foot">Read live from ${v.records} Nessie records. Refreshes every 30 seconds.</div>
 </div></main></body></html>`;
+}
+
+const PAGE_COLORS: PlanColors = {
+  series: ["var(--fund)", "var(--esc)", "var(--owed)"],
+  grid: "var(--line)",
+  text: "var(--ink)",
+  muted: "var(--muted)",
+  bg: "var(--card)",
+  shade: "var(--fundbg)",
+};
+const PAGE_FONT = { size: 17, family: "-apple-system, BlinkMacSystemFont, Inter, sans-serif" };
+
+/** The written-out assumptions behind every plan percentage (decision #53). */
+function assumptionsHtml(): string {
+  const a = ASSUMPTIONS;
+  const rates = Object.entries(a.saleRatePerDay)
+    .map(([k, r]) => `${k} ${pct(r)}/day`)
+    .join(", ");
+  return `<details><summary>How the odds are estimated</summary><div class="rs note">Each plan is run ${2000} times. An item at its list price sells on a given day with these chances: ${esc(rates)}; a lower price raises that by (list ÷ price)^${a.priceElasticity}. Last Call drops the price to ${pct(a.lastCallDrop)} of list two days before move-out and relists it free the day before; anything left is hauled away for ${fmtUsd(a.dumpCents)}. Trucks: ${esc(a.trucks.map((t) => `${t.size} ${fmtUsd(t.cents)} (up to ${t.capacityLb} lb)`).join(", "))}, sized for ${a.baseLoadLb} lb of boxes plus what you haul. Movers: ${fmtUsd(a.moversCents)}. These are estimates, not quotes.</div></details>`;
+}
+
+/** The Move Plans section: the chosen plan with its path and its Nessie records, or the drafts to pick from. */
+function plansHtml(
+  v: LedgerView,
+  row: (left: string, right: string, sub: string, cls?: string) => string,
+): string {
+  const ps = v.plans;
+  if (!ps) return "";
+  const p = ps.chosen;
+  if (p) {
+    const path = planPath(
+      p,
+      ps.budgetCents,
+      ps.history,
+      ps.moveOutDate,
+      { x: 6, y: 0, w: 508, h: 240 },
+      PAGE_COLORS,
+      PAGE_FONT,
+    );
+    const records = ps.records.map((r) =>
+      row(
+        r.label.replace(/^Plan [ABC]: /, ""),
+        `${r.tag === "plan_in" ? "+" : "-"}${fmtUsd(r.cents)}`,
+        "",
+        r.tag === "plan_in" ? "in" : "",
+      ).replace(
+        '<div class="rl">',
+        `<div class="rs"><span class="chip ${esc(r.status)}">${esc(r.status)}</span>${esc(fmtDate(r.date))}</div><div class="rl">`,
+      ),
+    );
+    return `<section class="proj"><h2>Move plan</h2>
+<div class="kpis"><div><div class="kl">Plan ${p.label} · ${esc(p.name)}</div><div class="kv">${netPhrase(p.stats.p50Cents)}</div><div class="ks">likely final cost · range ${netPhrase(p.stats.p10Cents)}–${netPhrase(p.stats.p90Cents)}</div></div>
+<div><div class="kl">Chance under ${fmtUsd(ps.budgetCents)}</div><div class="kv fundc">${pct(p.stats.chanceUnderBudget)}</div><div class="ks">move-out ${esc(fmtDate(ps.moveOutDate))} · ${p.truck.size} truck${p.movers ? " + movers" : ""}</div></div></div>
+${path ? `<svg class="chart" viewBox="0 0 520 240" role="img" aria-label="${esc(`Plan ${p.label}: likely ${netPhrase(p.stats.p50Cents)} by move-out`)}">${path}</svg>` : ""}
+<div class="rs">Shaded: 10–90% of simulated moves. Dots: your real net cost, day by day.</div>
+${records.length ? `<h2 style="margin-top:14px">In Nessie</h2>${records.join("")}` : ""}
+${assumptionsHtml()}
+</section>`;
+  }
+  if (!ps.drafts.length) return "";
+  const race = planRace(ps.drafts, ps.budgetCents, { x: 6, y: 0, w: 508, h: 300 }, PAGE_COLORS, PAGE_FONT);
+  const grid = planGrid(ps.drafts, { x: 6, y: 0, w: 508 }, PAGE_COLORS, PAGE_FONT);
+  return `<section class="proj"><h2>Move plans under ${fmtUsd(ps.budgetCents)}</h2>
+<svg class="chart" viewBox="0 0 520 300" role="img" aria-label="${esc(ps.drafts.map((d) => `Plan ${d.label}: ${netPhrase(d.stats.p50Cents)}, ${pct(d.stats.chanceUnderBudget)} under budget`).join("; "))}">${race}</svg>
+<svg class="chart" viewBox="0 0 520 ${Math.ceil(grid.h + 8)}" role="img" aria-label="What each plan does with each item">${grid.svg}</svg>
+<div class="rs">Reply A, B or C in Messages, or tap the poll.</div>
+${assumptionsHtml()}
+</section>`;
 }

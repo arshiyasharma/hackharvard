@@ -9,12 +9,14 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fmtDate, fmtUsd } from "./amounts.ts";
 import type { LedgerView } from "./ledger-view.ts";
+import { cardColors, planPath } from "./plan-chart.ts";
+import { pct } from "./plans.ts";
 import { netPhrase } from "./projection.ts";
 import { projectionChart } from "./projection-chart.ts";
 
 const W = 1080;
 const PAD = 64;
-const C = {
+export const C = {
   bg: "#F5F2EB",
   card: "#FFFFFF",
   ink: "#1D1B18",
@@ -47,7 +49,7 @@ export function capFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function text(
+export function text(
   x: number,
   y: number,
   s: string,
@@ -92,6 +94,36 @@ export function ledgerCardSvg(v: LedgerView): string {
     parts.push(text(x + 28, y + 132, fmtUsd(t.cents), 56, 700, t.fg));
   });
   y += 168 + 56;
+
+  // Move Plans: the chosen plan's likely cost, its odds, and its path with the real net cost on top.
+  const plan = v.plans?.chosen;
+  if (v.plans && plan) {
+    parts.push(text(PAD, y, "MOVE PLAN", 26, 700, C.muted));
+    y += 50;
+    parts.push(
+      text(
+        PAD,
+        y,
+        `Plan ${plan.label} · ${netPhrase(plan.stats.p50Cents)} likely · ${pct(plan.stats.chanceUnderBudget)} under ${fmtUsd(v.plans.budgetCents)}`,
+        34,
+        600,
+        C.ink,
+      ),
+    );
+    y += 24;
+    parts.push(
+      planPath(
+        plan,
+        v.plans.budgetCents,
+        v.plans.history,
+        v.plans.moveOutDate,
+        { x: PAD + 8, y, w: W - 2 * PAD - 16, h: 280 },
+        cardColors(),
+        { size: 26, family: "Inter" },
+      ),
+    );
+    y += 280 + 56;
+  }
 
   // The projection: net cost today, where it lands once expected money comes back, and the step chart.
   const pr = v.projection;
@@ -236,12 +268,17 @@ function fonts(): string[] {
   return fontFiles;
 }
 
-/** The card as PNG bytes, ready to upload as a Photon attachment. */
-export async function renderLedgerPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
+/** Any card SVG as PNG bytes, with the bundled Inter font (no system fonts, same on macOS and Linux). */
+export async function renderSvgPng(svg: string, width = W): Promise<Uint8Array<ArrayBuffer>> {
   const { Resvg } = await import("@resvg/resvg-js");
-  const r = new Resvg(ledgerCardSvg(v), {
+  const r = new Resvg(svg, {
     font: { fontFiles: fonts(), loadSystemFonts: false, defaultFontFamily: "Inter" },
-    fitTo: { mode: "width", value: W },
+    fitTo: { mode: "width", value: width },
   });
   return new Uint8Array(r.render().asPng());
+}
+
+/** The card as PNG bytes, ready to upload as a Photon attachment. */
+export async function renderLedgerPng(v: LedgerView): Promise<Uint8Array<ArrayBuffer>> {
+  return renderSvgPng(ledgerCardSvg(v));
 }

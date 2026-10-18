@@ -1,5 +1,6 @@
 /** The Ledger: one running list of every dollar in a move, plus the people and pending approvals behind it. */
 import { fmtUsd } from "./amounts.ts";
+import type { Plan, PlanLabel } from "./plans.ts";
 import type { Role } from "./types.ts";
 
 export type EntryKind = "expense" | "split" | "deposit" | "sale" | "payment";
@@ -91,6 +92,38 @@ export interface PendingAction {
   createdAt: string;
 }
 
+/** One Nessie record written for the chosen plan (Move Plans, decision #54). */
+export interface PlanLine {
+  lineId: string;
+  kind: "deposit" | "withdrawal";
+  recordId: string;
+  /** The item a sale line is for; null for the truck and movers. */
+  itemId: string | null;
+  label: string;
+  cents: number;
+  date: string;
+  status: "pending" | "completed" | "cancelled";
+}
+
+/** A move's plans: the latest drafts, the chosen plan and its Nessie records. Drafts never go to Nessie (#56). */
+export interface PlanState {
+  budgetCents: number;
+  moveOutDate: string;
+  /** Changes on every draft; poll option ids carry it, so a tap on old drafts is caught. */
+  draftKey: string;
+  drafts: Plan[];
+  chosen: Plan | null;
+  chosenLabel: PlanLabel | null;
+  chosenAt: string | null;
+  /** Line-id prefix of the chosen plan's Nessie records, to tell them from an earlier plan's. */
+  chosenPrefix: string | null;
+  lines: PlanLine[];
+  /** Item id → date the owner was nudged about it, so each item is nudged once. */
+  nudged: Record<string, string>;
+  /** The real net cost, one point per day it was checked, drawn over the plan's path. */
+  history: { date: string; netCents: number }[];
+}
+
 export interface MoneyStore {
   listEntries(moveId: string): Promise<LedgerEntry[]>;
   getEntry(id: string): Promise<LedgerEntry | undefined>;
@@ -116,6 +149,9 @@ export interface MoneyStore {
   /** The owner's Moving Fund checking account in Nessie. */
   getFundAccount(moveId: string): Promise<string | undefined>;
   setFundAccount(moveId: string, accountId: string): Promise<void>;
+
+  getPlans(moveId: string): Promise<PlanState | undefined>;
+  setPlans(moveId: string, state: PlanState | null): Promise<void>;
 }
 
 function newId(prefix: string): string {
@@ -128,6 +164,7 @@ export class MemoryMoneyStore implements MoneyStore {
   pending = new Map<string, PendingAction>();
   escrow = new Map<string, string>();
   fund = new Map<string, string>();
+  plans = new Map<string, PlanState>();
   private seq = 0;
 
   async listEntries(moveId: string) {
@@ -227,6 +264,15 @@ export class MemoryMoneyStore implements MoneyStore {
   }
   async setFundAccount(moveId: string, accountId: string) {
     this.fund.set(moveId, accountId);
+  }
+
+  async getPlans(moveId: string) {
+    const s = this.plans.get(moveId);
+    return s ? structuredClone(s) : undefined;
+  }
+  async setPlans(moveId: string, state: PlanState | null) {
+    if (state) this.plans.set(moveId, structuredClone(state));
+    else this.plans.delete(moveId);
   }
 }
 

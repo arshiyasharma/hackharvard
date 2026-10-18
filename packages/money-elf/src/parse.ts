@@ -24,7 +24,37 @@ export type Intent =
   | { kind: "add_contact"; name: string; handle: string }
   | { kind: "ledger" }
   | { kind: "scam_check" }
+  /** Move Plans (decision #53). budgetCents null: reuse the last budget, or ask for one. */
+  | { kind: "plan_draft"; budgetCents: number | null }
+  | { kind: "plan_choose"; label: "A" | "B" | "C" }
+  | { kind: "plan_status" }
+  | { kind: "plan_cancel" }
   | { kind: "other" };
+
+/**
+ * Move Plans texts, matched by rules only (never the LLM), before yes/no. "Payment plan" is the loan intent
+ * and never a move plan.
+ */
+export function parsePlanIntent(text: string, amounts: number[]): Intent | null {
+  const t = text.trim();
+  if (/\b(payment|pay(ment)?s?)\s+plan\b|\binstallments?\b/i.test(t)) return null;
+  const choose =
+    t.match(/\b(?:go with|pick|choose|switch(?: me)? to|take|let'?s do|do|use)\s+plan\s+([abc])\b/i) ??
+    t.match(/\b(?:go with|pick|choose|switch(?: me)? to|take)\s+([abc])\s*[.!]?\s*$/i) ??
+    t.match(/^\s*(?:plan\s+)?([abc])\s*[.!]?\s*$/i);
+  if (choose?.[1]) return { kind: "plan_choose", label: choose[1].toUpperCase() as "A" | "B" | "C" };
+  if (/\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i.test(t))
+    return { kind: "plan_cancel" };
+  if (/\b(what|which)\s+plan\b|\bplan status\b|\bam i on (track|plan)\b|\bhow'?s (my|the) plan\b/i.test(t))
+    return { kind: "plan_status" };
+  if (
+    /\bplan (out )?(my|the|this) move\b|\bmove plans?\b|\b(draft|make|give me|show me|new|fresh)\s+(me\s+)?(some\s+|a few\s+|three\s+|3\s+)?plans\b|\bkeep (this|the|my) move under\b|\bmove (budget|for) under\b|\bplans? (for|under) \$/i.test(
+      t,
+    )
+  )
+    return { kind: "plan_draft", budgetCents: amounts[0] ?? null };
+  return null;
+}
 
 const APPROVE =
   /^\s*(yes|yep|yeah|yup|y|ok|okay|sure|go ahead|do it|approved?|send (it|them)|release (it|the money)|confirm(ed)?|sounds good)\b/i;
@@ -118,6 +148,8 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
   const lower = t.toLowerCase();
   const amounts = parseAmounts(t);
 
+  const plan = parsePlanIntent(t, amounts);
+  if (plan) return plan;
   if (t.length <= 60 && DECLINE.test(t)) return { kind: "decline" };
   if (t.length <= 60 && APPROVE.test(t)) return { kind: "approve" };
 
@@ -307,7 +339,13 @@ export async function parseIntent(
   deps: { llm: MoneyLLM; now: Date; roommates: string[]; context?: string },
 ): Promise<Intent> {
   const rules = parseRules(text, deps.now, deps.roommates);
-  if (rules.kind === "approve" || rules.kind === "decline" || deps.llm.name === "fake") return rules;
+  if (
+    rules.kind === "approve" ||
+    rules.kind === "decline" ||
+    rules.kind.startsWith("plan_") ||
+    deps.llm.name === "fake"
+  )
+    return rules;
   try {
     const r = await deps.llm.extract(LlmIntent, {
       system: SYSTEM,
