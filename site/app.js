@@ -422,11 +422,24 @@
     }).join("") + "</div>";
   }
 
+  var CH = function (n, ico) { return '<span class="ch2">' + (ico || "") + esc(n) + "</span>"; };
+  Object.assign(VIS, {
+    agents: function () { return '<div class="v-agents"><div class="a0">' + avatar("blue") + "<b>Crew Lead</b></div><div class=\"a1\"><div>" + avatar("red") + "<b>Home</b></div><div>" + avatar("amber") + "<b>Stuff</b></div><div>" + avatar("green") + "<b>Money</b></div></div></div>"; },
+    channels: function () { return '<div class="v-chan"><div class="on"><i></i>iMessage<small>shared pool + dedicated line</small></div><div class="on"><i></i>SMS<small>text and voice</small></div><div class="on"><i></i>Phone call<small>Retell over the SMS line</small></div><div class="soon">WhatsApp · Telegram · Email <small>next</small></div></div>'; },
+    approve: function () { return '<div class="v-chat"><p class="l">Book it? The applicant picked Thu 6pm. Reply yes or no.</p><p class="r">yes</p><p class="l">Booked: Thu 6pm.</p></div>'; },
+    memory: function () { return '<div class="v-mem"><div>Working memory</div><div>Transcript + summary</div><div>Facts</div><div>Elf notes</div><span>call</span><span>thread</span><span>dashboard</span></div>'; },
+    voice: function () { return '<div class="v-voice"><div class="wv">' + Array.apply(null, Array(20)).map(function (_, i) { return '<i style="--h:' + (6 + ((i * 17) % 26)) + 'px"></i>'; }).join("") + '</div><p>"Out of Allston November first…"</p><div class="rc">Locked in. Here\'s who\'s on what.</div></div>'; },
+    delight: function () { return '<div class="v-del"><div class="hd">💸 Money Elf</div><div class="qw"><span>HELP</span><span>STATUS</span><span>DASHBOARD</span><span>SMART PLAN</span></div><small>one header, one emoji, short blocks</small></div>'; },
+    trust: function () { return '<div class="v-trust"><div><i>Poll refused</i><b>reply yes</b></div><div><i>Thread refused</i><b>flat send</b></div><div><i>No model key</i><b>template replies</b></div><div><i>Nessie down</i><b>nothing moved</b></div></div>'; },
+    skills: function () { return '<div class="v-skills">' + ["Socket.IO replay", "Idempotency keys", "Typing + read", "Attachments both ways", "Polls with action ids", "Shared-pool CLI", "Project skills", "Chunked replies"].map(function (s) { return "<span>" + s + "</span>"; }).join("") + "</div>"; },
+    beyond: function () { return '<div class="v-beyond"><div class="c">' + avatar("blue") + '</div><div class="r">' + ["Moving", "Wedding", "Home purchase", "Visa", "Business launch", "Estate clean-out"].map(function (s, i) { return "<span" + (i === 0 ? ' class="on"' : "") + ">" + s + "</span>"; }).join("") + "</div></div>"; },
+    debate: function () { return '<div class="v-deb"><div class="no"><b>1.0 mini app</b><span>second number</span><span>registered users only</span><span>second app to open</span></div><div class="yes"><b>2.0 + pictures</b><span>every phone</span><span>nothing to install</span><span>dashboard, Smart Plan, Move Report</span></div></div>'; },
+  });
   var STORY_ORDER = ["budget", "split", "lastcall", "engine", "net", "plan", "coming", "books"];
   var STEP_LABEL = { budget: "Budget", split: "Roommates", lastcall: "Last Call", engine: "Deal Engine", net: "Net cost", plan: "Smart Plan", coming: "Coming back", books: "The books" };
-  function stepperHTML(mods) {
-    var ordered = STORY_ORDER.map(function (v) { return mods.filter(function (m) { return m.vis === v; })[0]; }).filter(Boolean);
-    return { ordered: ordered, html: '<div class="stepper"><ol class="sp-rail" aria-label="The money story">' + ordered.map(function (m, i) { return '<li><button type="button" data-step="' + i + '"><i></i><span>' + esc(STEP_LABEL[m.vis]) + "</span></button></li>"; }).join("") + '</ol><div class="sp-stage"><div class="sp-text" id="spText" aria-live="polite"></div><div class="sp-card" id="spCard"></div></div><div class="sp-nav"><button type="button" class="sp-btn" id="spPrev">Back</button><button type="button" class="sp-btn go" id="spNext">Next</button></div></div>' };
+  function nessieOrdered(mods) { return STORY_ORDER.map(function (v) { return mods.filter(function (m) { return m.vis === v; })[0]; }).filter(Boolean).map(function (m) { m.label = STEP_LABEL[m.vis]; return m; }); }
+  function stepperHTML(ordered) {
+    return { ordered: ordered, html: '<div class="stepper"><ol class="sp-rail" aria-label="The money story">' + ordered.map(function (m, i) { return '<li><button type="button" data-step="' + i + '"><i></i><span>' + esc(m.label) + "</span></button></li>"; }).join("") + '</ol><div class="sp-stage"><div class="sp-text" id="spText" aria-live="polite"></div><div class="sp-card" id="spCard"></div></div><div class="sp-nav"><button type="button" class="sp-btn" id="spPrev">Back</button><button type="button" class="sp-btn go" id="spNext">Next</button></div></div>' };
   }
   function wireStepper(ordered) {
     var i = 0, text = $("#spText"), card = $("#spCard"), prev = $("#spPrev"), next = $("#spNext"), dots = $$(".sp-rail button");
@@ -436,7 +449,7 @@
       text.innerHTML = '<h3 class="pain">' + esc(m.pain) + '</h3><p class="sol"><b>' + esc(m.t) + "</b></p><p class=\"sol2\">" + esc(m.s) + "</p><p class=\"more\">" + esc(m.more) + "</p>" + (m.go ? '<button type="button" class="try" data-go="' + m.go + '">Try it live</button>' : "");
       card.className = "sp-card" + (m.dark ? " dark" : ""); card.innerHTML = '<div class="vis">' + VIS[m.vis]() + "</div>";
       text.classList.remove("swap"); card.classList.remove("swap"); void text.offsetWidth; text.classList.add("swap"); card.classList.add("swap");
-      prev.disabled = i === 0; next.disabled = i === ordered.length - 1; next.textContent = i === ordered.length - 1 ? "That is the story" : "Next: " + STEP_LABEL[ordered[i + 1].vis];
+      prev.disabled = i === 0; next.disabled = i === ordered.length - 1; next.textContent = i === ordered.length - 1 ? "That is the story" : "Next: " + ordered[i + 1].label;
       var tb = $("[data-go]", text); if (tb) tb.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var t = $('#led [data-tab="' + tb.dataset.go + '"]'); if (t) setTimeout(function () { t.click(); }, reduce ? 0 : 450); });
     }
     dots.forEach(function (d, k) { d.addEventListener("click", function () { show(k); }); });
@@ -451,11 +464,11 @@
   var ACC = { photon: ["#0a84ff", "#e7f1ff", "Photon"], nessie: ["#1b8fe0", "#dcecff", "Nessie"], sustain: ["#2fb36b", "#dcf2e5", "Green"], cyber: ["#e08a00", "#fdeccd", "Safe"] };
   function showTrack(id) {
     var t = TRACKS.filter(function (x) { return x.id === id; })[0];
-    var stp = null; var ac = ACC[id], tp = $("#trackPanel"); tp.classList.toggle("compact", !!t.modules); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];
+    var stp = null, steps = t.story || (t.modules ? nessieOrdered(t.modules) : null); var ac = ACC[id], tp = $("#trackPanel"); tp.classList.toggle("compact", !!steps); tp.style.setProperty("--tk", ac[0]); tp.style.setProperty("--tk-soft", ac[1]); $("#trackGhost").textContent = ac[2];
     trEl.innerHTML =
       '<p class="why-track"><small>Why ' + esc(t.name) + "</small>" + esc(t.why) + "</p>" +
       '<div class="track-actions"><button class="btn small primary" type="button" id="see">See it in the thread</button><ul class="apis" aria-label="What we used">' + t.apis.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>" +
-      (t.modules ? (stp = stepperHTML(t.modules)).html : '<div class="tiles">') + (t.modules ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (t.modules ? "" : "</div>");
+      (steps ? (stp = stepperHTML(steps)).html : '<div class="tiles">') + (steps ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (steps ? "" : "</div>");
     if (stp) wireStepper(stp.ordered);
     $("#see").addEventListener("click", function () {
       started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
