@@ -177,6 +177,18 @@ The move-in checklist:
 💬 Say "done with internet", "skip insurance" or "what's left" as you go; I'll nudge you as each one comes due.
 ```
 
+### How a buyer reaches a listing
+
+A buyer joins a deal by texting the crew with the listing's ref code (`N9D3`), or, on a line with one open listing, by naming the item. Which number they text depends on the line:
+
+| Line | Who can text it | What the post line should say | Today |
+| --- | --- | --- | --- |
+| **Shared iMessage pool** (now) | Only phones assigned to the pool (`bun run photon assign <phone>`, 25 max); each gets its own pool number and texts *that* | Nothing useful: a stranger can't text the owner's pool number | Buyers for the demo are assigned phones; they text their own pool number with the code. A phone that already runs its own move flips to buyer on that text and back to owner when the deal closes (`elsewhere()` in `service.ts`) |
+| **SMS / voice line** `+1 740-255-8982` | Anyone, no registration | "Text +1 740-255-8982 and mention N9D3" | The service listens on every platform, so inbound SMS reaches it; not yet tried live, and the post line still prints the owner's pool number |
+| **Dedicated iMessage line** | Anyone | "Text <that number> and mention N9D3" | `bun run photon provision-dedicated` (status says `dedicatedLineAvailableNow: true`; may need the Photon business plan). Also fixes threads and the 👍 |
+
+Recommended order: for the hackathon demo, assign the buyer phones and have them quote the code; switch the post line to the SMS line as soon as one inbound SMS is confirmed; get the dedicated line if Photon allows it.
+
 ### STATUS
 
 Text **STATUS** (or `status`, `where are we`, `how's it going`) at any time. The Home Elf answers from the store, nothing invented, as one block per Elf with a blank line between them and only the blocks that have something to say:
