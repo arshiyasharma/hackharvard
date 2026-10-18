@@ -22,6 +22,8 @@ The Crew Lead is the owner's single point of contact: it captures the move's fac
 
 **Gets the message when:** it is the owner's first contact; it's a greeting, a thank-you or a status check; it mentions dates, addresses, roommates or the plan; or nothing else matches.
 
+**Voice variant** (`VOICE_ONBOARDING_PROMPTS` in `packages/elves/src/onboarding-voice.ts`): the same call as a Retell voice agent. `story_first` (the one on trial) hands the caller the floor, mirrors the move back with the gaps as blanks and states assumptions aloud, then plays the brief back and on a yes calls `submit_brief` with the whole brief plus `status` and ends the call. The agent needs `{{today}}`, a `submit_brief` custom function and `end_call`; the service-side `submit_brief` webhook is not built yet. The other two voice variants (`sweep`, `thread`) are in `docs/crew-lead-retell-prompts.md`.
+
 **Inputs:** the owner's batched messages, any photos, the move record, the item list, the Crew Board, and memory (the conversation so far plus working memory).
 
 **What it does each turn**
