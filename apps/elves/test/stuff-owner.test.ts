@@ -55,6 +55,40 @@ describe("Stuff Elf owner side through the service", () => {
     b.stop();
   });
 
+  test("'list it' always answers with a ref code, 'list it at 200' sets the price, and a dumped item can be relisted", async () => {
+    const b = boot();
+    await b.say("moving out nov 1 and selling a couch");
+    await b.say("$80 for the couch");
+    const listed = await b.say("list it at 200");
+    const move = (await b.store.listMoves())[0]!;
+    let deals = await b.store.listDeals(move.id);
+    expect(deals).toHaveLength(1);
+    expect(deals[0]!.askCents).toBe(20000);
+    expect(deals[0]!.limitCents).toBe(8000);
+    expect(listed).toContain(deals[0]!.code);
+    expect(listed).toContain("mention");
+
+    // Last Call dumped it (or the sale fell through): the item is still the owner's, so "list it" reopens it
+    const first = deals[0]!;
+    await b.store.upsertDeal({ ...first, state: "dumped", outcome: "dumped" });
+    const couch = (await b.store.listItems(move.id))[0]!;
+    await b.store.upsertItem({
+      id: couch.id,
+      moveId: move.id,
+      name: couch.name,
+      category: couch.category,
+      outcome: "dumped",
+    });
+    const again = await b.say("list it");
+    deals = await b.store.listDeals(move.id);
+    expect(deals).toHaveLength(2);
+    const fresh = deals.find((d) => d.id !== first.id)!;
+    expect(fresh.code).not.toBe(first.code);
+    expect(again).toContain(fresh.code);
+    expect((await b.store.listItems(move.id))[0]!.outcome).toBe("listed");
+    b.stop();
+  });
+
   test("move report counts what left and what was dumped", async () => {
     const b = boot();
     await b.say("moving out nov 1 and selling a couch and a lamp");

@@ -14,7 +14,7 @@ import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
-import { parsePriceCents } from "./intake.ts";
+import { isApproval, parsePriceCents, pendingListings } from "./intake.ts";
 
 export type RouteVia =
   | "first_contact"
@@ -151,6 +151,15 @@ export async function route(
           return { elf: "stuff", via: "deal", confidence: 0.9 };
       }
     }
+  }
+  // "list it", "post it", "yes" while an item with a floor is waiting to be listed: the Stuff Elf opens the deal
+  // and answers with the ref code. Not while Home is mid-post ("post it" is the sublet's approval there).
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && !hasPhotos(batch) && isApproval(text)) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    const homeMidPost =
+      lastElf === "home" && (await deps.store.getSubletPost(opts.moveId))?.status === "drafted";
+    if (!homeMidPost && (await pendingListings(deps.store, opts.moveId)).length)
+      return { elf: "stuff", via: "deal", confidence: 0.95 };
   }
   // "2" after a list of picks is a pick, not a price. "search again" and a forwarded
   // listing link stay with Home when it spoke last, even with no number to pick.

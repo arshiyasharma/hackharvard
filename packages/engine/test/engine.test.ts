@@ -374,6 +374,25 @@ describe("find_sublet: the crew is the buyer and texted the lister first", () =>
   });
 });
 
+describe("Last Call leaves alone what was listed after move-out", () => {
+  test("a deal opened once the move-out date has passed is neither dropped, freed nor dumped", async () => {
+    const { store, move } = await seed();
+    await store.updateMove(move.id, { moveOutAt: "2026-10-17" });
+    const late = await openDeal(store, {
+      moveId: move.id,
+      mode: "sell_item",
+      subjectId: null,
+      title: "lamp listed late",
+      askCents: 1000,
+      limitCents: 500,
+    });
+    // the sweep runs after the deal was created (real time), with move-out already behind it
+    const swept = await lastCallSweep(store, { now: new Date(Date.now() + 3_600_000) });
+    expect(swept.messages.some((m) => m.text.includes("lamp listed late"))).toBe(false);
+    expect((await store.getDeal(late.id))?.state).toBe("listed");
+  });
+});
+
 describe("sublet_out: a viewing time is booked only on the owner's yes", () => {
   async function seedRoom() {
     const { store, move } = await seed();

@@ -137,7 +137,10 @@ export async function attributeInbound(
  * Open deals a stranger texting `agentId` could be asking about: things the owner on that pool number is offering
  * (selling an item, subletting a room), oldest first. Buying deals are for sellers, who quote a ref code.
  */
-export async function listingCandidates(store: Store, agentId: string): Promise<{ deal: Deal; move: Move }[]> {
+export async function listingCandidates(
+  store: Store,
+  agentId: string,
+): Promise<{ deal: Deal; move: Move }[]> {
   const out: { deal: Deal; move: Move }[] = [];
   const owned = new Map<string, Move | null>();
   for (const deal of await store.listOpenDeals()) {
@@ -191,7 +194,9 @@ export async function inquiryFor(
 /** The listings offered to one stranger space in the last "which one?" question, or all open ones on the move. */
 async function inquiryOptions(store: Store, moveId: string, spaceId: string): Promise<Deal[]> {
   const events = await store.listEvents(moveId);
-  const asked = [...events].reverse().find((e) => e.type === "inquiry.asked" && e.payload.spaceId === spaceId);
+  const asked = [...events]
+    .reverse()
+    .find((e) => e.type === "inquiry.asked" && e.payload.spaceId === spaceId);
   const ids = Array.isArray(asked?.payload.dealIds) ? (asked.payload.dealIds as string[]) : null;
   const open = (await store.listDeals(moveId)).filter((d) => policyFor(d.mode).dir === 1 && isOpen(d.state));
   const shown = ids ? ids.map((id) => open.find((d) => d.id === id)).filter((d): d is Deal => !!d) : open;
@@ -258,7 +263,10 @@ export async function partyForText(
       if (deal && deal.moveId === known.moveId && isOpen(deal.state)) pick = deal;
     }
     if (!pick) {
-      const named = namedDeals(text, options.map((deal) => ({ deal })));
+      const named = namedDeals(
+        text,
+        options.map((deal) => ({ deal })),
+      );
       if (named.length === 1) pick = named[0]!.deal;
     }
     return pick ? (await joinDeal(store, pick, { spaceId, ...who })).party : null;
@@ -1310,6 +1318,10 @@ export async function lastCallSweep(
     const out = moveOutInstant(move?.moveOutAt ?? null, tz);
     if (!move || !out) continue;
     const hoursLeft = (out.getTime() - clock.now.getTime()) / 3_600_000;
+    // A listing opened after the stated move-out (the date slipped, or the owner listed late) has no countdown
+    // to run: without this, a brand-new deal was dumped by the next sweep and "list it" looked like it did nothing.
+    const created = new Date(deal.createdAt).getTime();
+    if (created > out.getTime() && created <= clock.now.getTime()) continue;
     const stage = dueLastCall(deal, hoursLeft);
     if (!stage) continue;
 

@@ -1,6 +1,6 @@
-import { openDeal } from "@elves/engine";
+import { isOpen, openDeal } from "@elves/engine";
 import { prepareImage } from "@elves/llm";
-import type { Item } from "@elves/shared";
+import type { Item, Store } from "@elves/shared";
 import { z } from "zod";
 import { type ElfContext, isImageAttachment } from "./contract.ts";
 import { CATEGORIES, CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB } from "./facts.ts";
@@ -140,17 +140,44 @@ export function isApproval(text: string): boolean {
 export type ApprovedItem = Item & { dealId: string; dealCode: string };
 
 /** Mark every priced, unapproved item as approved and open its sell deal; returns the items that flipped. */
+/**
+ * Items a "list it" can cover: a floor is set, the item is still the owner's, and no sell deal is open on it. An
+ * item whose last listing closed (Last Call dumped it, a buyer walked after hand-off fell through) is pending
+ * again, so "list it" reopens it with a fresh ref code instead of silently doing nothing.
+ */
+export async function pendingListings(store: Store, moveId: string): Promise<Item[]> {
+  const items = await store.listItems(moveId);
+  const open = new Set(
+    (await store.listDeals(moveId))
+      .filter((d) => d.mode === "sell_item" && isOpen(d.state))
+      .map((d) => d.subjectId),
+  );
+  return items.filter(
+    (i) => i.floorPriceCents != null && !open.has(i.id) && !["sold", "given", "donated"].includes(i.outcome),
+  );
+}
+
+/** "list it at 200": a list price named in the approval itself. */
+const LIST_AT = /\b(?:at|for)\s*\$?\s?(\d{2,5})(?:\.\d{1,2})?\b(?!\s*(?:am|pm|%))/i;
+
 export async function approvePendingListings(ctx: ElfContext, text = ""): Promise<ApprovedItem[]> {
-  const items = await ctx.store.listItems(ctx.move.id);
-  const pending = items.filter((i) => i.floorPriceCents != null && !i.listingApproved);
+  const pending = await pendingListings(ctx.store, ctx.move.id);
+  const at = text.match(LIST_AT);
+  const listAt = at ? Number(at[1]) * 100 : null;
   const out: ApprovedItem[] = [];
   for (const it of chooseToApprove(text, pending, await ctx.store.listEvents(ctx.move.id))) {
+    const listPriceCents =
+      listAt != null && it.floorPriceCents != null && listAt >= it.floorPriceCents
+        ? listAt
+        : it.listPriceCents;
     const item = await ctx.store.upsertItem({
       id: it.id,
       moveId: it.moveId,
       name: it.name,
       category: it.category,
+      listPriceCents,
       listingApproved: true,
+      outcome: "listed",
     });
     const deal = await openDeal(ctx.store, {
       moveId: item.moveId,
