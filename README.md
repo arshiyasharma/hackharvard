@@ -10,6 +10,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 - Preview: `python3 -m http.server 8788 --directory site`, then open `http://localhost:8788`.
 - Edit the content in `site/data.js` (copy, example conversations, tracks, the stack list, photos, the phone number, the interview Short).
+- `main` is the only branch we work on. The pitch page deploys to production from `main`.
 - Host it anywhere that serves static files: drop the `site/` folder on Netlify or Vercel, or publish it with GitHub Pages. It needs no backend and no keys.
 - The full pitch plan, per-judge angles and the demo script are in [`pitch.md`](pitch.md).
 
