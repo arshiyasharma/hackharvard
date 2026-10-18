@@ -6,6 +6,7 @@ import { parseRules } from "../src/parse.ts";
 import { FakeRails } from "../src/rails.ts";
 import type { MoneyContext, MoneyItem, MoneyResult } from "../src/types.ts";
 import { fakeLLM, NOW, OWNER, reply } from "./helpers.ts";
+import { createLedgerHandler, ledgerUrl } from "../src/ledger-http.ts";
 import { ledgerPageHtml } from "../src/ledger-page.ts";
 import { buildLedgerView } from "../src/ledger-view.ts";
 
@@ -183,8 +184,8 @@ describe("move plans: Nessie", () => {
 });
 
 describe("the dashboard's middle section is the Smart Plan layer", () => {
-  const page = async (steps: string[]) => {
-    const { elf, move, say } = setup();
+  const page = async (steps: string[], items?: null) => {
+    const { elf, move, say } = setup(items === null ? { items: null } : {});
     for (const t of steps) await say(t);
     const v = await buildLedgerView(elf.service, move);
     return ledgerPageHtml(v, { imageUrl: "x.png", pageUrl: "x" });
@@ -192,7 +193,7 @@ describe("the dashboard's middle section is the Smart Plan layer", () => {
   const between = (html: string, a: string, b: string) => html.indexOf(a) < html.indexOf(b) && html.indexOf(a) > -1;
 
   test("before any plan it explains the layer and how to get a plan", async () => {
-    const html = await page(["split the $360 storage unit with Sam", "yes"]);
+    const html = await page(["split the $360 storage unit with Sam", "yes"], null);
     expect(html).toContain("Beyond the ledger");
     expect(html).toContain("Where should it land?");
     expect(html).toContain("Your odds of finishing under budget");
@@ -230,8 +231,8 @@ describe("asking about the smart plan in chat", () => {
     expect(parseRules("drop the plan", NOW).kind).toBe("plan_cancel");
   });
 
-  test("with nothing set up it says what the move has cost and asks the budget", async () => {
-    const { say } = setup();
+  test("with nothing to plan with it says what the move has cost and asks the budget", async () => {
+    const { say } = setup({ items: null });
     await say("split the $360 storage unit with Sam");
     await say("yes");
     const r = reply(await say("what's my smart plan?"));
@@ -258,7 +259,7 @@ describe("asking about the smart plan in chat", () => {
   });
 
   test("the dashboard asks as soon as there is something on the ledger, with budgets from what it has cost", async () => {
-    const { elf, move, say } = setup();
+    const { elf, move, say } = setup({ items: null });
     await say("split the $360 storage unit with Sam");
     await say("yes");
     const v = await buildLedgerView(elf.service, move);
@@ -266,5 +267,103 @@ describe("asking about the smart plan in chat", () => {
     expect(html).toContain("Your move has cost $");
     expect(html).toContain("Where should it land?");
     expect(html).toMatch(/data-copy="plan my move under \$\d+"/);
+  });
+});
+
+describe("the smart plan asks which plan as soon as something is added", () => {
+  test("a ledger change is followed by three plans to choose from, as their own text", async () => {
+    const { say } = setup();
+    await say("split the $360 storage unit with Sam");
+    const r = await say("yes");
+    expect(r.replies.length).toBe(2);
+    expect(r.replies[1]?.text).toContain("three ways to finish the move");
+    expect(r.replies[1]?.text).toContain("A · best odds · ");
+    expect(r.replies[1]?.text).toContain("Reply A, B or C to pick one");
+    expect(r.images?.[0]?.filename).toBe("plans.png");
+    const pick = await say("go with B");
+    expect(reply(pick)).toContain("On plan B:");
+  });
+
+  test("once a plan is picked, adding something does not ask again", async () => {
+    const { say } = setup();
+    await say("plan my move under $300");
+    await say("go with A");
+    await say("I paid a $400 sublet deposit, due back Dec 1");
+    const r = await say("yes");
+    expect(r.replies.every((x) => !x.text.includes("three ways to finish"))).toBe(true);
+  });
+
+  test("with no items to plan with it does not ask", async () => {
+    const { say } = setup({ items: null });
+    await say("split the $360 storage unit with Sam");
+    expect((await say("yes")).replies.length).toBeLessThanOrEqual(1);
+  });
+
+  test("'smart plan' on its own gives plans to choose from when the ledger has something, a budget question when not", async () => {
+    const empty = setup();
+    expect(reply(await empty.say("smart plan"))).toContain("nothing on the Ledger to plan around");
+    const t = setup();
+    await t.say("I paid a $400 sublet deposit, due back Dec 1");
+    const r = await t.say("smart plan");
+    expect(reply(r)).toContain("A · best odds · ");
+  });
+});
+
+describe("the dashboard lets you choose, switch and change the smart plan", () => {
+  function web() {
+    const t = setup();
+    const links = { publicUrl: "https://elves.test", secret: "s3cret" };
+    const items = t.items ?? null;
+    const handle = createLedgerHandler({
+      service: t.elf.service,
+      links,
+      plans: t.elf.plans,
+      planContext: async () => ({ items, moveOutAt: "2026-10-27" }),
+    });
+    const post = (body: unknown) =>
+      handle(
+        new Request(ledgerUrl(links, t.move.id, "/plan"), { method: "POST", body: JSON.stringify(body) }),
+      );
+    const page = async () => (await (await handle(new Request(ledgerUrl(links, t.move.id))))?.text()) ?? "";
+    return { ...t, links, post, page, handle };
+  }
+
+  test("opened with something on the ledger and no plans, the page already has options to choose from", async () => {
+    const t = web();
+    await t.say("I paid a $400 sublet deposit, due back Dec 1");
+    const html = await t.page();
+    expect(html).toContain("Choose a plan");
+    expect((html.match(/data-plan="choose:[ABC]"/g) ?? []).length).toBe(3);
+    expect(html).toContain('data-plan="budget:');
+  });
+
+  test("choosing, switching, changing the budget and dropping all work from the page", async () => {
+    const t = web();
+    await t.say("I paid a $400 sublet deposit, due back Dec 1");
+    await t.page();
+    let r = await (await t.post({ action: "choose", label: "A" }))?.json();
+    expect(r.ok).toBe(true);
+    expect((await t.elf.service.store.getPlans(t.move.id))?.chosenLabel).toBe("A");
+    expect(await t.page()).toContain('data-plan="choose:B">Switch');
+    r = await (await t.post({ action: "choose", label: "B" }))?.json();
+    expect(r.ok).toBe(true);
+    expect((await t.elf.service.store.getPlans(t.move.id))?.chosenLabel).toBe("B");
+    r = await (await t.post({ action: "budget", cents: 50000 }))?.json();
+    expect(r.ok).toBe(true);
+    expect((await t.elf.service.store.getPlans(t.move.id))?.budgetCents).toBe(50000);
+    r = await (await t.post({ action: "drop" }))?.json();
+    expect(r.ok).toBe(true);
+    expect((await t.elf.service.store.getPlans(t.move.id))?.chosen).toBeNull();
+  });
+
+  test("a malformed tap is a 400 and a wrong token a 404", async () => {
+    const t = web();
+    await t.say("I paid a $400 sublet deposit, due back Dec 1");
+    expect((await t.post({ action: "choose", label: "Z" }))?.status).toBe(400);
+    expect((await t.post({ action: "budget", cents: 5 }))?.status).toBe(400);
+    const bad = await t.handle(
+      new Request("https://elves.test/ledger/mv_plan/plan?t=nope", { method: "POST", body: "{}" }),
+    );
+    expect(bad?.status).toBe(404);
   });
 });

@@ -62,6 +62,15 @@ export function moveOutDate(move: MoneyMove): string | null {
 }
 
 /** One plan in one line: "A · best odds · $300 · 56% under $300". */
+/** The text that goes with an offered set of plans: what they are built around, the three, how to pick. */
+export function offerLines(op: PlanOp, budgetCents: number): string[] {
+  const plans = op.lines.filter((l) => /^[ABC] · /.test(l));
+  return [
+    `Here are three ways to finish the move, built around a ${fmtUsd(budgetCents)} budget:\n${plans.join("\n")}`,
+    'Reply A, B or C to pick one, or text a different budget ("plan my move under $400").',
+  ];
+}
+
 export function planLine(p: Plan, budgetCents: number): string {
   return `${p.label} · ${p.name} · ${netPhrase(p.stats.p50Cents)} · ${pct(p.stats.chanceUnderBudget)} under ${fmtUsd(budgetCents)}`;
 }
@@ -349,10 +358,36 @@ export class PlanService {
   }
 
   /** "plan B · $370 · 74% under $400 · couch 2 days behind" */
+  /**
+   * Plans nobody asked for yet: when the Ledger has something on it and no plan is picked, draft three (at the
+   * budget already set, or one worked out from what the move has cost) so the owner only has to choose. Null when
+   * there is nothing to plan around or no items or move-out date to plan with.
+   */
+  async offer(
+    move: MoneyMove,
+    items: MoneyItem[] | null,
+    budgetCents?: number,
+  ): Promise<(PlanOp & { budgetCents: number }) | null> {
+    const state = await this.store.getPlans(move.id);
+    if (state?.chosen) return null;
+    const pr = await this.input(move, [], 0, this.money.today());
+    if (pr.netNowCents <= 0 && !pr.expected.length) return null;
+    const budget = budgetCents ?? state?.budgetCents ?? (suggestBudgets(pr.netNowCents)[1] as number);
+    const res = await this.draft(move, items, budget);
+    return res.events.some((e) => e.type === "plan.drafted") ? { ...res, budgetCents: budget } : null;
+  }
+
   async status(move: MoneyMove, items: MoneyItem[] | null): Promise<PlanOp> {
     const r = op();
     const state = await this.store.getPlans(move.id);
     if (!state?.chosen || !state.chosenLabel) {
+      if (!state?.drafts.length) {
+        const offered = await this.offer(move, items);
+        if (offered) {
+          offered.lines = offerLines(offered, offered.budgetCents);
+          return offered;
+        }
+      }
       if (state?.drafts.length) {
         r.lines.push(`You haven't picked a plan yet. Here are the three under ${fmtUsd(state.budgetCents)}:`);
         // One block, so the reply stays at three lines.

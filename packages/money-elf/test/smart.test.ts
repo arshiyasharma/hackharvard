@@ -216,3 +216,40 @@ describe("a deposit is counted once, however it is said", () => {
     expect(reply(await t.say("Dec 1"))).toContain("not sure");
   });
 });
+
+describe("'which deposit came back?' is answered, not looped", () => {
+  const two = async () => {
+    const t = setup();
+    await t.say("I paid a $400 sublet deposit, due back Dec 1");
+    await t.say("I paid a $150 storage deposit, due back Dec 15");
+    return t;
+  };
+  const open = async (t: ReturnType<typeof setup>) =>
+    (await t.elf.service.store.listEntries(t.move.id)).filter((e) => e.kind === "deposit" && e.status === "pending");
+
+  test.each(["all of them", "all", "both", "everything", "all of it"])("%p returns every open deposit", async (answer) => {
+    const t = await two();
+    expect(reply(await t.say("I got my deposit back"))).toContain('Or say "all of them"');
+    const r = await t.say(answer);
+    expect(reply(r)).toContain("all 2 deposits are back");
+    expect(await open(t)).toHaveLength(0);
+  });
+
+  test("'got all my deposits back' says it in one go", async () => {
+    const t = await two();
+    expect(reply(await t.say("I got all my deposits back"))).toContain("all 2 deposits are back");
+    expect(await open(t)).toHaveLength(0);
+  });
+
+  test("naming one ('the sublet one') returns just that one", async () => {
+    const t = await two();
+    await t.say("got my deposit back");
+    expect(reply(await t.say("the sublet one"))).toContain("the $400 sublet deposit is back");
+    expect((await open(t)).map((e) => e.what)).toEqual(["storage"]);
+  });
+
+  test("'all' with nothing open is not a deposit action", async () => {
+    const t = setup();
+    expect(reply(await t.say("all of them"))).toContain("not sure");
+  });
+});

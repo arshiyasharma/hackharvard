@@ -598,17 +598,34 @@ export class MoneyService {
     return out;
   }
 
-  async depositReturned(move: MoneyMove, what: string | null): Promise<OpResult> {
+  async depositReturned(move: MoneyMove, what: string | null, all = false): Promise<OpResult> {
     const out = empty();
     const open = (await this.store.listEntries(move.id)).filter(
       (e) => e.kind === "deposit" && e.status === "pending",
     );
     const matches = what ? open.filter((e) => e.what.toLowerCase().includes(what.toLowerCase())) : open;
+    if (all && matches.length) {
+      // "All of them": every matching open deposit comes back in one go.
+      const owner = await this.owner(move);
+      let total = 0;
+      for (const e of matches) {
+        await this.movement(e, null, await this.account(owner), `Deposit returned: ${e.what}`, "deposit_back");
+        await this.store.updateEntry(e.id, { status: "refunded", paidTo: owner.id });
+        out.events.push({ type: "deposit.returned", payload: { entryId: e.id, amountCents: e.amountCents } });
+        total += e.amountCents;
+      }
+      out.lines.push(
+        matches.length === 1
+          ? `Nice, the ${fmtUsd(total)} ${matches[0]?.what} deposit is back. Marked it on the Ledger.`
+          : `Nice, all ${matches.length} deposits are back: ${matches.map((e) => `${e.what} ${fmtUsd(e.amountCents)}`).join(", ")}. Marked them on the Ledger.`,
+      );
+      return out;
+    }
     if (matches.length !== 1) {
       out.lines.push(
         open.length === 0
           ? "There's no open deposit on the Ledger."
-          : `Which deposit came back: ${open.map((e) => `${e.what} ${fmtUsd(e.amountCents)}`).join(" or ")}?`,
+          : `Which deposit came back: ${open.map((e) => `${e.what} ${fmtUsd(e.amountCents)}`).join(" or ")}? Or say "all of them".`,
       );
       return out;
     }

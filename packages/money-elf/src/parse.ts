@@ -17,7 +17,9 @@ export type Intent =
   | { kind: "deposit_paid"; amountCents: number; what: string; dueBackAt: string | null; again?: boolean }
   /** The answer to "When is it due back?": a date on its own, for the deposit just logged. */
   | { kind: "deposit_due"; dueBackAt: string }
-  | { kind: "deposit_returned"; what: string | null }
+  | { kind: "deposit_returned"; what: string | null; all?: boolean }
+  /** "all of them", the answer to "Which deposit came back?". */
+  | { kind: "deposit_all" }
   | { kind: "mark_paid"; person: string | null; what: string | null; amountCents: number | null }
   /** A payment plan for someone's share: asked by the roommate, or offered by the owner (person named). */
   | { kind: "loan"; person: string | null; what: string | null; monthlyCents: number | null }
@@ -63,6 +65,7 @@ export function parsePlanIntent(text: string, amounts: number[]): Intent | null 
   if (choose?.[1]) return { kind: "plan_choose", label: choose[1].toUpperCase() as "A" | "B" | "C" };
   if (/\b(drop|cancel|stop|forget|scrap|ditch)\s+(the|my|this)\s+(move\s+)?plan\b/i.test(t))
     return { kind: "plan_cancel" };
+  if (/^\s*(my |the )?smart[\s-]?plans?[\s?.!]*$/i.test(t)) return { kind: "plan_status" };
   if (
     /\b(smart plan|my plan|move plan)\b/i.test(t) &&
     /\b(what|what'?s|whats|show|tell|see|where|how|status|update|any)\b/i.test(t) &&
@@ -211,15 +214,22 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
   )
     return { kind: "help" };
 
+  if (/^\s*(all|both|all of (them|it)|every ?(one|thing)|the (whole )?lot|all (three|two|of the above|of 'em))[\s.!]*$/i.test(t))
+    return { kind: "deposit_all" };
+
   const depositPaid = /\b(paid|put down|sent|gave|left|put)\b/i.test(t) && !!amounts[0];
   const dueBack = /\b(due back|back by|returned by|refund(ed)? by|get it back|back on)\b/i.test(t);
   if (
-    /\bdeposit\b/i.test(t) &&
+    /\bdeposits?\b/i.test(t) &&
     !depositPaid &&
     !dueBack &&
     /\b(back|returned|refunded|got (it|the|my)|came back)\b/i.test(t)
   )
-    return { kind: "deposit_returned", what: costLabel(t) };
+    return {
+      kind: "deposit_returned",
+      what: costLabel(t),
+      ...(/\b(all|both|every|each)\b/i.test(t) ? { all: true } : {}),
+    };
 
   if (/\b(split|divide|chip in|go halves|halfsies|share the cost)\b/i.test(t) && !amounts[0]) {
     const listed =

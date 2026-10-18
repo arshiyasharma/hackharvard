@@ -13,7 +13,7 @@ import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
 import { cantLines, clarifyLines, focusLine, menuLines, otherLines } from "./menu.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import { renderPlansPng } from "./plan-chart.ts";
-import { PLAN_POLL_ID, type PlanOp, PlanService } from "./plan-service.ts";
+import { offerLines, PLAN_POLL_ID, type PlanOp, PlanService } from "./plan-service.ts";
 import { pct } from "./plans.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
@@ -189,6 +189,8 @@ async function itemsOf(ctx: MoneyContext) {
 }
 
 /** Fold a Move Plans result into the turn: its lines, events and outbound, plus the poll and the plans card. */
+const op0 = (): OpResult => ({ lines: [], events: [], outbound: [] });
+
 async function withPlan(r: OpResult, p: PlanOp, extras: Extras, service: MoneyService, ctx: MoneyContext) {
   if (p.poll) extras.poll = p.poll;
   if (p.showPlans) {
@@ -225,7 +227,28 @@ async function handle(
   const extras: Extras = {};
   const spaceOf = await spaces(ctx);
   const reach: Reach = (h) => spaceOf(h) !== undefined;
-  const finish = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links, cards);
+  const finishPlain = (res: OpResult, ex: Extras) => finishTurn(service, ctx, res, ex, spaceOf, links, cards);
+  // Add something to the Ledger and, with no plan picked, the Smart Plan asks which one: three plans follow
+  // the reply as their own text, so the owner only has to choose (or give a different budget).
+  const finish = async (res: OpResult, ex: Extras) => {
+    const out = await finishPlain(res, ex);
+    if (
+      role !== "owner" ||
+      !res.events.some((e) => LEDGER_CHANGING_EVENTS.has(e.type)) ||
+      res.events.some((e) => e.type.startsWith("plan."))
+    )
+      return out;
+    const offer = await plans.offer(move, await itemsOf(ctx)).catch(() => null);
+    if (!offer) return out;
+    const more: Extras = {};
+    await withPlan(op0(), offer, more, service, ctx);
+    return {
+      ...out,
+      ...(out.images?.length || !more.images?.length ? {} : { images: more.images }),
+      replies: [...out.replies, { text: formatLines(offerLines(offer, offer.budgetCents)), parentMessageId: null }],
+      events: [...(out.events ?? []), ...offer.events],
+    };
+  };
 
   // A tap on an approval poll answers exactly the action it was sent for. Only the owner's taps count.
   const vote = ctx.batch.messages.flatMap((m) => m.pollVote?.selectedOptions ?? []).at(-1);
@@ -379,6 +402,14 @@ async function handle(
     case "deposit_paid":
       r = merge(r, await service.recordDeposit(move, intent));
       break;
+    case "deposit_all": {
+      const open = (await service.store.listEntries(move.id)).filter(
+        (e) => e.kind === "deposit" && e.status === "pending",
+      );
+      if (open.length) r = merge(r, await service.depositReturned(move, null, true));
+      else r.lines.push(...otherLines());
+      break;
+    }
     case "deposit_due": {
       const done = await service.depositDue(move, intent.dueBackAt);
       if (done) r = merge(r, done);
@@ -386,7 +417,7 @@ async function handle(
       break;
     }
     case "deposit_returned":
-      r = merge(r, await service.depositReturned(move, intent.what));
+      r = merge(r, await service.depositReturned(move, intent.what, intent.all === true));
       break;
     case "mark_paid": {
       const p = intent.person ? await service.findPerson(move.id, intent.person) : undefined;
@@ -533,9 +564,20 @@ async function handle(
       r.events.push({ type: "ledger.shown", payload: { records: view.records, card: !!png, link: !!links } });
       break;
     }
-    default:
+    default: {
+      // "the sublet one": the answer to "Which deposit came back?", when it names exactly one open deposit.
+      const open = (await service.store.listEntries(move.id)).filter(
+        (e) => e.kind === "deposit" && e.status === "pending",
+      );
+      const named = text.length <= 40 ? open.filter((e) => text.toLowerCase().includes(e.what.toLowerCase())) : [];
+      if (named.length === 1 && /\b(one|deposit|back)\b|^\s*(the )?\w+\s*[.!]?$/i.test(text)) {
+        r = merge(r, await service.depositReturned(move, named[0]?.what ?? null));
+        break;
+      }
       r.lines.push(...otherLines());
       r.events.push({ type: "money.unclear", payload: {} });
+      break;
+    }
   }
   return finish(r, extras);
 }

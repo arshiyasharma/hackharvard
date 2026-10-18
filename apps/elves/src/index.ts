@@ -75,6 +75,12 @@ const ledger =
     ? createLedgerHandler({
         service: money.service,
         links: { publicUrl: config.publicUrl, secret: ledgerSecret },
+        // The Smart Plan on the dashboard: the items and move-out the plans are drafted from come from the crew store.
+        plans: money.plans,
+        planContext: async (moveId) => ({
+          items: await store.listItems(moveId),
+          moveOutAt: (await store.getMove(moveId))?.moveOutAt ?? null,
+        }),
         // A tap on Approve / Not now in the dashboard: deliver what it produced, confirm in the owner's chat,
         // and refresh the card. Runs at request time, after `service` below exists.
         onDecided: async (moveId, result) => {

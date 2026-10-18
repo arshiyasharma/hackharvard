@@ -143,7 +143,7 @@ const PENDING_VERB: Record<string, string> = {
 
 export function ledgerPageHtml(
   v: LedgerView,
-  opts: { imageUrl: string; pageUrl: string; decideUrl?: string },
+  opts: { imageUrl: string; pageUrl: string; decideUrl?: string; planUrl?: string },
 ): string {
   const p = v.projection;
   const today = v.asOf.slice(0, 10);
@@ -285,6 +285,7 @@ ${stat("Deposits out", v.depositsOutCents, nextDeposit?.dueBackAt ? `Next back $
   const data = {
     today,
     decideUrl: opts.decideUrl ?? null,
+    planUrl: opts.planUrl ?? null,
     netNowCents: p.netNowCents,
     expected: p.expected,
     owes: v.owes,
@@ -412,6 +413,9 @@ input:focus-visible+.switch{outline:2px solid var(--ink);outline-offset:2px}
 .sp-steps{margin:12px 0 0;padding:0;list-style:none;position:relative}.sp-steps li{display:flex;gap:10px;font-size:13.5px;padding:6px 0;color:var(--ok-ink)}.sp-steps li::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--lime);margin-top:7px}
 .sp-pick{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:12.5px;color:var(--ok-muted);position:relative}
 .sp-chip{background:rgba(255,255,255,.1);color:var(--ok-ink);border-radius:8px;padding:6px 12px;font-weight:600;font-size:13px}
+.mini{background:var(--fill);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-weight:600;font-size:13px;color:var(--ink)}
+.mini.on{background:var(--lime);color:var(--lime-ink);border-color:transparent}.mini.ghost{background:none;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px}.drop{text-align:center;margin-top:10px}
 .smart-cta{display:flex;width:100%;align-items:center;justify-content:center;gap:6px;margin-top:12px;background:var(--lime);color:var(--lime-ink);border-radius:10px;padding:10px 12px;font-weight:600;font-size:14px;text-align:center;position:relative}
 .smart-foot{margin-top:10px;font-size:11.5px;color:var(--ok-muted);text-align:center;position:relative}
 .seg button.hot{color:var(--ink);font-weight:600}
@@ -439,7 +443,7 @@ ${heldOut}
 </section>
 <section class="tab" id="tab-back">${comingBack}</section>
 <section class="tab" id="tab-activity">${activity}</section>
-<section class="tab" id="tab-plan">${planTab(v)}</section>
+<section class="tab" id="tab-plan">${planTab(v, !!opts.planUrl)}</section>
 <div class="foot">Read live from ${plural(v.records, "Nessie record")} · refreshes every 5 seconds</div>
 </main>
 <div class="sheet-bg" id="sheet-bg"></div>
@@ -486,6 +490,11 @@ $("#wi-chart").innerHTML=stepChartSvg({points:pts,estimated:est,width:340,height
 document.querySelectorAll("#wi-late,[data-count]").forEach(function(c){c.addEventListener("change",function(){touched=true;whatIf()})});
 // Approve / Not now: Approve asks for a second tap, then posts the decision.
 function toast(m){var t=$("#toast");t.textContent=m;t.classList.add("on");setTimeout(function(){t.classList.remove("on")},3200)}
+document.querySelectorAll("[data-plan]").forEach(function(b){b.addEventListener("click",function(){
+if(!D.planUrl){toast("Text the Money Elf to change plans.");return}
+var p=b.dataset.plan.split(":"),body=p[0]==="choose"?{action:"choose",label:p[1]}:p[0]==="budget"?{action:"budget",cents:Number(p[1])}:{action:"drop"};
+document.querySelectorAll("[data-plan]").forEach(function(x){x.disabled=true});busy=true;
+fetch(D.planUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json()}).then(function(r){toast(r.message||(r.ok?"Done.":"That didn't work."));setTimeout(function(){location.reload()},1400)}).catch(function(){busy=false;toast("Couldn't reach Elves. Try again.");document.querySelectorAll("[data-plan]").forEach(function(x){x.disabled=false})})})});
 document.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click",function(){var t=b.dataset.copy;try{navigator.clipboard.writeText(t).then(function(){toast("Copied: "+t+". Paste it in Messages.")},function(){toast("Text the Money Elf: "+t)})}catch(e){toast("Text the Money Elf: "+t)}})});
 document.querySelectorAll("[data-decide]").forEach(function(btn){btn.addEventListener("click",function(){
 var card=btn.closest("[data-pending]"),choice=btn.dataset.decide;if(!D.decideUrl){toast("Reply yes in Messages to approve.");return}
@@ -572,7 +581,34 @@ function assumptionsHtml(): string {
   return `<details class="how"><summary>How the odds are estimated</summary><p class="note">Each plan is run 2,000 times. An item at its list price sells on a given day with these chances: ${esc(rates)}; a lower price raises that by (list ÷ price)<sup>${a.priceElasticity}</sup>. Last Call drops the price to ${pctOf(a.lastCallDrop)} of list two days before move-out and relists it free the day before; anything left is hauled away for ${fmtUsd(a.dumpCents)}. Trucks: ${esc(a.trucks.map((t) => `${t.size} ${fmtUsd(t.cents)} (up to ${t.capacityLb} lb)`).join(", "))}, sized for ${a.baseLoadLb} lb of boxes plus what you haul. Movers: ${fmtUsd(a.moversCents)}. Estimates, not quotes.</p></details>`;
 }
 
-function planTab(v: LedgerView): string {
+
+/** Switch, choose, change the budget or drop: the buttons under the plan, each one a POST to the plan route. */
+function planControls(v: LedgerView, canAct: boolean): string {
+  const ps = v.plans;
+  if (!ps || !ps.drafts.length) return "";
+  const chosen = ps.chosen?.label;
+  const rows = ps.drafts
+    .map((d) => {
+      const on = d.label === chosen;
+      return `<div class="li static"><span class="av">${d.label}</span><div class="grow"><div>${esc(capFirst(d.name))}</div><div class="sub">${esc(netPhrase(d.stats.p50Cents))} likely · ${pctOf(d.stats.chanceUnderBudget)} under ${fmtUsd(ps.budgetCents)} · ${esc(effortOf(d))}</div></div>${
+        on
+          ? `<span class="chip completed">Your plan</span>`
+          : canAct
+            ? `<button class="mini" data-plan="choose:${d.label}">${chosen ? "Switch" : "Choose"}</button>`
+            : ""
+      }</div>`;
+    })
+    .join("");
+  const budgets = [...new Set([ps.budgetCents, ...suggestBudgets(Math.max(v.projection.netNowCents, 0))])].sort((a, b) => a - b);
+  const chips = canAct
+    ? `<div class="sh"><h2>Budget</h2><span class="meta">changes the odds, picks again</span></div><div class="panel"><div class="chips">${budgets
+        .map((b) => `<button class="mini${b === ps.budgetCents ? " on" : ""}" data-plan="budget:${b}">${fmtUsd(b)}</button>`)
+        .join("")}</div></div>${chosen ? `<div class="drop"><button class="mini ghost" data-plan="drop">Drop this plan</button></div>` : ""}`
+    : "";
+  return `<div class="sh"><h2>${chosen ? "Switch plan" : "Choose a plan"}</h2><span class="meta">${ps.drafts.length} options</span></div><div class="panel">${rows}</div>${chips}`;
+}
+
+function planTab(v: LedgerView, canAct = false): string {
   const ps = v.plans;
   const empty = `<div class="panel empty" style="margin-top:16px"><b>No plan yet.</b><span>Text Elves “plan my move under $300” (your budget) and you get three plans, each with the chance it finishes under budget.</span></div>`;
   if (!ps) return empty;
@@ -601,6 +637,7 @@ function planTab(v: LedgerView): string {
 </section>
 ${path ? `<div class="panel chart-panel"><svg class="plan-svg" viewBox="0 0 340 162" role="img" aria-label="${esc(`Plan ${p.label}: likely ${netPhrase(p.stats.p50Cents)} by move-out`)}">${path}</svg></div>` : ""}
 <p class="note">Shaded: 10–90% of simulated moves. Dots: your real net cost, day by day. ${p.truck.size} truck${p.movers ? " and movers" : ""}.</p>
+${planControls(v, canAct)}
 ${records ? `<div class="sh"><h2>In Nessie</h2><span class="meta">${plural(ps.records.length, "record")}</span></div><div class="panel">${records}</div>` : ""}
 ${assumptionsHtml()}`;
   }
@@ -613,6 +650,7 @@ ${assumptionsHtml()}`;
 <div class="flow"><span>Reply A, B or C in Messages</span></div>
 </section>
 <div class="panel chart-panel"><svg class="plan-svg" viewBox="0 0 340 190" role="img" aria-label="${esc(ps.drafts.map((d) => `Plan ${d.label}: ${netPhrase(d.stats.p50Cents)}, ${pctOf(d.stats.chanceUnderBudget)} under budget`).join("; "))}">${race}</svg></div>
+${planControls(v, canAct)}
 <div class="sh"><h2>What each plan does</h2></div>
 <div class="panel"><svg class="plan-svg" viewBox="0 0 340 ${Math.ceil(grid.h + 8)}" role="img" aria-label="What each plan does with each item">${grid.svg}</svg></div>
 ${assumptionsHtml()}`;
