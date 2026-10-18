@@ -38,7 +38,7 @@ describe("sublet-out facts", () => {
     expect(isSubletOutIntent("rent out my place for the summer")).toBe(true);
     expect(isSubletOutIntent("looking for a sublet in allston")).toBe(false);
     expect(isSubletOutIntent("my room is a mess")).toBe(false);
-    // questions about subletting go to the lease reader
+    // questions about whether they may sublet are not a listing
     expect(isSubletOutIntent("can I sublet my room?")).toBe(false);
     expect(isSubletOutIntent("my landlord says i cant sublet, can you check the lease?")).toBe(false);
     expect(isSubletOutIntent("am I allowed to sublet my place")).toBe(false);

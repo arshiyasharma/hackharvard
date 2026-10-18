@@ -1,4 +1,6 @@
 import {
+  type Brief,
+  briefLines,
   type Deal,
   type DealParty,
   ELF_LABELS,
@@ -110,7 +112,9 @@ export function dealLine({ deal: d, parties }: DealView): string {
   ];
   if (live.length) bits.push(`${live.length} talking`);
   if (asking.length)
-    bits.push(`waiting on the owner about ${asking.map((p) => usd(p.lastOfferCents)).join(", ")}`);
+    bits.push(
+      `waiting on the owner about ${asking.map((p) => (p.slot ? `a ${p.slot.label} booking` : usd(p.lastOfferCents))).join(", ")}`,
+    );
   if (d.slot) bits.push(`booked ${d.slot.label}`);
   if (d.agreedCents != null) bits.push(`agreed ${usd(d.agreedCents)}${unit}`);
   if (d.outcome) bits.push(d.outcome);
@@ -145,6 +149,7 @@ export function renderWorkingMemory(
   housing: HousingView | null = null,
   deals: DealView[] = [],
   movein: MoveinTask[] = [],
+  brief: { brief: Brief; confirmed: boolean } | null = null,
 ): string {
   const people = participants.filter((p) => p.role !== "owner").map((p) => `${p.role} ${p.handle}`);
   const crew = board
@@ -163,7 +168,7 @@ export function renderWorkingMemory(
 
 ## Items (name · floor · list · status)
 ${items.length ? items.map(itemLine).join("\n") : "- (none yet)"}
-${deals.length ? `\n## Deals (state · ask · owner's line, never told to a counterparty)\n${deals.map(dealLine).join("\n")}\n` : ""}${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}${movein.length ? `\n## Move-in week\n${moveinLines(movein, move).join("\n")}\n` : ""}
+${deals.length ? `\n## Deals (state · ask · owner's line, never told to a counterparty)\n${deals.map(dealLine).join("\n")}\n` : ""}${housing ? `\n## Housing search\n${housingLines(housing).join("\n")}\n` : ""}${movein.length ? `\n## Move-in week\n${moveinLines(movein, move).join("\n")}\n` : ""}${brief ? `\n## Brief (${brief.confirmed ? "confirmed by the owner" : "draft; the owner has not confirmed it yet"})\n${briefLines(brief.brief).join("\n")}\n` : ""}
 ## Crew
 ${crew.length ? crew.join("\n") : "- everyone standing by"}`;
 }

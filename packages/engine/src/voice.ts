@@ -28,6 +28,10 @@ export interface Voice {
   gone(title: string): string;
   booked(slot: string, address: string | null, at: string | null, meetNoun: string): string;
   bookedReminder(slot: string, address: string | null): string;
+  /** The counterparty picked `slot`; it waits for the owner's OK. */
+  slotPending(slot: string, meetNoun: string): string;
+  /** The owner turned the picked time down; `slots` is the numbered list of others, or null. */
+  slotDeclined(slots: string | null, meetNoun: string): string;
   /** "No worries." then this, when there are no slots to offer. */
   rescheduleOpen: string;
   slotTakenOpen: string;
@@ -39,6 +43,8 @@ export interface Voice {
   countered: ((role: string, title: string, theirs: string, ours: string) => string) | null;
   ownerNoSummary(hold: string, title: string): string;
   bookedOwner(role: string, title: string, slot: string, at: string): string;
+  /** The counterparty picked a time; nothing is booked until the owner says yes. */
+  askSlot(role: string, title: string, slot: string, at: string, meetNoun: string): string;
   walkedOwner(role: string, title: string): string;
   handedOffOwner(title: string, cents: number, unit: "each" | "month"): string;
 }
@@ -72,6 +78,12 @@ export const SELLER: Voice = {
   booked: (slot, address, at) =>
     `Booked: ${slot}.${address ? ` Address: ${address}.` : " I'll text the address before then."}${at ? ` ${at}, paid through Elves escrow.` : ""}`,
   bookedReminder: (slot, address) => `You're booked for ${slot}.${address ? ` Address: ${address}.` : ""}`,
+  slotPending: (slot, meetNoun) =>
+    `${slot} for the ${meetNoun}: let me confirm with the owner and get back to you.`,
+  slotDeclined: (slots, meetNoun) =>
+    slots
+      ? `Sorry, that time doesn't work for the owner. Other ${meetNoun} times: ${slots}. Which works?`
+      : `Sorry, that time doesn't work for the owner. When else could you come?`,
   rescheduleOpen: "When could you come instead?",
   slotTakenOpen: "When else could you come?",
   handedOff: (title, cents) =>
@@ -84,6 +96,8 @@ export const SELLER: Voice = {
   ownerNoSummary: (hold, title) => `Got it. I told them ${hold} is the lowest for the ${title}.`,
   bookedOwner: (role, title, slot, at) =>
     `Booked: ${role} picks up the ${title} ${slot} for ${at}. It comes off the truck estimate.`,
+  askSlot: (role, title, slot, at, meetNoun) =>
+    `The ${role} for the ${title} (${at}) wants a ${meetNoun} ${slot}. Book it? Reply yes or no.`,
   walkedOwner: (role, title) => `A ${role} walked away from the ${title}; it's back on the market.`,
   handedOffOwner: (title, cents) =>
     cents > 0
@@ -120,6 +134,12 @@ export const BUYER: Voice = {
   booked: (slot, _address, at, meetNoun) =>
     `Booked: ${meetNoun} ${slot}.${at ? ` ${at}; any deposit goes through Elves escrow.` : ""}`,
   bookedReminder: (slot) => `We're set for ${slot}.`,
+  slotPending: (slot) =>
+    `${slot} could work; let me confirm with the person I'm helping and get back to you.`,
+  slotDeclined: (slots) =>
+    slots
+      ? `Sorry, that time doesn't work on our side. Could we do ${slots}?`
+      : `Sorry, that time doesn't work on our side. When else could we come?`,
   rescheduleOpen: "When could we come instead?",
   slotTakenOpen: "When else could we come?",
   handedOff: () => "Thanks so much! Any deposit goes through Elves escrow.",
@@ -129,6 +149,8 @@ export const BUYER: Voice = {
     `The ${role} wants ${theirs} for the ${title}; I offered ${ours}.`,
   ownerNoSummary: (hold, title) => `Got it. I told them ${hold} is the most for the ${title}.`,
   bookedOwner: (_role, title, slot, at) => `Booked: viewing of the ${title} ${slot} at ${at}.`,
+  askSlot: (role, title, slot, at, meetNoun) =>
+    `The ${role} for the ${title} (${at}) offers a ${meetNoun} ${slot}. Book it? Reply yes or no.`,
   walkedOwner: (role, title) => `The ${role} walked away from the ${title}.`,
   handedOffOwner: (title, cents, unit) =>
     cents > 0

@@ -266,6 +266,7 @@ async function agree(
     agreedCents: cents,
     lastCounterCents: cents,
     offeredSlots: slots,
+    slot: null,
     ownerAskMessageId: null,
   });
   if (deal.state !== "negotiating") deal = await setState(store, deal, "negotiating");
@@ -287,7 +288,7 @@ async function agree(
       to: "owner",
       dealId: deal.id,
       kind: "agreed",
-      text: `${cap(who(p))} agreed to ${at} for the ${deal.title}; offering ${p.meetNoun} times now.`,
+      text: `${cap(who(p))} agreed to ${at} for the ${deal.title}; offering ${p.meetNoun} times now.${p.ownerConfirmsSlot ? " I'll check the time they pick with you before booking." : ""}`,
       facts: { title: deal.title, agreedPrice: at, counterparty: who(p), slots: slots.map((s) => s.label) },
     },
   ];
@@ -306,6 +307,69 @@ async function agree(
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Book `slot` for a party: the deal is scheduled and both sides hear it. */
+async function book(
+  store: Store,
+  move: Move,
+  deal: Deal,
+  party: DealParty,
+  slot: Slot,
+  cents: number,
+): Promise<TurnResult> {
+  const p = policyFor(deal.mode);
+  const events: EngineEvent[] = [];
+  const messages: EngineMessage[] = [];
+  party = await store.upsertDealParty({
+    ...party,
+    status: "scheduled",
+    slot,
+    offeredSlots: [],
+  });
+  deal = await setState(store, deal, "scheduled", {
+    winnerPartyId: party.id,
+    slot,
+    agreedCents: cents,
+  });
+  events.push({
+    type: "deal.scheduled",
+    payload: { dealId: deal.id, partyId: party.id, slot, cents },
+  });
+  events.push({
+    type: "pickup.scheduled",
+    payload: {
+      dealId: deal.id,
+      partyId: party.id,
+      subjectId: deal.subjectId,
+      title: deal.title,
+      slot,
+    },
+  });
+  // The address is the owner's only when the counterparty comes to them; a lister never hears it.
+  const address = p.voice.comesToUs ? move.fromAddress : null;
+  messages.push(
+    {
+      to: "counterparty",
+      partyId: party.id,
+      dealId: deal.id,
+      kind: "booked",
+      text: p.voice.booked(slot.label, address, cents > 0 ? price(cents, p.unit) : null, p.meetNoun),
+      facts: publicFacts(deal, p, {
+        slot: slot.label,
+        address,
+        agreedPrice: price(cents, p.unit),
+      }),
+    },
+    {
+      to: "owner",
+      dealId: deal.id,
+      kind: "booked",
+      text: p.voice.bookedOwner(who(p), deal.title, slot.label, price(cents, p.unit)),
+      facts: { title: deal.title, slot: slot.label, agreedPrice: price(cents, p.unit) },
+    },
+  );
+  return { deal, party, messages, events };
+}
 
 /**
  * A party leaves (walked, blocked). Unless someone else holds the booking, the deal goes back to the inbound
@@ -601,60 +665,40 @@ export async function counterpartyTurn(input: {
         return done();
       }
       const cents = party.agreedCents ?? standing ?? 0;
-      party = await store.upsertDealParty({
-        ...party,
-        status: "scheduled",
-        slot: intent.slot,
-        offeredSlots: [],
-      });
-      deal = await setState(store, deal, "scheduled", {
-        winnerPartyId: party.id,
-        slot: intent.slot,
-        agreedCents: cents,
-      });
-      events.push({
-        type: "deal.scheduled",
-        payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents },
-      });
-      events.push({
-        type: "pickup.scheduled",
-        payload: {
-          dealId: deal.id,
-          partyId: party.id,
-          subjectId: deal.subjectId,
-          title: deal.title,
-          slot: intent.slot,
-        },
-      });
-      // The address is the owner's only when the counterparty comes to them; a lister never hears it.
-      const address = p.voice.comesToUs ? move.fromAddress : null;
-      messages.push(
-        {
-          to: "counterparty",
-          partyId: party.id,
-          dealId: deal.id,
-          kind: "booked",
-          text: p.voice.booked(
-            intent.slot.label,
-            address,
-            cents > 0 ? price(cents, p.unit) : null,
-            p.meetNoun,
-          ),
-          facts: publicFacts(deal, p, {
-            slot: intent.slot.label,
-            address,
-            agreedPrice: price(cents, p.unit),
-          }),
-        },
-        {
-          to: "owner",
-          dealId: deal.id,
-          kind: "booked",
-          text: p.voice.bookedOwner(who(p), deal.title, intent.slot.label, price(cents, p.unit)),
-          facts: { title: deal.title, slot: intent.slot.label, agreedPrice: price(cents, p.unit) },
-        },
-      );
-      return done();
+      if (p.ownerConfirmsSlot) {
+        // A viewing is the owner's time: hold the pick and ask, book only on their yes.
+        party = await store.upsertDealParty({ ...party, status: "awaiting_owner", slot: intent.slot });
+        events.push({
+          type: "deal.owner_asked",
+          payload: { dealId: deal.id, partyId: party.id, slot: intent.slot, cents },
+        });
+        messages.push(
+          {
+            to: "counterparty",
+            partyId: party.id,
+            dealId: deal.id,
+            kind: "checking",
+            text: p.voice.slotPending(intent.slot.label, p.meetNoun),
+            facts: publicFacts(deal, p, { slot: intent.slot.label, checkingWithOwner: true }),
+          },
+          {
+            to: "owner",
+            dealId: deal.id,
+            kind: "ask",
+            askFor: party.id,
+            text: p.voice.askSlot(who(p), deal.title, intent.slot.label, price(cents, p.unit), p.meetNoun),
+            facts: {
+              title: deal.title,
+              slot: intent.slot.label,
+              agreedPrice: price(cents, p.unit),
+              question: "book it? yes or no",
+            },
+          },
+        );
+        return done();
+      }
+      const r = await book(store, move, deal, party, intent.slot, cents);
+      return { ...r, events: [...events, ...r.events] };
     }
 
     case "accept": {
@@ -884,6 +928,19 @@ export async function ownerTurn(input: {
   if (!target) return null;
   const decision = readOwnerDecision(text);
   if (!decision) return null;
+  // A held viewing time takes a yes or a no; a number is not an answer to it.
+  if (target.party.slot) {
+    if (decision.kind === "price") return null;
+    return slotAnswer(
+      store,
+      move,
+      target.deal,
+      target.party,
+      target.party.slot,
+      decision.kind === "yes",
+      clock,
+    );
+  }
 
   let { deal, party } = target;
   const p = policyFor(deal.mode);
@@ -980,6 +1037,71 @@ export async function ownerTurn(input: {
         kind: "owner_no",
         text: p.voice.ownerNoSummary(price(hold, p.unit), deal.title),
         facts: { title: deal.title, holding: price(hold, p.unit) },
+      },
+    ],
+  };
+}
+
+/** The owner's yes or no on a time the counterparty picked: book it, or offer them the other times. */
+async function slotAnswer(
+  store: Store,
+  move: Move,
+  deal: Deal,
+  party: DealParty,
+  slot: Slot,
+  yes: boolean,
+  clock: EngineClock,
+): Promise<TurnResult> {
+  const p = policyFor(deal.mode);
+  const events: EngineEvent[] = [
+    {
+      type: "deal.owner_answered",
+      payload: { dealId: deal.id, partyId: party.id, decision: { kind: yes ? "yes" : "no" }, slot },
+    },
+  ];
+  const cents = party.agreedCents ?? 0;
+  const taken = yes && !isFree(slot, await bookedSlots(store, move.id, party.id));
+  if (yes && !taken) {
+    const r = await book(store, move, deal, { ...party, ownerAskMessageId: null }, slot, cents);
+    return { ...r, events: [...events, ...r.events] };
+  }
+  // Declined (or booked by someone else meanwhile): the other times still on offer, else fresh ones without it.
+  let others = party.offeredSlots.filter((s) => s.id !== slot.id);
+  if (!others.length || taken)
+    others = (await freshSlots(store, move, clock, party.id)).filter((s) => s.id !== slot.id);
+  party = await store.upsertDealParty({
+    ...party,
+    status: "agreed",
+    slot: null,
+    offeredSlots: others,
+    ownerAskMessageId: null,
+  });
+  const list = others.length ? slotList(others) : null;
+  return {
+    deal,
+    party,
+    events,
+    messages: [
+      {
+        to: "counterparty",
+        partyId: party.id,
+        dealId: deal.id,
+        kind: taken ? "slot_taken" : "slot_declined",
+        text: taken
+          ? list
+            ? `That one just got taken. How about ${list}?`
+            : `That one just got taken. ${p.voice.slotTakenOpen}`
+          : p.voice.slotDeclined(list, p.meetNoun),
+        facts: publicFacts(deal, p, { slots: others.map((s) => s.label) }),
+      },
+      {
+        to: "owner",
+        dealId: deal.id,
+        kind: taken ? "slot_taken" : "slot_declined",
+        text: taken
+          ? `${slot.label} was booked by someone else in the meantime; I'm offering the ${who(p)} other times.`
+          : `OK, not ${slot.label}. I'm offering the ${who(p)} other ${p.meetNoun} times and will check with you again.`,
+        facts: { title: deal.title, slot: slot.label },
       },
     ],
   };

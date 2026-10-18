@@ -40,9 +40,14 @@ export function isSubletOutIntent(text: string): boolean {
   return SUBLET_VERB.test(text) && OWN_PLACE.test(text) && !ASKING_ABOUT.test(text);
 }
 
-/** "can I sublet my room?" or "check the lease" is a question for the lease reader, not a listing. */
+/** "can I sublet my room?" or "check the lease" is a question about the lease, not a listing. */
 const ASKING_ABOUT =
   /^\s*(?:can|could|may|should|am i|is it|does|do i|what|how|when|is|are)\b|\b(?:allowed to|able to|can i|could i|am i allowed|is it ok|check (?:the|my) lease|lease says?|landlord says?)\b/i;
+
+/** "can I sublet my room?": asking whether they may, not asking the crew to list it. */
+export function isSubletQuestion(text: string): boolean {
+  return SUBLET_VERB.test(text) && OWN_PLACE.test(text) && ASKING_ABOUT.test(text);
+}
 
 const DETAIL_WORDS: [RegExp, string][] = [
   [/\bnear (?:the )?(?:t|train|red line|green line|orange line|blue line|b line|subway)\b/i, "near the T"],

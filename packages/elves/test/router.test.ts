@@ -53,15 +53,12 @@ const FIXTURES: [string, ElfName][] = [
   ["can we split the truck cost", "money"],
   ["is the deposit in escrow", "money"],
   ["this feels like a scam", "money"],
-  ["book storage june to august", "moveday"],
-  ["need a u-haul for the 1st", "moveday"],
-  ["do i need a moving permit", "moveday"],
-  ["hire movers for saturday", "moveday"],
-  ["what's your eta", "moveday"],
-  ["where are you, i'm at the address", "moveday"],
+  ["book storage june to august", "home"],
+  // Move-day is gone: trucks, movers and move-day logistics fall to the Crew Lead, which says the crew can't.
+  ["need a u-haul for the 1st", "crew_lead"],
+  ["hire movers for saturday", "crew_lead"],
+  ["what's your eta", "crew_lead"],
   ["can i sublet my room", "home"],
-  ["my landlord needs 30 days notice", "home"],
-  ["check this clause in the lease", "home"],
   ["looking for a room in allston under 1200", "home"],
   ["need a place for the summer, budget 900", "home"],
   ["find me a sublet in somerville under 1500", "home"],
@@ -121,14 +118,19 @@ describe("route()", () => {
     await fresh.setThreadOwner(spaceOwnerKey("s1"), "crew_lead");
     expect(await route(batchOf("2"), d, opts)).toMatchObject({ elf: "stuff", via: "price" });
   });
+  test("status is the Home Elf's from any thread; what can you do is the Crew Lead's", async () => {
+    expect(await route(batchOf("status"), deps, { firstContact: false, moveId: "mv1" })).toMatchObject({
+      elf: "home",
+      via: "scope",
+    });
+    expect(await route(batchOf("what can you do?"), deps, { firstContact: false, moveId: "mv1" })).toMatchObject({
+      elf: "crew_lead",
+      via: "scope",
+    });
+  });
   test("keyword fallback when there is no thread", async () => {
     const r = await route(batchOf("book storage for the summer"), deps, { firstContact: false });
-    expect(r).toMatchObject({ elf: "moveday", via: "keyword" });
-  });
-  test("a PDF is a lease for the Home Elf, even on first contact", async () => {
-    const pdf = batchOf("here's my lease", null, [{ id: "att1", mimeType: "application/pdf" }]);
-    expect(await route(pdf, deps, { firstContact: true })).toMatchObject({ elf: "home", via: "document" });
-    expect(await route(pdf, deps, { firstContact: false })).toMatchObject({ elf: "home", via: "document" });
+    expect(r).toMatchObject({ elf: "home", via: "keyword" });
   });
   test("a room photo goes to Home while it is writing the owner's sublet post", async () => {
     const fresh = new MemoryStore();

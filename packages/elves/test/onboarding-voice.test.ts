@@ -24,7 +24,10 @@ function keysOf(obj: unknown, out: string[] = []): string[] {
 describe("voice onboarding (Retell)", () => {
   test("the default variant exists and the begin message hands the caller the floor", () => {
     expect(VOICE_ONBOARDING_PROMPTS[DEFAULT_VOICE_ONBOARDING_PROMPT]).toBeString();
-    expect(VOICE_BEGIN_MESSAGE).toContain("Walk me through");
+    expect(VOICE_BEGIN_MESSAGE).toContain("walk me through the move");
+    // it says exactly what the crew does and doesn't, never "tell me anything"
+    expect(VOICE_BEGIN_MESSAGE).toContain("The Home Elf finds you a place");
+    expect(VOICE_BEGIN_MESSAGE).toContain("We don't book trucks or movers");
   });
 
   test("submit_brief tool is a Retell-shaped custom function naming every Brief field", () => {
@@ -70,7 +73,8 @@ describe("voice onboarding (Retell)", () => {
       expect(prompt).toContain("`submit_brief` with status unconfirmed");
       expect(prompt).toContain("call `end_call`");
       expect(prompt).toContain('"Does that all sound right, or is there anything to change?"');
-      expect(prompt).toContain("never name a specialist");
+      expect(prompt).toContain("You name an Elf only when saying what the crew can do");
+      expect(prompt).toContain("## What the crew cannot do");
       expect(prompt.split(/\s+/).length).toBeLessThan(1100);
     });
   }

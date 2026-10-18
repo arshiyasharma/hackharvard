@@ -3,14 +3,14 @@
  * Everything else (transports, Elves, the service) depends on this and nothing here does I/O.
  */
 
-export const ELF_NAMES = ["crew_lead", "stuff", "money", "moveday", "home"] as const;
+/** The crew: the Crew Lead and three Elves. Move-day was folded into Home on 2026-10-17. */
+export const ELF_NAMES = ["crew_lead", "stuff", "money", "home"] as const;
 export type ElfName = (typeof ELF_NAMES)[number];
 
 export const ELF_LABELS: Record<ElfName, string> = {
   crew_lead: "Crew Lead",
   stuff: "Stuff Elf",
   money: "Money Elf",
-  moveday: "Move-day Elf",
   home: "Home Elf",
 };
 
@@ -815,3 +815,5 @@ export function createLogger(scope: string, level: LogLevel = (process.env.LOG_L
   };
 }
 export type Logger = ReturnType<typeof createLogger>;
+
+export * from "./brief.ts";

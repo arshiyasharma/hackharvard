@@ -15,6 +15,8 @@ export const RECIPES: SiteRecipe[] = [craigslist, apartments, zillow, facebook, 
  * Apartments.com (Akamai block), SpareFoot (Cloudflare challenge), Booking.com (drops URL search params), Zillow
  * (PerimeterX) and Facebook (login) are enabled per deployment once `bun run browser search` passes there.
  */
-export const DEFAULT_SITES = ["craigslist", "airbnb"];
+// The Home Elf's hunt searches these four: Craigslist, Airbnb, Booking.com and SpareFoot (storage).
+// Apartments, Zillow and Facebook stay behind ELVES_LISTINGS_SITES.
+export const DEFAULT_SITES = ["craigslist", "airbnb", "booking", "sparefoot"];
 
 export { airbnb, apartments, booking, craigslist, facebook, sparefoot, zillow };

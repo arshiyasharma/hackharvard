@@ -305,8 +305,29 @@ describe("find_sublet: the crew is the buyer and texted the lister first", () =>
       "Done: $1,250/mo for the Allston Green. I'm setting up the viewing.",
     );
 
-    // Booking a viewing never sends the owner's address to the lister.
+    // The lister's pick waits for the owner; nothing is booked until they say yes.
     r = await say("2");
+    expect(r.deal.state).toBe("negotiating");
+    expect(party.status).toBe("awaiting_owner");
+    expect(r.messages.map((m) => [m.to, m.kind, m.text])).toEqual([
+      [
+        "counterparty",
+        "checking",
+        "Fri 6pm could work; let me confirm with the person I'm helping and get back to you.",
+      ],
+      [
+        "owner",
+        "ask",
+        "The lister for the Allston Green ($1,250/mo) offers a viewing Fri 6pm. Book it? Reply yes or no.",
+      ],
+    ]);
+    r = await say("ok");
+    expect(r.messages.map((m) => m.kind)).toEqual(["checking"]);
+    expect(r.deal.state).toBe("negotiating");
+
+    // Booking a viewing never sends the owner's address to the lister.
+    r = (await ownerTurn({ store, move, text: "yes", parentMessageIds: [], clock }))!;
+    party = r.party!;
     expect(r.deal.state).toBe("scheduled");
     const booked = r.messages.find((m) => m.kind === "booked" && m.to === "counterparty")!;
     expect(booked.text).toBe("Booked: viewing Fri 6pm. $1,250/mo; any deposit goes through Elves escrow.");
@@ -350,6 +371,83 @@ describe("find_sublet: the crew is the buyer and texted the lister first", () =>
       "I checked and can't go that high; $1,200/mo is the most we can do.",
       "Got it. I told them $1,200/mo is the most for the Brighton loft.",
     ]);
+  });
+});
+
+describe("sublet_out: a viewing time is booked only on the owner's yes", () => {
+  async function seedRoom() {
+    const { store, move } = await seed();
+    await store.updateMove(move.id, { fromAddress: "12 Owner St" });
+    const deal = await openDeal(store, {
+      moveId: move.id,
+      mode: "sublet_out",
+      subjectId: null,
+      title: "room",
+      askCents: 140000,
+      limitCents: 120000,
+    });
+    const party = (
+      await joinDeal(store, deal, {
+        spaceId: "spc_app",
+        handle: "+1781",
+        platform: "sms",
+        agentUserId: "usr_line",
+      })
+    ).party;
+    return { store, move: (await store.getMove(move.id))!, deal, party };
+  }
+
+  test("pick → owner asked → no → other times → pick → yes → booked", async () => {
+    const { store, move, party: first } = await seedRoom();
+    let party = first;
+    const say = async (text: string) => {
+      const r = await counterpartyTurn({ store, move, party, text, clock });
+      party = r.party!;
+      return r;
+    };
+
+    let r = await say("I'll take it at $1400");
+    expect(party.status).toBe("agreed");
+    expect(r.messages.find((m) => m.to === "owner")?.text).toContain(
+      "I'll check the time they pick with you before booking.",
+    );
+    const offered = party.offeredSlots;
+    expect(offered.length).toBe(3);
+
+    r = await say("1");
+    expect(party.status).toBe("awaiting_owner");
+    expect(r.deal.state).toBe("negotiating");
+    expect(r.events.some((e) => e.type === "pickup.scheduled")).toBe(false);
+    expect(r.messages.map((m) => [m.to, m.kind])).toEqual([
+      ["counterparty", "checking"],
+      ["owner", "ask"],
+    ]);
+    expect(r.messages[1]!.text).toBe(
+      `The applicant for the room ($1,400/mo) wants a viewing ${offered[0]!.label}. Book it? Reply yes or no.`,
+    );
+
+    let o = (await ownerTurn({ store, move, text: "no", parentMessageIds: [], clock }))!;
+    party = o.party!;
+    expect(party.status).toBe("agreed");
+    expect(party.slot).toBeNull();
+    expect(party.offeredSlots.map((s) => s.id)).toEqual([offered[1]!.id, offered[2]!.id]);
+    expect(o.messages[0]!.text).toBe(
+      `Sorry, that time doesn't work for the owner. Other viewing times: 1) ${offered[1]!.label}  2) ${offered[2]!.label}. Which works?`,
+    );
+    expect(o.deal.state).toBe("negotiating");
+
+    // A number is not an answer to a held time.
+    r = await say("2");
+    expect(party.slot?.id).toBe(offered[2]!.id);
+    expect(await ownerTurn({ store, move, text: "1300", parentMessageIds: [], clock })).toBeNull();
+
+    o = (await ownerTurn({ store, move, text: "yes", parentMessageIds: [], clock }))!;
+    expect(o.deal.state).toBe("scheduled");
+    expect(o.deal.slot?.id).toBe(offered[2]!.id);
+    expect(o.events.some((e) => e.type === "pickup.scheduled")).toBe(true);
+    expect(o.messages.find((m) => m.to === "counterparty")?.text).toBe(
+      `Booked: ${offered[2]!.label}. Address: 12 Owner St. $1,400/mo, paid through Elves escrow.`,
+    );
   });
 });
 

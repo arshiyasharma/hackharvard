@@ -6,9 +6,11 @@ import {
   type Elf,
   type ElfContext,
   type ElfResult,
+  hasPhotos,
   lastMessageId,
   memoryPreamble,
 } from "./contract.ts";
+import { isStatusAsk } from "./crew.ts";
 import { handleCounterparty, handleOwnerDecision } from "./deal.ts";
 import { formatDate } from "./facts.ts";
 import {
@@ -23,7 +25,6 @@ import {
   searchKey,
 } from "./home-facts.ts";
 import { extractListingUrls, type FollowUp, parseFollowUp, wantsFreshSearch } from "./home-followups.ts";
-import { handleLease, isLeasePermissionQuestion } from "./home-lease.ts";
 import { handleMovein } from "./home-movein.ts";
 import {
   type Candidate,
@@ -33,31 +34,17 @@ import {
   formatPicks,
   rankListings,
 } from "./home-rank.ts";
-import { handleSubletOut } from "./home-sublet.ts";
+import { handleSubletOut, isSubletQuestion } from "./home-sublet.ts";
+import { statusReport } from "./status.ts";
 import { pickSkill, type Skill, skillReply } from "./stubs.ts";
-
-export const LEASE_SKILL: Skill = {
-  id: "lease",
-  keywords: [
-    "lease",
-    "sublease",
-    "landlord",
-    "clause",
-    "notice",
-    "security deposit",
-    "agreement",
-    "contract",
-    "tenant",
-  ],
-  task: "Waiting for the lease",
-  reply:
-    "Home Elf here. Send the lease PDF and I'll tell you whether you can sublet, quote the clauses, and draft the landlord notice.",
-};
 
 export const HUNT_SKILL: Skill = {
   id: "hunt",
   keywords: [
     "find a sublet",
+    "sublease",
+    "storage",
+    "storage unit",
     "find me a place",
     "looking for a room",
     "need a place",
@@ -118,8 +105,8 @@ Write the reply as a text message:
 export const homeElf: Elf = {
   name: "home",
   description:
-    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; the current lease, subletting it out, landlord notices, security deposit; move-in week (utilities, internet, address change, renters insurance)",
-  keywords: [...LEASE_SKILL.keywords, ...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
+    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; subletting the owner's own room out (writing the post, screening applicants); move-in week (utilities, internet, address change, renters insurance)",
+  keywords: [...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {
     // Sublet applicants and listers talk to the Deal Engine in their own space.
@@ -128,15 +115,26 @@ export const homeElf: Elf = {
     if (decided) return decided;
     const text = batchText(ctx.batch);
     const parent = lastMessageId(ctx.batch);
+    // "status": where the whole move stands, the checklist included. Read straight off the store.
+    if (isStatusAsk(text) && !hasPhotos(ctx.batch))
+      return {
+        replies: [{ text: await statusReport(ctx.store, ctx.move), parentMessageId: parent }],
+        events: [{ type: "status.sent", payload: {} }],
+      };
     const subletOut = await handleSubletOut(ctx, text, parent);
     if (subletOut) return subletOut;
-    const lease = await handleLease(ctx, text, parent);
-    if (lease) return lease;
     const movein = await handleMovein(ctx, text, parent);
     if (movein) return movein;
-    // "can I sublet?" with no lease on file: only the PDF can answer that.
-    if (isLeasePermissionQuestion(text) && !(await ctx.store.getLeaseReading(ctx.move.id)))
-      return skillReply(ctx, "home", LEASE_SKILL);
+    // "can I sublet my room?" is the lease's call; the Elf doesn't read leases, it writes the post once they can.
+    if (isSubletQuestion(text))
+      return {
+        replies: [
+          {
+            text: "Your lease and landlord decide that one; I don't read leases. If you're allowed, say \"sublet my room\" and I'll write the post.",
+            parentMessageId: parent,
+          },
+        ],
+      };
     const now = ctx.now();
     const saved = await ctx.store.getSearch(ctx.move.id);
     const listings = await ctx.store.listListings(ctx.move.id);
@@ -146,7 +144,7 @@ export const homeElf: Elf = {
       return followUp(ctx, fu, saved ?? emptySearch(ctx.move.id, now), listings, parent);
 
     const heuristic = extractHousingHeuristic(text, now);
-    const { skill } = pickSkill(text, [HUNT_SKILL, LEASE_SKILL, MOVEIN_SKILL]);
+    const { skill } = pickSkill(text, [HUNT_SKILL, MOVEIN_SKILL]);
     const hasHousingFacts =
       heuristic.kinds.length > 0 ||
       heuristic.neighborhoods.length > 0 ||

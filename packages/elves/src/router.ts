@@ -1,8 +1,16 @@
 import { isOpen, lastCallHold, pendingOwnerAsks, policyFor, readOwnerDecision } from "@elves/engine";
 import type { LLM } from "@elves/llm";
 import type { Batch } from "@elves/pipeline";
-import type { ElfName, Role, Store } from "@elves/shared";
-import { batchText, type Elf, hasDocuments, hasPhotos } from "./contract.ts";
+import {
+  type ElfName,
+  onboardingActive,
+  onboardingKey,
+  parseOnboardingState,
+  type Role,
+  type Store,
+} from "@elves/shared";
+import { batchText, type Elf, hasPhotos } from "./contract.ts";
+import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
 import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
@@ -10,11 +18,12 @@ import { parsePriceCents } from "./intake.ts";
 
 export type RouteVia =
   | "first_contact"
+  | "onboarding"
   | "counterparty"
   | "thread"
-  | "document"
   | "deal"
   | "followup"
+  | "scope"
   | "photo"
   | "price"
   | "llm"
@@ -79,19 +88,31 @@ export async function route(
     const elf = (await counterpartyElf(deps, batch.spaceId)) ?? "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
-  // A PDF is a lease: the Home Elf reads it, even as the first text (it greets as the crew).
-  if (hasDocuments(batch) && deps.elves.some((e) => e.name === "home"))
-    return { elf: "home", via: "document", confidence: 0.95 };
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
+  // Until the owner confirms the brief, every owner text is part of the onboarding call.
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && deps.elves.some((e) => e.name === "crew_lead")) {
+    const state = parseOnboardingState(await deps.store.getCursor(onboardingKey(opts.moveId)));
+    if (onboardingActive(state)) return { elf: "crew_lead", via: "onboarding", confidence: 1 };
+  }
+
+  const text = batchText(batch);
+  // "status" is the Home Elf's (it has the checklist and the sublet); "what can you do?" is the Crew Lead's.
+  // Both are answered from any thread.
+  if ((opts.role ?? "owner") === "owner" && !hasPhotos(batch)) {
+    if (isStatusAsk(text) && deps.elves.some((e) => e.name === "home"))
+      return { elf: "home", via: "scope", confidence: 1 };
+    if (isCapabilitiesQuestion(text) && deps.elves.some((e) => e.name === "crew_lead"))
+      return { elf: "crew_lead", via: "scope", confidence: 1 };
+  }
 
   for (const m of [...batch.messages].reverse()) {
     if (m.parentMessageId) {
       const owner = await deps.store.getThreadOwner(m.parentMessageId);
-      if (owner) return { elf: owner, via: "thread", confidence: 1 };
+      if (owner && deps.elves.some((e) => e.name === owner))
+        return { elf: owner, via: "thread", confidence: 1 };
     }
   }
 
-  const text = batchText(batch);
   // "keep the couch" / "no last call" holds a price; the Elf that owns the deal records it.
   if (opts.moveId && lastCallHold(text)) {
     const open = (await deps.store.listDeals(opts.moveId)).find(

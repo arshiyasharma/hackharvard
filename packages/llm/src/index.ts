@@ -2,6 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 
+/** Re-exported for `scripts/`, which have no zod of their own. */
+export { z };
+
 export interface ClassifyInput {
   text: string;
   context: string;
@@ -24,11 +27,27 @@ export interface DocumentInput {
   base64: string;
 }
 
+export interface ExtractInput {
+  system: string;
+  user: string;
+  model?: "fast" | "smart";
+  maxTokens?: number;
+}
+
+export interface DraftInput {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  /** Defaults to the drafting model; "fast" runs a simulated owner or a judge cheaply. */
+  model?: "fast" | "smart";
+}
+
 export interface LLM {
   readonly name: string;
   classify(input: ClassifyInput): Promise<ClassifyResult>;
-  draft(input: { system: string; user: string; maxTokens?: number }): Promise<string>;
-  extract<T>(schema: z.ZodType<T>, input: { system: string; user: string }): Promise<T>;
+  draft(input: DraftInput): Promise<string>;
+  /** Structured extraction; `model: "smart"` runs it on the drafting model (the onboarding call). */
+  extract<T>(schema: z.ZodType<T>, input: ExtractInput): Promise<T>;
   /** Structured extraction over one or more images plus text. */
   extractFromImages<T>(
     schema: z.ZodType<T>,
@@ -141,9 +160,9 @@ export class ClaudeLLM implements LLM {
     return parsed;
   }
 
-  async draft(input: { system: string; user: string; maxTokens?: number }): Promise<string> {
+  async draft(input: DraftInput): Promise<string> {
     const res = await this.client.messages.create({
-      model: this.smart,
+      model: input.model === "fast" ? this.fast : this.smart,
       max_tokens: input.maxTokens ?? 1024,
       output_config: { effort: "low" },
       system: input.system,
@@ -157,11 +176,12 @@ export class ClaudeLLM implements LLM {
       .trim();
   }
 
-  async extract<T>(schema: z.ZodType<T>, input: { system: string; user: string }): Promise<T> {
+  async extract<T>(schema: z.ZodType<T>, input: ExtractInput): Promise<T> {
+    const smart = input.model === "smart";
     const res = await this.client.messages.parse({
-      model: this.fast,
-      max_tokens: 2048,
-      output_config: { effort: "low", format: zodOutputFormat(schema) },
+      model: smart ? this.smart : this.fast,
+      max_tokens: input.maxTokens ?? (smart ? 4096 : 2048),
+      output_config: { effort: smart ? "medium" : "low", format: zodOutputFormat(schema) },
       system: input.system,
       messages: [{ role: "user", content: input.user }],
     });

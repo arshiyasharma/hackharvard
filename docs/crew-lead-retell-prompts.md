@@ -1,5 +1,7 @@
 # Crew Lead onboarding call: Retell prompt variants
 
+**2026-10-17:** the crew is a Crew Lead and three Elves (Home, Stuff, Money). `story_first` now opens with exactly what the crew can and can't do (from `CREW_ABILITIES` / `CREW_LIMITS` in `packages/elves/src/crew.ts`) and says plainly when a request is out of scope; see the README's "Crew Lead on a call". The `sweep` and `thread` variants below predate that and still assume four Elves.
+
 Three questioning strategies for a Retell voice agent that runs the Crew Lead's onboarding call. They share one contract (gather only, play the brief back, get a yes, hand off) and differ only in how they ask.
 
 `story_first` is the one on trial and the one in code: `VOICE_ONBOARDING_PROMPTS.story_first` in `packages/elves/src/onboarding-voice.ts`, written the way Retell's single-prompt docs ask (a Role, a Call flow in steps with `<Wait for caller response>` markers, conditionals as "If **X**: do Y", tools named in backticks where they are called, under 1,100 words) and with the brief's shape in the `submit_brief` custom function's JSON schema instead of in the prompt. `bun run scripts/retell-agent.ts` prints the general prompt, the begin message and the function (name, description, parameters) to paste into the dashboard; `--json` prints only the parameters schema for the JSON editor.
