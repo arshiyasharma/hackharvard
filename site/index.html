@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elves: a moving crew you text</title>
+<meta name="description" content="Four agents on one number that find the place, sublet the old one, sell the furniture and keep every dollar straight. Nothing happens without your yes. Built on Photon 2.0 and Nessie.">
+<meta name="theme-color" content="#FAFAFC">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230A84FF'/%3E%3Cpath d='M8 21v-9a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4h-6l-4 3z' fill='white'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="nav" id="top">
+  <a class="mark" href="#top" aria-label="Elves home"><span class="mark-dot" aria-hidden="true"></span>Elves</a>
+  <nav aria-label="Sections">
+    <a href="#problem">Problem</a>
+    <a href="#crew">The crew</a>
+    <a href="#tracks">Tracks</a>
+    <a href="#build">The build</a>
+    <a class="pill" href="#try">Try it</a>
+  </nav>
+</header>
+
+<main>
+
+<!-- Hero -->
+<section class="hero" aria-labelledby="h1">
+  <div class="hero-copy">
+    <h1 id="h1">Moving is a group project nobody is running.</h1>
+    <p class="lede">Text a crew.</p>
+    <p class="sub">Four agents on one number. They find the place, sublet the old one, sell the furniture and keep every dollar straight. Nothing happens without your yes.</p>
+    <div class="cta">
+      <a class="btn primary" href="#crew">Watch it work</a>
+      <a class="btn" href="#tracks">Pitch by track</a>
+    </div>
+    <p class="on">On iMessage, SMS and phone calls, built on Photon 2.0</p>
+  </div>
+  <div class="hero-phone">
+    <div class="phone" id="phone-hero" data-autoplay></div>
+  </div>
+</section>
+
+<!-- Problem -->
+<section class="problem reveal" id="problem" aria-labelledby="h-problem">
+  <h2 id="h-problem" class="sr">The problem</h2>
+  <p class="big"><b>Sept 1:</b> two-thirds of Boston leases turn over in a single day.</p>
+  <p class="big"><b>38 tons</b> of extra trash and <b>1,700 mattresses</b> in one week of 2023. Most of it was fine.</p>
+  <p class="big"><b>65,000</b> rental scam reports in five years, aimed at renters just like us.</p>
+  <p class="big soft">A move is fifteen tabs, four group chats and a spreadsheet nobody trusts. You don't need another app. You're already in a thread.</p>
+  <p class="src">Sources: City of Boston, press reports for the 2023 week; FTC Consumer Sentinel, 2020 to mid-2025.</p>
+</section>
+
+<!-- Interviews -->
+<section class="heard reveal" id="heard" aria-labelledby="h-heard">
+  <div class="heard-copy">
+    <h2 id="h-heard">We asked people who had just moved.</h2>
+    <ul class="plain">
+      <li>What did you throw away because you ran out of time?</li>
+      <li>Who did you trust with money, and who did you chase?</li>
+      <li>What did you wish someone else had handled?</li>
+    </ul>
+    <p class="muted">Their answers are why every Elf asks first.</p>
+  </div>
+  <div class="video" id="video" aria-label="User interview short"></div>
+</section>
+
+<!-- The crew: emulator -->
+<section class="crew reveal" id="crew" aria-labelledby="h-crew">
+  <div class="crew-head">
+    <h2 id="h-crew">It looks like one chat. It is four agents.</h2>
+    <p class="muted">Each one has its own tools, rules and memory. Pick an agent, pick a thing it does, and watch the thread.</p>
+  </div>
+
+  <div class="crew-grid">
+    <div class="picker">
+      <div class="tabs" role="tablist" aria-label="Agents" id="agent-tabs"></div>
+      <p class="agent-blurb" id="agent-blurb"></p>
+      <ul class="funcs" id="funcs" aria-label="What it does"></ul>
+      <div class="wont">
+        <h3>It won't</h3>
+        <ul id="wont"></ul>
+      </div>
+    </div>
+    <div class="stage">
+      <div class="phone" id="phone-main"></div>
+      <div class="stage-foot">
+        <button class="btn small" id="replay" type="button">Replay</button>
+        <span class="muted" id="scene-line"></span>
+      </div>
+      <p class="fine">Example conversations that follow the product's real reply format.</p>
+    </div>
+  </div>
+</section>
+
+<!-- How it fits -->
+<section class="fits reveal" id="fits" aria-labelledby="h-fits">
+  <h2 id="h-fits">How it fits together</h2>
+  <div class="diagram" role="img" aria-label="You text one number on iMessage, SMS or a phone call. Photon 2.0 carries it to a router, which hands it to the Crew Lead, Home, Stuff or Money agent. They share a Deal Engine and memory, and the Money agent keeps the ledger in Nessie.">
+    <div class="col">
+      <div class="node soft"><b>You</b><span>iMessage</span><span>SMS</span><span>Phone call</span></div>
+    </div>
+    <div class="link" aria-hidden="true"></div>
+    <div class="col">
+      <div class="node blue"><b>Photon 2.0</b><span>Text, images, polls</span><span>Receipts, typing</span><span>Voice line</span></div>
+      <div class="node"><b>Router</b><span>Right Elf, or asks</span></div>
+    </div>
+    <div class="link" aria-hidden="true"></div>
+    <div class="col agents">
+      <div class="node ag ink"><b>Crew Lead</b></div>
+      <div class="node ag green"><b>Home Elf</b></div>
+      <div class="node ag amber"><b>Stuff Elf</b></div>
+      <div class="node ag lime"><b>Money Elf</b></div>
+    </div>
+    <div class="link" aria-hidden="true"></div>
+    <div class="col">
+      <div class="node"><b>Deal Engine</b><span>Negotiate, slots, Last Call</span></div>
+      <div class="node"><b>Memory</b><span>Facts, transcript, notes</span></div>
+      <div class="node nessie"><b>Nessie</b><span>The ledger</span></div>
+      <div class="node"><b>Postgres</b><span>Everything else</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- Dashboard -->
+<section class="dash reveal" id="dash" aria-labelledby="h-dash">
+  <div class="dash-copy">
+    <h2 id="h-dash">Beyond the ledger.</h2>
+    <p class="lead2">Nessie records what happened. The Smart Plan predicts what happens next.</p>
+    <ul class="plain">
+      <li>Net cost so far, and where it lands</li>
+      <li>Three plans, each simulated 2,000 times</li>
+      <li>Your odds of finishing under budget</li>
+      <li>Switch plans from the page or from the chat</li>
+    </ul>
+    <p class="fine">Synthetic data shown. The live page re-reads Nessie every 5 seconds.</p>
+  </div>
+  <div class="dashcard" aria-label="Dashboard preview">
+    <div class="dc-top"><span class="mark-dot sm" aria-hidden="true"></span><b>Elves Ledger</b><span class="live"><i></i>Live from Nessie</span></div>
+    <div class="dc-num">$740</div>
+    <div class="dc-sub">$740 out · $0 back</div>
+    <div class="dc-land"><span class="tag">Projected</span><b>$114</b><span>net, by Dec 1</span></div>
+    <svg class="dc-chart" viewBox="0 0 320 90" aria-hidden="true">
+      <path d="M8 18 H92 V34 H228 V76 H312" fill="none" stroke="#0E0F0C" stroke-width="2" stroke-linejoin="round"/>
+      <line x1="8" y1="76" x2="312" y2="76" stroke="#9A9B93" stroke-dasharray="3 4"/>
+      <circle cx="8" cy="18" r="4" fill="#0E0F0C"/><circle cx="92" cy="26" r="4" fill="#fff" stroke="#0E0F0C" stroke-width="1.6"/><circle cx="312" cy="76" r="5" fill="#D4F26A" stroke="#0E0F0C" stroke-width="1.8"/>
+    </svg>
+    <div class="dc-smart">
+      <div class="ds-top"><span>Beyond the ledger</span><em>Smart Plan</em></div>
+      <div class="ds-big"><b>81%</b><span>chance of finishing under $300</span></div>
+      <div class="ds-row on"><i>A</i><span>Best odds</span><b>92%</b><u style="--w:92%"></u></div>
+      <div class="ds-row"><i>B</i><span>Runner-up</span><b>81%</b><u style="--w:81%"></u></div>
+      <div class="ds-row"><i>C</i><span>Least effort</span><b>54%</b><u style="--w:54%"></u></div>
+    </div>
+    <div class="dc-grid">
+      <div><span>Moving Fund</span><b>$0</b></div>
+      <div><span>Owed to you</span><b>$160</b></div>
+      <div><span>In escrow</span><b>$60</b></div>
+      <div><span>Deposits out</span><b>$500</b></div>
+    </div>
+  </div>
+</section>
+
+<!-- Tracks -->
+<section class="tracks reveal" id="tracks" aria-labelledby="h-tracks">
+  <h2 id="h-tracks">Pick a track.</h2>
+  <div class="tabs track-tabs" role="tablist" aria-label="Tracks" id="track-tabs"></div>
+  <div class="track" id="track"></div>
+</section>
+
+<!-- Build -->
+<section class="build reveal" id="build" aria-labelledby="h-build">
+  <h2 id="h-build">The build.</h2>
+  <div class="build-grid">
+    <div>
+      <h3>What's under it</h3>
+      <ul class="stack">
+        <li><b>Photon 2.0</b> iMessage, SMS and voice line</li>
+        <li><b>Claude</b> Haiku to route, Sonnet to draft, vision for photos</li>
+        <li><b>Retell</b> the onboarding phone call</li>
+        <li><b>Nessie</b> the ledger and the plan records</li>
+        <li><b>Browserbase + Stagehand</b> real-browser house hunt</li>
+        <li><b>Bun + TypeScript</b> one monorepo, a package per agent</li>
+        <li><b>Supabase Postgres</b> memory, deals, plans</li>
+        <li><b>Railway</b> hosting, migrations on boot</li>
+      </ul>
+    </div>
+    <div>
+      <h3>How we know it works</h3>
+      <ul class="facts">
+        <li><b>614</b> automated tests, <b>640</b> on Postgres</li>
+        <li><b>~190</b> human test rows in TESTING.md</li>
+        <li><b>1</b> real Nessie sandbox, smoke-tested live</li>
+        <li><b>0</b> actions without a yes</li>
+      </ul>
+      <a class="btn small" id="repo" href="#" target="_blank" rel="noopener">Read the code</a>
+    </div>
+  </div>
+
+  <h3 class="night-h">Built through the night</h3>
+  <div class="night" id="night"></div>
+
+  <h3>Who built it</h3>
+  <ul class="team">
+    <li>Gavin Zhou</li><li>Arshiya Sharma</li><li>Zohaib Shaikh</li><li>Yashashri G.</li>
+  </ul>
+</section>
+
+<!-- Try -->
+<section class="try reveal" id="try" aria-labelledby="h-try">
+  <h2 id="h-try">Text the crew.</h2>
+  <p class="muted" id="try-line">Judges: text us from your own phone and watch it work.</p>
+  <div class="number" id="number"></div>
+  <p class="fine">Say hi, then STATUS, DASHBOARD or HELP.</p>
+</section>
+
+</main>
+
+<footer class="foot">
+  <span>Elves · HackHarvard 2026</span>
+  <span>Built on Photon 2.0 · Nessie by Capital One</span>
+</footer>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
