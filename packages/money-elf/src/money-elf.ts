@@ -10,6 +10,7 @@ import type { MemoryMoneyStore, MoneyStore } from "./ledger.ts";
 import { renderLedgerPng } from "./ledger-card.ts";
 import { type LedgerLinks, ledgerUrl } from "./ledger-http.ts";
 import { buildLedgerView, ledgerSummaryLine } from "./ledger-view.ts";
+import { cantLines, clarifyLines, focusLine, menuLines, otherLines } from "./menu.ts";
 import { buyerConfirmsPickup, parseIntent } from "./parse.ts";
 import type { MoneyRails } from "./rails.ts";
 import { containsFinancialNumber, scamCheck } from "./scam.ts";
@@ -25,7 +26,7 @@ import type {
 } from "./types.ts";
 
 export const MONEY_DESCRIPTION =
-  'Money: payments, deposits, escrow, Venmo or Zelle requests, splitting costs with roommates, the money dashboard ("show me my dashboard", "how\'s my money"), the ledger, scams, fixing or undoing a cost or deposit already on the Ledger';
+  'Money: splitting a shared cost with roommates, who owes what, payment plans, paying a roommate back from the Moving Fund, deposits the owner paid and when they come back, escrow for sales and sublet payments (open, release, refund), the dashboard and ledger ("how much have I spent", "who owes me", "how much did I make"), money scams. Not about listing, pricing or donating an item (that is stuff), not about finding or subletting a place (that is home); nobody pays rent, bills or a landlord, moves money to a bank, invests or does taxes';
 
 /** Same list as the foundation stub, so routing is unchanged when this replaces it. */
 export const MONEY_KEYWORDS = [
@@ -38,14 +39,31 @@ export const MONEY_KEYWORDS = [
   "deposit",
   "escrow",
   "split",
+  "chip in",
   "owe",
+  "owes",
+  "who owes",
+  "owe me",
+  "hasn't paid",
+  "haven't paid",
+  "unpaid",
   "refund",
   "ledger",
   "dashboard",
   "my money",
+  "moving fund",
+  "balance",
+  "spent",
+  "spend",
+  "expenses",
+  "my share",
+  "how much did",
+  "how much have",
+  "bring in",
   "scam",
   "money",
   "payment plan",
+  "pay back",
   "mistake",
   "undo",
   "was actually",
@@ -312,8 +330,14 @@ async function handle(
       break;
     case "mark_paid": {
       const p = intent.person ? await service.findPerson(move.id, intent.person) : undefined;
-      if (!p) r.lines.push(intent.person ? `I don't have ${intent.person} on the Ledger yet.` : "Who paid?");
-      else
+      if (!p) {
+        if (intent.person) {
+          r.lines.push(`I don't have ${intent.person} on the Ledger yet.`);
+          r.lines.push(
+            `Add their number ("${intent.person} is 617-555-0101") or log what they owe ("split the $90 cleaning with ${intent.person}"), then tell me they paid.`,
+          );
+        } else r.lines.push("Who paid, and how much?");
+      } else
         r = merge(
           r,
           await service.markPaid(move, {
@@ -351,8 +375,24 @@ async function handle(
         );
       break;
     }
-    case "pay_person":
+    case "pay_person": {
       r = merge(r, await service.proposePay(move, { ...intent, flagged: false }));
+      // "venmo Sam $40": the Elf pays through the Ledger (Nessie), not Venmo, and says so.
+      if (/\b(venmo|zelle|cash ?app|paypal)\b/i.test(text) && r.lines.length)
+        r.lines.splice(1, 0, "I pay through the Ledger in Nessie, not Venmo.");
+      break;
+    }
+    case "help":
+      r.lines.push(...menuLines());
+      r.events.push({ type: "money.help", payload: {} });
+      break;
+    case "cant":
+      r.lines.push(...cantLines(intent.what));
+      r.events.push({ type: "money.out_of_scope", payload: { what: intent.what } });
+      break;
+    case "clarify":
+      r.lines.push(...clarifyLines(intent));
+      r.events.push({ type: "money.clarify", payload: { topic: intent.topic } });
       break;
     case "pickup_confirmed":
       r = merge(r, await service.proposeEscrow(move, "release_escrow", intent.item));
@@ -381,6 +421,8 @@ async function handle(
     case "ledger": {
       // The Ledger card (an image, inline in iMessage) plus a signed link to the live page.
       const view = await buildLedgerView(service, move);
+      // A specific question ("who owes me?", "is anything in escrow?") gets its answer first.
+      if (intent.focus) r.lines.push(focusLine(view, intent.focus));
       let png: Uint8Array | null = null;
       try {
         png = await renderLedgerPng(view);
@@ -414,12 +456,8 @@ async function handle(
       break;
     }
     default:
-      r.lines.push(
-        "I keep every dollar on the Ledger in Nessie: shared costs, the Moving Fund, deposits and escrow.",
-      );
-      r.lines.push(
-        `Tell me something like "split the $240 truck with Sam and Priya" or "I paid a $500 sublet deposit, due back Dec 1".`,
-      );
+      r.lines.push(...otherLines());
+      r.events.push({ type: "money.unclear", payload: {} });
   }
   return finish(r, extras);
 }

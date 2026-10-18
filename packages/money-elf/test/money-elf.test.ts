@@ -323,7 +323,9 @@ describe("no-show sweep (SPEC §4: 24h past pickup refunds the buyer)", () => {
 
     const r = await s.say("yes");
     expect(reply(r)).toContain("Refunded Alex $90.");
-    expect(r.outbound).toMatchObject([{ toHandle: ALEX, text: "✅ Your $90 for the couch has been refunded." }]);
+    expect(r.outbound).toMatchObject([
+      { toHandle: ALEX, text: "✅ Your $90 for the couch has been refunded." },
+    ]);
   });
 
   test("a reschedule clears the no-show question; a pickup before the deadline is not a no-show", async () => {
@@ -372,12 +374,13 @@ describe("scam check and guardrails", () => {
     expect(JSON.stringify(r.events)).not.toContain("4111");
   });
 
-  test("replies stay within 3 lines and plain text", async () => {
+  test("replies stay within three blocks and plain text", async () => {
     const { say } = setup();
     for (const t of ["hi money elf", "split the $240 truck with Sam and Priya", "ledger", "yes"]) {
       const r = await say(t);
       for (const x of r.replies) {
-        expect(x.text.split("\n").length).toBeLessThanOrEqual(3);
+        // blank-line separated blocks: the news, the detail, the question
+        expect(x.text.split("\n\n").length).toBeLessThanOrEqual(3);
         expect(x.text).not.toMatch(/[*#`]/);
       }
     }

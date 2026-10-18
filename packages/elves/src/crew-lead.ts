@@ -9,6 +9,17 @@ import {
   memoryPreamble,
   TEXT_STYLE,
 } from "./contract.ts";
+import {
+  type Ability,
+  abilitiesReply,
+  clarifyKey,
+  clarifyQuestion,
+  crewIntro,
+  crewScopePrompt,
+  isCapabilitiesQuestion,
+  outOfScope,
+  type PendingClarify,
+} from "./crew.ts";
 import { DEFAULT_WEIGHT_LB, ExtractedFacts, extractFactsHeuristic, formatDate } from "./facts.ts";
 import {
   anchorDeals,
@@ -19,7 +30,6 @@ import {
   itemStatus,
   postLine,
 } from "./intake.ts";
-import { abilitiesReply, crewIntro, crewScopePrompt, isCapabilitiesQuestion, outOfScope } from "./crew.ts";
 import { handleOnboarding } from "./onboarding.ts";
 import { callElves, elfByName } from "./registry.ts";
 import { delegatesFor } from "./router.ts";
@@ -40,6 +50,10 @@ Scope rules (these override everything else):
 - If the owner asks what you can do, list the abilities above, one short line each, then the line about what the crew can't do.
 - Never promise to move money, post to a marketplace, book a viewing or a pickup, or agree a price without the owner's yes. Every Elf drafts and asks; the owner decides.
 
+Who does what, so you never mix them up: Money Elf = splitting a cost with roommates, who owes what, payment plans, logging a deposit, paying a roommate from the Moving Fund, and holding a sale's money in escrow until pickup (always after the owner's yes). Stuff Elf = pricing, listing, selling, buying and donating items, and the buyers who text about them. Home Elf = finding or subletting a place, storage, the move checklist, STATUS. Money never lists or prices an item and never finds a place; Stuff and Home never split a cost, hold escrow or track a deposit. The crew does NOT pay rent, bills or a landlord, move money to or from a bank, invest or do taxes: say so plainly and name what the Money Elf can do instead.
+
+Not sure what the owner wants: do not guess and do not improvise. If it could be two Elves' job, or the text is a fragment you cannot place, ask ONE question that offers the two or three likeliest options from the list above, numbered, and nothing else. (The service already asks "which did you mean?" when two Elves fit equally; for anything else it is on you.) A question about the move itself ("when is move-out?") is not unclear: answer it from working memory.
+
 Photos: the crew reads exactly two kinds, a photo of an item the owner is selling (Stuff prices it) and room photos for the sublet post (Home). Never ask for a photo for anything else, and never say a photo will size storage, a truck or a unit.
 
 Asking: if the move-out date is unknown, ask for it. Otherwise, if an item has a photo but no floor (see items), ask for the lowest price they'd take for it. Otherwise, if an item for sale has no photo, ask for a photo and the lowest price. Never ask for a photo or a floor an item already has. Never ask about trucks, movers or anything the crew doesn't do.
@@ -57,7 +71,7 @@ ${TEXT_STYLE}
 export const crewLead: Elf = {
   name: "crew_lead",
   description:
-    'Orchestration: greetings, what the crew can do, "status", the plan, move-out and move-in dates, addresses, roommates, general questions about the move, anything ambiguous, and anything the crew does not do (trucks, movers, U-Haul, move day, leases, landlords, paying anyone)',
+    'Orchestration: greetings, what the crew can do, "status", the plan, move-out and move-in dates, addresses, roommates, general questions about the move, anything ambiguous between the specialists, and anything the crew does not do (trucks, movers, U-Haul, move day, leases, landlords, paying rent or bills, bank transfers)',
   keywords: [
     "hi",
     "hello",
@@ -86,6 +100,10 @@ export const crewLead: Elf = {
     // ("status" belongs to the Home Elf, see router.ts.)
     if (!ctx.firstContact && !hasPhotos(ctx.batch) && isCapabilitiesQuestion(asked))
       return { replies: [{ text: abilitiesReply(), parentMessageId: parent }] };
+    // The router could not tell which Elf a text is for ("my deposit": Home's apartment or Money's ledger?): ask,
+    // and keep the text, so the answer ("2", "money") sends it to the Elf chosen.
+    if (ctx.routing?.via === "clarify" && ctx.routing.options && ctx.routing.options.length >= 2)
+      return askWhichElf(ctx, asked, ctx.routing.options as Ability["elf"][], parent);
     // The onboarding call runs first: gather, play the brief back, dispatch on the owner's yes.
     const onboarding = await handleOnboarding(ctx);
     if (onboarding) return onboarding;
@@ -211,6 +229,26 @@ export const crewLead: Elf = {
     if (facts.items.some((i) => i.intent === "buy")) stuffWork.push("evaluate what to buy");
     if (stuffWork.length) elvesWithWork.push(`Stuff Elf: ${stuffWork.join("; ")}`);
     const cantDo = outOfScope(text);
+    // Nothing captured, not small talk, not a question about the move, nothing the crew refuses: it can't tell what
+    // the owner wants, so it asks which of the three jobs they mean instead of guessing.
+    const captured =
+      Object.keys(movePatch).length +
+      newItems.length +
+      intake.items.length +
+      justApproved.length +
+      facts.items.length +
+      (facts.asks?.length ?? 0) +
+      (facts.roommates?.length ?? 0);
+    if (
+      !ctx.firstContact &&
+      !hasPhotos(ctx.batch) &&
+      !cantDo &&
+      captured === 0 &&
+      text.trim() &&
+      !SMALL_TALK.test(text) &&
+      !QUESTION.test(text.trim())
+    )
+      return askWhichElf(ctx, text, ["home", "stuff", "money"], parent);
     const summary = {
       firstContact: ctx.firstContact,
       cantDo: cantDo ? { cant: cantDo.cant, instead: cantDo.instead } : null,
@@ -312,4 +350,31 @@ function templateReply(s: {
   else if (!s.justApproved.length && !s.items.length) lines.push("What should the crew start on?");
   // The template reads like the model's replies: a blank line between the parts.
   return lines.join("\n\n");
+}
+
+/** Greetings, thanks and one-word replies: the Crew Lead answers them itself, never with a menu. */
+const SMALL_TALK =
+  /^\s*(hi|hello|hey|yo|thanks?|thank you|thx|ok(ay)?|cool|great|nice|got it|bye|sounds good|yes|no|yep|nope|sure|lol|haha)\b[\s!.?]*$/i;
+/** A question about the move itself ("when is move-out?", "how many suitcases did I say?"): answered from memory. */
+const QUESTION =
+  /^(when|what|what's|whats|where|how many|how much|did|do|does|is|are|which|who|can you tell|remind)\b|\?\s*$/i;
+
+/** Ask "which did you mean?", remembering the text so the answer sends it to the Elf chosen. */
+async function askWhichElf(
+  ctx: ElfContext,
+  text: string,
+  options: Ability["elf"][],
+  parent: string,
+): Promise<ElfResult> {
+  const pending: PendingClarify = { text, options, at: Date.now() };
+  await ctx.store.setCursor(clarifyKey(ctx.move.id), JSON.stringify(pending));
+  return {
+    replies: [{ text: clarifyQuestion(options), parentMessageId: parent }],
+    events: [{ type: "clarify.asked", payload: { options, text } }],
+    boardPatch: {
+      status: "waiting",
+      currentTask: "Waiting to hear which Elf the owner means",
+      lastUpdate: `Asked: ${options.join(" or ")}?`,
+    },
+  };
 }

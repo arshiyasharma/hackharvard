@@ -3,11 +3,14 @@ import {
   abilitiesReply,
   abilityLine,
   CREW_ABILITIES,
+  clarifyQuestion,
   crewIntro,
   crewScopePrompt,
   isCapabilitiesQuestion,
   isStatusAsk,
   outOfScope,
+  parseClarify,
+  pickClarifyOption,
   statusNudge,
   statusReport,
 } from "@elves/elves";
@@ -15,9 +18,10 @@ import { openDeal } from "@elves/engine";
 import { MemoryStore } from "@elves/shared";
 
 describe("what the crew can and cannot do", () => {
-  test("three Elves, seven abilities, the same list in the intro, the reply and the prompt", () => {
+  test("three Elves, ten abilities, the same list in the intro, the reply and the prompt", () => {
     expect([...new Set(CREW_ABILITIES.map((a) => a.elf))]).toEqual(["home", "stuff", "money"]);
-    expect(CREW_ABILITIES.length).toBe(7);
+    expect(CREW_ABILITIES.length).toBe(10);
+    expect(CREW_ABILITIES.filter((a) => a.elf === "money").length).toBe(4);
     for (const a of CREW_ABILITIES) {
       expect(crewIntro()).toContain(abilityLine(a));
       expect(abilitiesReply()).toContain(abilityLine(a));
@@ -30,6 +34,48 @@ describe("what the crew can and cannot do", () => {
     expect(crewIntro()).toContain("\n\n🚫 The crew can't");
     expect(crewIntro()).not.toMatch(/move-day/i);
     expect(crewScopePrompt()).toContain("What the crew cannot do: book trucks, U-Hauls or movers");
+    expect(crewScopePrompt()).toContain("pay rent, bills or a landlord; move money to or from a bank");
+    // every Money job the Crew Lead names is a job the Money Elf has
+    const money = CREW_ABILITIES.filter((a) => a.elf === "money")
+      .map((a) => a.text)
+      .join(" ");
+    for (const w of [
+      "splits",
+      "payment plans",
+      "deposit",
+      "escrow",
+      "ledger",
+      "Moving Fund",
+      "after your yes",
+    ])
+      expect(money.toLowerCase()).toContain(w.toLowerCase());
+  });
+
+  test("which did you mean: the question, the options, and how an answer picks one", () => {
+    const q = clarifyQuestion(["money", "stuff"]);
+    expect(q).toBe(
+      [
+        "I can take that two ways:",
+        "1. Money Elf: splitting costs, deposits, who owes what, sale money in escrow\n2. Stuff Elf: selling, buying or donating an item",
+        "❓ Which did you mean? Reply 1 or 2, or say it another way.",
+      ].join("\n\n"),
+    );
+    expect(clarifyQuestion(["home", "stuff", "money"])).toContain("three ways");
+    expect(q.match(/\p{Extended_Pictographic}/gu)?.length).toBe(1);
+    const two: ("home" | "stuff" | "money")[] = ["money", "stuff"];
+    expect(pickClarifyOption("2", two)).toBe("stuff");
+    expect(pickClarifyOption("option 1", two)).toBe("money");
+    expect(pickClarifyOption("the second one", two)).toBe("stuff");
+    expect(pickClarifyOption("the money one", two)).toBe("money");
+    expect(pickClarifyOption("selling", two)).toBe("stuff");
+    expect(pickClarifyOption("3", two)).toBeNull();
+    expect(pickClarifyOption("something else entirely", two)).toBeNull();
+    expect(pickClarifyOption("money or stuff?", two)).toBeNull();
+    expect(parseClarify(JSON.stringify({ text: "my deposit", options: two, at: 1 }))?.text).toBe(
+      "my deposit",
+    );
+    expect(parseClarify("")).toBeNull();
+    expect(parseClarify("not json")).toBeNull();
   });
 
   test("asks for the ability list and for status", () => {
@@ -54,9 +100,29 @@ describe("what the crew can and cannot do", () => {
     expect(outOfScope("post it on facebook marketplace for me")?.cant).toBe(
       "The crew doesn't post listings for you.",
     );
-    expect(outOfScope("venmo the deposit for me")?.cant).toContain("money");
-    for (const t of ["sublet my room for $1500", "find storage june to august", "price this couch", "status"])
-      expect(outOfScope(t)).toBeNull();
+    // Money's real limits: rent, bills, a landlord, a bank, investing, taxes. Its real jobs are not refused.
+    for (const t of [
+      "pay my rent",
+      "can you pay my landlord",
+      "transfer money to my bank",
+      "withdraw the moving fund",
+      "invest the moving fund",
+      "do my taxes",
+    ])
+      expect(outOfScope(t)?.reply, t).toBeTruthy();
+    expect(outOfScope("pay my rent")?.reply).toContain("Money Elf can split costs with roommates");
+    for (const t of [
+      "sublet my room for $1500",
+      "find storage june to august",
+      "price this couch",
+      "status",
+      "pay Sam $40 for gas",
+      "split the $240 truck with Sam and Priya",
+      "I paid a $500 sublet deposit",
+      "who owes me?",
+      "show me the ledger",
+    ])
+      expect(outOfScope(t), t).toBeNull();
   });
 });
 

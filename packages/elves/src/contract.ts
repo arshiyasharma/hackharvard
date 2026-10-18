@@ -23,6 +23,8 @@ export interface ElfContext {
   conversation: ConversationContext;
   /** Where the Home Elf searches for housing, hotels and storage. */
   listings: ListingSource;
+  /** How the router chose this Elf, when that matters to it (the Crew Lead asks a "which did you mean?" on "clarify"). */
+  routing?: { via: string; options?: ElfName[] };
 }
 
 export type { ConversationContext };

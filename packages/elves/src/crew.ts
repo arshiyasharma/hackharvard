@@ -31,6 +31,8 @@ export interface Ability {
   text: string;
   /** The same ability said out loud, as a verb phrase: "The Home Elf <spoken>, <spoken> and <spoken>." */
   spoken: string;
+  /** Texts that do it, as the owner would send them. A test routes each to this Elf, so the list can't drift. */
+  examples?: string[];
 }
 
 export const CREW_ABILITIES: Ability[] = [
@@ -40,42 +42,78 @@ export const CREW_ABILITIES: Ability[] = [
     text: "Home Elf finds you a place to move into, a hotel for the gap, or storage (Craigslist, Airbnb, Booking.com, SpareFoot), flags scams and texts you the top 3.",
     spoken:
       "finds you a place, a hotel for the gap or storage, and sends you the top three with scams flagged",
+    examples: [
+      "find me a room in allston under 1200",
+      "find storage for june to august",
+      "find a hotel for the gap",
+    ],
   },
   {
     elf: "home",
     name: "sublet your place",
     text: "Home Elf sublets your place: asks the rent, dates, area and room photos, writes the post for you to put up, and handles applicants. No viewing gets booked without your yes.",
     spoken: "sublets your place, writing the post and never booking a viewing without your yes",
+    examples: ["sublet my room for $1500"],
   },
   {
     elf: "home",
     name: "move checklist and status",
     text: 'Home Elf keeps your move checklist (utilities, internet, renters insurance, address change, keys). Text "status" anytime for where everything stands.',
     spoken: "keeps your move checklist, like utilities, internet and keys",
+    examples: ["set up internet at the new place", "what do I need for move-in"],
   },
   {
     elf: "stuff",
     name: "price from a photo",
     text: "Stuff Elf prices an item from a photo and writes the listing line; you post it yourself on Facebook Marketplace or wherever you like.",
     spoken: "prices your things from a photo for you to post",
+    examples: ["sell my couch", "I have a lamp to sell for $20"],
   },
   {
     elf: "stuff",
     name: "deal with buyers",
     text: "Stuff Elf negotiates with buyers who text this number, never under your lowest price, and checks with you on low offers.",
     spoken: "deals with buyers, never under your lowest price",
+    examples: ["lowest I'd take is $60 for the desk"],
   },
   {
     elf: "stuff",
     name: "Last Call",
-    text: "Stuff Elf runs Last Call: 72 and 48 hours before move-out unsold things drop in price, at 24 hours they go free, and \"donate it\" takes a listing off and drafts the pickup request.",
+    text: 'Stuff Elf runs Last Call: 72 and 48 hours before move-out unsold things drop in price, at 24 hours they go free, and "donate it" takes a listing off and drafts the pickup request.',
     spoken: "drops prices on what's left before move-out, then asks about donating",
+    examples: ["keep the couch", "donate the desk"],
   },
   {
     elf: "money",
-    name: "ledger",
-    text: "Money Elf keeps the move's ledger on Nessie: every sale, escrow hold and release, and the money set aside for the move.",
-    spoken: "keeps the move's ledger of sales, escrow and money set aside",
+    name: "split costs",
+    text: 'Money Elf splits shared costs with roommates ("split the $240 truck with Sam and Priya"), texts each person their share, tracks who has paid and sets up payment plans. Nothing is sent without your yes.',
+    spoken: "splits shared costs with your roommates and tracks who has paid",
+    examples: [
+      "split the $240 truck with Sam and Priya",
+      "who owes me?",
+      "can Sam pay the truck at $40 a month",
+    ],
+  },
+  {
+    elf: "money",
+    name: "deposits and paying back",
+    text: "Money Elf logs a deposit you paid (sublet, storage, truck) with its due-back date and marks it returned, and pays a roommate from the Moving Fund, in Nessie, after your yes.",
+    spoken: "logs your deposits and pays a roommate back, only after your yes",
+    examples: ["I paid a $500 sublet deposit, due back Dec 1", "got my deposit back", "pay Sam $40 for gas"],
+  },
+  {
+    elf: "money",
+    name: "escrow for sales",
+    text: "Money Elf holds a buyer's or sublet applicant's payment in escrow after your yes, moves it into the Moving Fund when pickup is confirmed, and refunds it if they walk.",
+    spoken: "holds a buyer's payment in escrow and releases it at pickup, with your yes",
+    examples: ["is anything in escrow?", "refund the buyer", "release the escrow for the couch"],
+  },
+  {
+    elf: "money",
+    name: "the ledger",
+    text: 'Money Elf shows the whole ledger, read live from Nessie, as a photo and a web dashboard link: "show me the ledger", "how much have I spent?", "how much did I make?".',
+    spoken: "shows your whole ledger, live from Nessie",
+    examples: ["show me the ledger", "how much have I spent?", "how much did I make?"],
   },
 ];
 
@@ -85,7 +123,8 @@ export const CREW_LIMITS = [
   "plan the route or run move day",
   "post listings on Facebook, Craigslist or anywhere else for you",
   "read leases or contact your landlord",
-  "pay, send or request money for you",
+  "pay rent, bills or a landlord",
+  "move money to or from a bank",
   "give legal or financial advice",
 ] as const;
 
@@ -184,7 +223,8 @@ interface OutOfScopeRule {
 
 const OUT_OF_SCOPE: OutOfScopeRule[] = [
   {
-    re: /\b(u-?haul|truck|moving van|movers?|moving company|hire (?:some )?(?:help|people)|load(?:ing)? help)\b/i,
+    // Asking the crew to book or hire one; a truck in a cost ("split the $240 truck") is Money's, not a refusal.
+    re: /\b(book|rent|reserve|hire|order|schedule|need|want|get me|find me|arrange|call)\b[^.?!]{0,30}\b(u-?haul|truck|moving van|movers?|moving company|load(?:ing)? help)\b|\bhire (?:some )?(?:help|people)\b|\b(u-?haul|truck|movers?)\b[^.?!]{0,20}\b(quote|availability|available|booking)\b/i,
     cant: "The crew can't book trucks, U-Hauls or movers.",
     instead: 'Home Elf can find storage for the gap, and text "status" for your move checklist.',
   },
@@ -204,12 +244,13 @@ const OUT_OF_SCOPE: OutOfScopeRule[] = [
     instead: "Stuff Elf writes the listing line with a price; you paste it, and buyers text this number.",
   },
   {
-    re: /\b(pay|venmo|zelle|wire|transfer)\b[^.?!]{0,30}\b(for me|my rent|the deposit|my deposit|the landlord)\b|\b(pay|cover) (?:my|the) (?:rent|bill|deposit)\b|\bsend (?:the )?(?:money|payment|deposit)\b/i,
-    cant: "The crew doesn't pay, send or request money for you.",
-    instead: "Money Elf keeps the ledger of every sale and escrow hold on Nessie.",
+    re: /\b(pay|venmo|zelle|wire|transfer|send)\b[^.?!]{0,30}\b(my rent|the rent|my landlord|the landlord|my bills?|the bills?|my mortgage|my tuition)\b|\b(pay|cover) (?:my|the) (?:rent|bills?|mortgage|tuition)\b|\b(withdraw|cash out|bank (?:account|transfer)|transfer (?:the |my )?(?:money|funds|balance)|wire (?:the |my )?money)\b/i,
+    cant: "The crew can't pay rent, bills or a landlord, or move money to or from a bank.",
+    instead:
+      "Money Elf can split costs with roommates, pay a roommate from the Moving Fund, log deposits and hold sale money in escrow, each after your yes.",
   },
   {
-    re: /\b(legal advice|sue|lawyer|small claims|tax(?:es)? advice|invest(?:ing|ment)? advice|is it legal)\b/i,
+    re: /\b(legal advice|sue|lawyer|small claims|tax(?:es)? advice|invest(?:ing|ment)? advice|is it legal|invest|stocks?|crypto|bitcoin|my taxes|tax return)\b/i,
     cant: "The crew can't give legal or financial advice.",
     instead: "It can find you a place, sublet yours, sell your stuff and keep the ledger.",
   },
@@ -220,3 +261,68 @@ export function outOfScope(text: string): { cant: string; instead: string; reply
   for (const r of OUT_OF_SCOPE) if (r.re.test(text)) return { ...r, reply: `🚫 ${r.cant}\n\n${r.instead}` };
   return null;
 }
+
+/** One line per Elf for "which did you mean?": what each is for, in words the owner would use. */
+export const ELF_JOBS: Record<Ability["elf"], string> = {
+  home: "finding or subletting a place, storage, your move checklist",
+  stuff: "selling, buying or donating an item",
+  money: "splitting costs, deposits, who owes what, sale money in escrow",
+};
+
+const NUMBER_WORDS = ["", "one", "two", "three"];
+
+/** The question the Crew Lead asks when a text could be two or three Elves' job. */
+export function clarifyQuestion(options: Ability["elf"][]): string {
+  const rows = options.map((e, i) => `${i + 1}. ${ELF_LABEL[e]}: ${ELF_JOBS[e]}`);
+  const pick = options.length === 2 ? "1 or 2" : `1, 2 or ${options.length}`;
+  return [
+    `I can take that ${NUMBER_WORDS[options.length] ?? options.length} ways:`,
+    rows.join("\n"),
+    `❓ Which did you mean? Reply ${pick}, or say it another way.`,
+  ].join("\n\n");
+}
+
+/** Which Elf an answer picks ("2", "the second", "money"), among the ones offered; null if it picks none or several. */
+export function pickClarifyOption(text: string, options: Ability["elf"][]): Ability["elf"] | null {
+  const t = text.trim().toLowerCase();
+  if (!t || t.length > 40) return null;
+  const digit = t.match(/^(?:option |number |#)?([1-3])[.!)]?$/);
+  if (digit) return options[Number(digit[1]) - 1] ?? null;
+  const ordinal = t.match(/\b(first|second|third|last)\b/);
+  if (ordinal) {
+    const at = { first: 0, second: 1, third: 2, last: options.length - 1 }[ordinal[1] as "first"];
+    return options[at] ?? null;
+  }
+  const hits = options.filter((e) =>
+    e === "money"
+      ? /\b(money|payments?|ledger|owe|split)\b/.test(t)
+      : e === "stuff"
+        ? /\b(stuff|sell(ing)?|buy(ing)?|donat\w*|item)\b/.test(t)
+        : /\b(home|housing|place|apartment|room|sublet|storage)\b/.test(t),
+  );
+  return hits.length === 1 ? (hits[0] ?? null) : null;
+}
+
+/** The cursor that holds the question the Crew Lead is waiting on an answer to. */
+export function clarifyKey(moveId: string): string {
+  return `clarify:${moveId}`;
+}
+
+export interface PendingClarify {
+  text: string;
+  options: Ability["elf"][];
+  at: number;
+}
+
+export function parseClarify(raw: string | undefined | null): PendingClarify | null {
+  if (!raw) return null;
+  try {
+    const c = JSON.parse(raw) as PendingClarify;
+    return Array.isArray(c.options) && typeof c.text === "string" && typeof c.at === "number" ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A question left unanswered this long is dropped; the next text is taken at face value. */
+export const CLARIFY_TTL_MS = 30 * 60_000;

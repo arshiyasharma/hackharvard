@@ -107,7 +107,7 @@ ${TEXT_STYLE}
 export const homeElf: Elf = {
   name: "home",
   description:
-    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; subletting the owner's own room out (writing the post, screening applicants); move-in week (utilities, internet, address change, renters insurance)",
+    "Housing on both ends: finding the owner a room, sublet or apartment (budget, neighborhoods, dates, listings they found), a hotel for the gap between leases, storage units; subletting the owner's own room out (writing the post, screening applicants); move-in week (utilities, internet, address change, renters insurance), and the status of the whole move. Not about splitting costs with roommates, paying someone back, or what a deposit or escrow holds (that is money), and not about items to sell or donate (that is stuff)",
   keywords: [...HUNT_SKILL.keywords, ...MOVEIN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {

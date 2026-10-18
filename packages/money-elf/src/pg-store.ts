@@ -106,8 +106,7 @@ export class PostgresMoneyStore implements MoneyStore {
   // ---------- entries
 
   async listEntries(moveId: string) {
-    const rows = await this
-      .sql`select * from money_entries where move_id = ${moveId} order by seq`;
+    const rows = await this.sql`select * from money_entries where move_id = ${moveId} order by seq`;
     return rows.map((r: Row) => entryRow(r));
   }
 

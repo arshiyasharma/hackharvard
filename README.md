@@ -6,7 +6,7 @@ Product spec and decisions: [`SPEC.md`](SPEC.md). Five-Elf behavior, including R
 
 ## State of this branch
 
-`bun test` is 476 tests across 38 files (502 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
+`bun test` is 555 tests across 40 files (581 with `bun run test:pg`, which also runs the crew and the Money sales flows on Postgres; `bun run test:money-pg` runs the whole Money package suite on Postgres), no credentials. `bun run typecheck` is clean. Live host: `https://elves-production.up.railway.app/health`.
 
 Branch from here when you want the crew that actually runs. The rows marked **empty** answer with a canned line and a Crew Board update. They do not call an API.
 
@@ -48,9 +48,9 @@ One list in code says what the crew can do: `CREW_ABILITIES` and `CREW_LIMITS` i
 | --- | --- | --- |
 | **Home** | Finds a place to move into, a hotel for the gap, or storage (Craigslist, Airbnb, Booking.com, SpareFoot), flags scams, texts the top 3. Sublets your place: asks rent, dates, area and room photos, writes the post for you to put up, handles applicants. Keeps the move checklist (utilities, internet, renters insurance, USPS address change, keys, condition report). | Books a viewing without your yes (the applicant's pick is held and you get "Book it? yes or no"). Reads leases or contacts landlords. Posts anything for you. |
 | **Stuff** | Prices an item from a photo and writes the listing line. Negotiates with buyers who text the number, never under your lowest price, asking you on low offers. Last Call: 20% off at 72 hours before move-out, another 25% at 48 (each text says how much and why), free at 24; at any point "donate it" takes the listing off and drafts the pickup request. (Yashashri's `stuff-elf` branch carries the newer Stuff work.) | Posts to Facebook Marketplace or anywhere else; you paste the post. |
-| **Money** | The move's ledger on Nessie: every sale, escrow hold and release, the money set aside for the move. A dashboard and a ledger-editing mini app are ideas, not built, and are not advertised. | Pays, sends or requests money for you. |
+| **Money** | Splits shared costs with roommates ("split the $240 truck with Sam and Priya"), texts each their share, tracks who has paid, sets up payment plans. Logs deposits you paid and when they come back. Pays a roommate from the Moving Fund (in Nessie). Holds a buyer's or sublet applicant's payment in escrow, releases it at pickup, refunds it if they walk. Shows the whole ledger, read live from Nessie, as a photo and a web dashboard link, and answers "who owes me?", "how much have I spent?", "how much did I make?", "is anything in escrow?". Every money move is a question first. | Moves money without your yes. Pays rent, bills or a landlord, moves money to or from a bank, invests, does taxes (it says so and offers what it can do). Lists, prices or donates items (Stuff) or finds a place (Home). |
 
-**What the crew cannot do** (said the same way every time): book trucks, U-Hauls or movers; plan the route or run move day; post listings for you; read leases or contact landlords; pay, send or request money for you; give legal or financial advice; anything not about the move.
+**What the crew cannot do** (said the same way every time): book trucks, U-Hauls or movers; plan the route or run move day; post listings for you; read leases or contact landlords; pay rent, bills or a landlord; move money to or from a bank; give legal or financial advice; anything not about the move. The Money Elf does send requests to roommates and pay a roommate from the Moving Fund, always after your yes, which is why the limit is about rent, bills, landlords and banks and not about "paying" in general.
 
 ### Crew Lead on iMessage / SMS
 
@@ -68,7 +68,7 @@ The prompt is `SYSTEM` in [`packages/elves/src/crew-lead.ts`](packages/elves/src
 Every text takes the same path (`apps/elves/src/service.ts`):
 
 1. **Batch.** Texts from one phone within the debounce window become one batch; the last one is acknowledged (read receipt, a 👍 per text, typing).
-2. **Route** (`packages/elves/src/router.ts`), first match wins: counterparty (a buyer, applicant or lister in their own space) → the Elf that owns their deal; first contact → Crew Lead; the onboarding call until the brief is confirmed → Crew Lead; `status` → Home, `what can you do?` → Crew Lead; a reply inside an Elf's thread → that Elf; a pending deal question (`yes` / `no` / `$70`, "keep the couch") → the Elf that asked; Home follow-ups (`2`, `more`, `search again`, a date or address Home asked for, `done with internet`) → Home; a room photo while Home writes the sublet post → Home; a photo → Stuff; a bare price → Stuff; **a text whose keywords hit both Stuff and Home → Crew Lead** (`via: "delegate"`); then the fast model classifies, then keywords, then Crew Lead.
+2. **Route** (`packages/elves/src/router.ts`), first match wins: counterparty (a buyer, applicant or lister in their own space) → the Elf that owns their deal; first contact → Crew Lead; the onboarding call until the brief is confirmed → Crew Lead; `status` → Home, `what can you do?` → Crew Lead; a reply inside an Elf's thread → that Elf; a pending deal question (`yes` / `no` / `$70`, "keep the couch") → the Elf that asked; Home follow-ups (`2`, `more`, `search again`, a date or address Home asked for, `done with internet`) → Home; a room photo while Home writes the sublet post → Home; a photo → Stuff; a bare price → Stuff; **an answer to "which did you mean?" → the Elf it picks, with the text first sent** (`via: "clarified"`); a refusal-shaped ask with nothing in it that is any Elf's job (book a U-Haul, read my lease) → Crew Lead; refund, release or escrow words (or a pickup that fell through while the Money Elf holds that sale's money) → Money; move-in checklist asks → Home; **a text whose keywords hit both Stuff and Home → Crew Lead** (`via: "delegate"`); then the fast model classifies, then keywords. **If two Elves fit equally well the Crew Lead asks instead of guessing** (`via: "clarify"`); anything else → Crew Lead.
 3. **Handle.** The routed Elf gets one `ElfContext` (store, LLM, move, participant, batch, working memory, listings source, clock) and returns one `ElfResult`: `replies` for this space, `outbound` texts for other spaces, `events`, `movePatch`, `boardPatch`, and an optional `later()` for slow work (a browser search) that runs after the replies go out.
 4. **Deliver.** The service writes the move patch, patches the board row, appends the events, sends the replies (idempotent per message), sends the outbound texts, records the thread owner, and runs `later()`.
 
@@ -102,6 +102,27 @@ Every text takes the same path (`apps/elves/src/service.ts`):
 - Splits ("split the $240 truck with Sam and Priya"), "Sam paid me on venmo", deposits and their return, loans and payment plans, "pay Sam $40", "show me the ledger" (the card image plus a signed link to the live dashboard, and a mini app card when Spectrum is set up). Every money move is a question first: one yes approves exactly one action, by text, by poll tap, or from the dashboard.
 - Sales through escrow, driven by the Stuff and Home Elves: see "Money: a sale, end to end".
 - Card and bank numbers in a text are refused and never stored; the scam check blocks off-escrow payment asks.
+
+### Which Elf, and when it asks
+
+The Crew Lead's prompt and every Elf's routing description name exactly what each Elf does and does not do, from one list (`CREW_ABILITIES` and `CREW_LIMITS` in `crew.ts`, ten abilities: three Home, three Stuff, four Money). The Money Elf's own menu, refusals and questions (`packages/money-elf/src/menu.ts`) are tested against that list: every example text in it goes to its own Elf, and the Money Elf answers each of its examples with an action, never its "not sure" reply (`apps/elves/test/routing.test.ts`, 52 cases, plus the Money reply tests in `packages/money-elf/test/smart.test.ts`).
+
+When it isn't sure, it asks, and the options are the real ones:
+
+- **Two Elves fit equally** ("my deposit for the apartment" is Home's or Money's; "I owe the buyer" is Stuff's or Money's): the Crew Lead keeps the text, asks, and sends it to the Elf you pick (`1`, `2`, "the money one") exactly as first written. An answer that picks nothing is treated as a new text; a question left 30 minutes is dropped.
+- **Nothing it can place** ("blorp the frobnicator"): the same question with all three jobs. Small talk ("thanks!") and questions about the move ("when is move-out?") are never asked about.
+- **Inside the Money Elf:** a missing detail gets the one question that completes it, with an example ("split the truck" → "How much was it, and who's in on it?"; "pay Sam" → "How much should I pay Sam?"; "I paid a deposit" → "How much was it, and when is it due back?"). A text it can't place gets "I'm not sure what you'd like me to do with that" and the likeliest things to say. "help" or "what can you do" gets its menu. Rent, bills, a landlord, a bank, investing and taxes get a plain "I can't …" and what it can do instead. "Who owes me?", "is anything in escrow?", "how much have I spent?", "how much did I make?" and "what's my balance?" are answered in a line first, then the ledger.
+
+```
+🧭 Crew Lead
+
+I can take that two ways:
+
+1. Money Elf: splitting costs, deposits, who owes what, sale money in escrow
+2. Home Elf: finding or subletting a place, storage, your move checklist
+
+❓ Which did you mean? Reply 1 or 2, or say it another way.
+```
 
 ### How the Elves talk to each other
 
@@ -276,7 +297,7 @@ What needs a dedicated Photon line: the 👍 on each of your texts, threaded rep
 
 ### Money: a sale, end to end
 
-Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (116 tests) against `PostgresMoneyStore`.
+Nessie is the record of money moved. Everything the Elf needs besides that (who is who, which Nessie account each person has, what an entry was for, the hand-off signals behind an escrow, the questions waiting on the owner) is in Postgres: migration `packages/db/migrations/0010_money.sql` creates `money_people`, `money_entries`, `money_pending` and `money_accounts`, all cascading from the move, and `PostgresMoneyStore` (`packages/money-elf/src/pg-store.ts`) is used whenever the crew store is Postgres, and `money_merchants` remembers the Nessie merchant ids (`PostgresMerchantCache`), so a restart neither loses an owner's waiting yes or an open escrow nor creates a second "U-Haul" in Nessie. Nothing else the Money Elf needs is held only in memory. It is proven three ways: the store contract runs on memory and Postgres (`bun run test:pg`); the sale flows run end to end with both the crew store and the Money state in Postgres (`apps/elves/test/money-sales.test.ts`); and `bun run test:money-pg` runs the whole Money package suite (139 tests) against `PostgresMoneyStore`.
 
 The Deal Engine already says what happened as events; `apps/elves/src/money-bridge.ts` turns them into the Money Elf's flow, and the service sends what comes out under the "💸 Money Elf" header:
 
@@ -318,6 +339,10 @@ Text the Elves number as usual; anything about money, splits, escrow, deposits o
 | `yes` / `no` | Answers the most recent question; a poll tap or the dashboard button answers exactly that one |
 | A buyer agrees a price (Stuff) or a sublet applicant does (Home) | "Hold their payment in escrow until pickup?" → `yes` opens escrow; then the pickup, the buyer's `got it`, your `yes` to release, or a refund question if they walk. See the next section |
 | A card or bank number | Refused; never stored or repeated |
+| `who owes me?` / `is anything in escrow?` / `how much have I spent?` / `how much did I make?` | A one-line answer first, then the ledger |
+| `help` / `what can you do` | The Money Elf's menu, with a text that does each thing |
+| `split the truck`, `pay Sam`, `I paid a deposit` (a detail missing) | The one question that completes it, with an example |
+| `pay my rent`, `transfer to my bank`, `invest the moving fund`, `do my taxes` | 🚫 A plain "I can't …" and what it can do instead |
 | `STATUS` | The Money section shows the Ledger line |
 
 ### What Photon 2.0 can send, and the Docker image

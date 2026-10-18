@@ -10,11 +10,20 @@ import {
   type Store,
 } from "@elves/shared";
 import { batchText, type Elf, hasPhotos } from "./contract.ts";
-import { isCapabilitiesQuestion, isStatusAsk } from "./crew.ts";
+import {
+  type Ability,
+  CLARIFY_TTL_MS,
+  clarifyKey,
+  isCapabilitiesQuestion,
+  isStatusAsk,
+  outOfScope,
+  parseClarify,
+  pickClarifyOption,
+} from "./crew.ts";
 import { counterpartyElf } from "./deal.ts";
 import { pendingDonateAsk } from "./donate.ts";
 import { isHomeContinuation, isHuntFollowUp } from "./home-followups.ts";
-import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
+import { isMoveinIntent, moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
 import { parsePriceCents, pendingListings, REF_ASK, wantsListing } from "./intake.ts";
 
 export type RouteVia =
@@ -27,6 +36,8 @@ export type RouteVia =
   | "followup"
   | "scope"
   | "delegate"
+  | "clarify"
+  | "clarified"
   | "photo"
   | "price"
   | "llm"
@@ -36,6 +47,10 @@ export interface RouteDecision {
   elf: ElfName;
   via: RouteVia;
   confidence: number;
+  /** "clarify": the Elves the text could be for; the Crew Lead asks which. */
+  options?: Ability["elf"][];
+  /** "clarified": the text the owner first sent, which the chosen Elf now handles. */
+  textOverride?: string;
 }
 
 export interface RouterDeps {
@@ -144,6 +159,27 @@ export async function route(
   )
     return { elf: "crew_lead", via: "scope", confidence: 1 };
 
+  // The answer to "which did you mean?": the chosen Elf takes the text the owner first sent.
+  if (opts.moveId && (opts.role ?? "owner") === "owner" && !hasPhotos(batch)) {
+    const waiting = parseClarify(await deps.store.getCursor(clarifyKey(opts.moveId)));
+    if (waiting) {
+      await deps.store.setCursor(clarifyKey(opts.moveId), ""); // asked once: answered or not, it is done
+      const chosen =
+        Date.now() - waiting.at < CLARIFY_TTL_MS ? pickClarifyOption(text, waiting.options) : null;
+      if (chosen && deps.elves.some((e) => e.name === chosen))
+        return { elf: chosen, via: "clarified", confidence: 1, textOverride: waiting.text };
+    }
+  }
+  // Something the crew doesn't do, with nothing in it that is any Elf's job: the Crew Lead says so plainly.
+  if (
+    (opts.role ?? "owner") === "owner" &&
+    !hasPhotos(batch) &&
+    outOfScope(text) &&
+    !deps.elves.some((e) => e.name !== "crew_lead" && keywordScore(text, e.keywords) > 0) &&
+    deps.elves.some((e) => e.name === "crew_lead")
+  )
+    return { elf: "crew_lead", via: "scope", confidence: 0.95 };
+
   for (const m of [...batch.messages].reverse()) {
     if (m.parentMessageId) {
       const owner = await deps.store.getThreadOwner(m.parentMessageId);
@@ -193,6 +229,24 @@ export async function route(
     const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
     if (lastElf === "money" && deps.elves.some((e) => e.name === "money"))
       return { elf: "money", via: "followup", confidence: 0.9 };
+  }
+  // Refund, release, escrow, or a pickup that fell through / happened while the Money Elf holds that sale's money:
+  // that is the Money Elf's question, not the Stuff Elf's.
+  if (
+    opts.moveId &&
+    (opts.role ?? "owner") === "owner" &&
+    !hasPhotos(batch) &&
+    deps.elves.some((e) => e.name === "money")
+  ) {
+    const holds = await moneyHoldsEscrow(deps.store, opts.moveId);
+    if (
+      /\b(refund|release|escrow)\b/i.test(text) ||
+      (holds &&
+        /\b(fell through|no[- ]show|didn'?t (show|pick)|picked (it |them )?up|pickup (is )?(done|complete)|backed out)\b/i.test(
+          text,
+        ))
+    )
+      return { elf: "money", via: "deal", confidence: 0.9 };
   }
   // "list it", "post it", "yes" while an item with a floor is waiting to be listed: the Stuff Elf opens the deal
   // and answers with the ref code. Not while Home is mid-post ("post it" is the sublet's approval there).
@@ -281,7 +335,24 @@ export async function route(
       // fall through to keywords
     }
   }
+  // The move-in checklist asks ("what do I need for move-in?") are Home's, even though the Crew Lead's keywords overlap.
+  if (isMoveinIntent(text) && (opts.role ?? "owner") === "owner" && deps.elves.some((e) => e.name === "home"))
+    return { elf: "home", via: "keyword", confidence: 0.9 };
   const kw = keywordRoute(text, deps.elves);
-  if (kw) return { elf: kw.elf, via: "keyword", confidence: Math.min(0.9, 0.5 + kw.score * 0.1) };
+  if (kw) {
+    // Two specialists fit equally well ("my deposit", "I owe the buyer"): ask which, don't guess.
+    const tied = deps.elves
+      .filter((e) => e.name !== "crew_lead" && keywordScore(text, e.keywords) >= kw.score)
+      .map((e) => e.name as Ability["elf"]);
+    if (kw.elf !== "crew_lead" && tied.length >= 2 && (opts.role ?? "owner") === "owner")
+      return { elf: "crew_lead", via: "clarify", confidence: 0.4, options: tied.slice(0, 3) };
+    return { elf: kw.elf, via: "keyword", confidence: Math.min(0.9, 0.5 + kw.score * 0.1) };
+  }
   return { elf: "crew_lead", via: "default", confidence: 0.4 };
+}
+
+/** True while the Money Elf has a sale's money in escrow (its Crew Board row says so). */
+async function moneyHoldsEscrow(store: Store, moveId: string): Promise<boolean> {
+  const row = (await store.getBoard(moveId)).find((r) => r.elf === "money");
+  return /in escrow/i.test(row?.lastUpdate ?? "");
 }

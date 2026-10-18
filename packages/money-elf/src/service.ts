@@ -1035,7 +1035,7 @@ export class MoneyService {
     });
     out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } });
     out.lines.push(
-      `Pay ${to.name} ${fmtUsd(input.amountCents)}${input.what === "payment" ? "" : ` for the ${input.what}`} ?`,
+      `Pay ${to.name} ${fmtUsd(input.amountCents)}${input.what === "payment" ? "" : ` for the ${input.what}`}?`,
     );
     out.lines.push("Reply yes to send it.");
     return out;

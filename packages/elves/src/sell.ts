@@ -19,8 +19,9 @@ import {
   pickupOptions,
   requestDraft,
 } from "./donate.ts";
-import { moveReport, reportText } from "./impact.ts";
 import { CATEGORY_WORDS, type Category, DEFAULT_WEIGHT_LB, extractFactsHeuristic } from "./facts.ts";
+import { extractListingUrls } from "./home-followups.ts";
+import { moveReport, reportText } from "./impact.ts";
 import {
   type ApprovedItem,
   anchorDeals,
@@ -29,17 +30,15 @@ import {
   describeItem,
   fmtUsd,
   identifyFromPhotos,
-  isApproval,
-  pendingListings,
-  REF_ASK,
-  wantsListing,
   itemStatus,
   parsePriceCents,
+  pendingListings,
   postLine,
+  REF_ASK,
   suggestListCents,
+  wantsListing,
 } from "./intake.ts";
 import { BUY_SKILL, GREEN_SKILL, pickSkill, type Skill, skillReply } from "./stubs.ts";
-import { extractListingUrls } from "./home-followups.ts";
 
 const SYSTEM = `You are the Stuff Elf of Elves, a moving crew the owner texts. You handle everything the owner owns or wants: right now you turn photos into listings, hold a floor price, and handle buyers who text this number so the owner never has to.
 
@@ -88,7 +87,7 @@ const SELL_SKILL: Skill = {
 export const stuffElf: Elf = {
   name: "stuff",
   description:
-    "The owner's stuff: selling furniture and items (photos, listings, prices and floor prices, dollar amounts, buyers, pickups), buying things (a forwarded listing link or screenshot, offers), and getting rid of the rest (donations, giving away free, 311 or bulk pickup, trash, recycling, Last Call, the Move Report)",
+    "The owner's stuff: selling furniture and items (photos, listings, prices and floor prices, dollar amounts, buyers, pickups), buying things (a forwarded listing link or screenshot, offers), and getting rid of the rest (donations, giving away free, 311 or bulk pickup, trash, recycling, Last Call, the Move Report). Not about money owed, splits, deposits or escrow (that is money), and not about finding or subletting a place (that is home)",
   keywords: [...SELL_SKILL.keywords, ...BUY_SKILL.keywords, ...GREEN_SKILL.keywords],
 
   async handle(ctx: ElfContext): Promise<ElfResult> {

@@ -31,7 +31,7 @@ const DONE_EVENTS = new Set([
   "loan.created",
   "contact.saved",
 ]);
-const REFUSED_EVENTS = new Set(["scam.flagged", "money.sensitive_blocked"]);
+const REFUSED_EVENTS = new Set(["scam.flagged", "money.sensitive_blocked", "money.out_of_scope"]);
 
 export type Tone = "ask" | "done" | "refused" | "ledger" | "plain";
 

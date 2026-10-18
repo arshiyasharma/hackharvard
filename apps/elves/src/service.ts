@@ -1,7 +1,7 @@
 import {
-  ELF_EMOJI,
   allElves,
   batchText,
+  ELF_EMOJI,
   type Elf,
   type ElfContext,
   type ElfImage,
@@ -22,9 +22,9 @@ import type { MoveMemory } from "@elves/memory";
 import { type InboundMessage, PhotonApiError, type Transport } from "@elves/photon";
 import { type Batch, Pipeline, sendKey } from "@elves/pipeline";
 import {
-  ELF_LABELS,
-  type Deal,
   createLogger,
+  type Deal,
+  ELF_LABELS,
   type ElfName,
   type Logger,
   type Move,
@@ -654,12 +654,21 @@ export function createService(deps: ServiceDeps): Service {
       }
     });
 
+    // An answer to "which did you mean?" is handled as the text the owner first sent.
+    const handled: Batch = decision.textOverride
+      ? {
+          ...batch,
+          messages: batch.messages.map((m, i, all) =>
+            i === all.length - 1 ? { ...m, text: decision.textOverride ?? m.text } : { ...m, text: null },
+          ),
+        }
+      : batch;
     const ctx: ElfContext = {
       store: deps.store,
       llm: deps.llm,
       move,
       participant,
-      batch,
+      batch: handled,
       traceId,
       log,
       signal,
@@ -669,6 +678,7 @@ export function createService(deps: ServiceDeps): Service {
       fetchAttachment: (id) => deps.transport.fetchAttachment(id),
       conversation,
       listings,
+      routing: { via: decision.via, ...(decision.options ? { options: decision.options } : {}) },
     };
     let result: Awaited<ReturnType<Elf["handle"]>>;
     try {

@@ -6,6 +6,7 @@ export * from "./ledger-card.ts";
 export * from "./ledger-http.ts";
 export * from "./ledger-page.ts";
 export * from "./ledger-view.ts";
+export * from "./menu.ts";
 export * from "./money-elf.ts";
 export * from "./parse.ts";
 export * from "./pg-store.ts";

@@ -1,6 +1,7 @@
 /** What the sender wants from the Money Elf. Rules first for yes/no, then the LLM, then rules as the backup. */
 import { z } from "zod";
 import { amountAppearsIn, normalizePhone, parseAmounts, parseDate } from "./amounts.ts";
+import { type ClarifyTopic, cantWhat, type LedgerFocus } from "./menu.ts";
 import type { MoneyLLM } from "./types.ts";
 
 /** "me" stands for the owner. */
@@ -22,8 +23,21 @@ export type Intent =
   | { kind: "pickup_confirmed"; item: string | null }
   | { kind: "pickup_failed"; item: string | null }
   | { kind: "add_contact"; name: string; handle: string }
-  | { kind: "ledger" }
+  | { kind: "ledger"; focus?: LedgerFocus }
   | { kind: "scam_check" }
+  /** "help", "what can you do", a greeting: show what the Money Elf does. */
+  | { kind: "help" }
+  /** Money the Elf won't touch: rent, a landlord, a bank, investing, taxes. */
+  | { kind: "cant"; what: string }
+  /** The ask is clear but one detail is missing ("split the truck", "pay Sam"): ask for it. */
+  | {
+      kind: "clarify";
+      topic: ClarifyTopic;
+      what?: string | null;
+      person?: string | null;
+      amountCents?: number | null;
+      names?: string[];
+    }
   /** The owner wants to correct or undo something already on the Ledger ("the truck was actually $260"). */
   | { kind: "fix" }
   | { kind: "other" };
@@ -139,6 +153,14 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
   )
     return { kind: "fix" };
 
+  if (
+    /^\s*(help|menu|commands|options|hi|hello|hey|yo|hiya)[\s!.?]*$/i.test(t) ||
+    /\b(what (can|do|could) (you|u) (do|help)|what do you do|what are you for|how does (this|it) work|what can i (ask|do|say))\b/i.test(
+      t,
+    )
+  )
+    return { kind: "help" };
+
   const depositPaid = /\b(paid|put down|sent|gave|left|put)\b/i.test(t) && !!amounts[0];
   const dueBack = /\b(due back|back by|returned by|refund(ed)? by|get it back|back on)\b/i.test(t);
   if (
@@ -148,6 +170,12 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     /\b(back|returned|refunded|got (it|the|my)|came back)\b/i.test(t)
   )
     return { kind: "deposit_returned", what: costLabel(t) };
+
+  if (/\b(split|divide|chip in|go halves|halfsies|share the cost)\b/i.test(t) && !amounts[0]) {
+    const listed =
+      t.match(/\b(?:with|between|among|amongst)\s+(.+?)(?:[.!?]|\bevenly\b|\bequally\b|$)/i)?.[1] ?? "";
+    return { kind: "clarify", topic: "split", what: costLabel(t), names: namesIn(listed) };
+  }
 
   if (/\b(split|divide|chip in|go halves|halfsies|share the cost)\b/i.test(t) && amounts[0]) {
     const what = costLabel(t) ?? "shared cost";
@@ -172,6 +200,14 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     return { kind: "split", amountCents: amounts[0], what, shares };
   }
 
+  if (
+    /\bdeposit\b/i.test(t) &&
+    !amounts[0] &&
+    /\b(i )?(paid|put down|sent|gave|left)\b/i.test(t) &&
+    !/\b(back|returned|refunded|came back)\b/i.test(t)
+  )
+    return { kind: "clarify", topic: "deposit_amount" };
+
   if (/\bdeposit\b/i.test(t) && amounts[0] && /\b(paid|put down|sent|gave|left|put)\b/i.test(t)) {
     const due = /\b(due back|back by|returned by|refund(ed)? by|get it back|back on)\b/i.test(t)
       ? parseDate(t, now)
@@ -182,9 +218,12 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
   if (
     /\b(fell through|bailed|no[- ]show(ed)?|backed out|flaked|didn'?t show|cancel(l)?ed (the )?(pickup|sale|order))\b/i.test(
       t,
-    )
+    ) ||
+    (/\brefund\b/i.test(t) && !/\bdeposit\b/i.test(t))
   )
     return { kind: "pickup_failed", item: itemWord(t) };
+  if (/\brelease\b[^.?!]{0,30}\b(escrow|money|payment|funds)\b|\bescrow\b[^.?!]{0,30}\brelease\b/i.test(t))
+    return { kind: "pickup_confirmed", item: itemWord(t) };
   if (
     /\b(picked (it |them )?up|pickup (is )?(done|complete)|came and got|collected it|handed (it|them) off)\b/i.test(
       t,
@@ -212,7 +251,10 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     };
   }
 
-  const pay = t.match(/^\s*(?:please\s+)?(?:pay|send|venmo|zelle)\s+([A-Z][a-z]+)\s+\$/i);
+  const PAY_LEAD = "^\\s*(?:please\\s+)?(?:(?:can|could|would) you\\s+)?(?:please\\s+)?(?:go ahead and\\s+)?";
+  const pay = t.match(
+    new RegExp(`${PAY_LEAD}(?:pay|send|venmo|zelle|cash ?app)\\s+([A-Z][a-z]+)\\s+\\$`, "i"),
+  );
   if (pay?.[1] && amounts[0] && !NOT_NAMES.has(pay[1].toLowerCase()))
     return {
       kind: "pay_person",
@@ -220,6 +262,27 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
       amountCents: amounts[0],
       what: costLabel(t) ?? "payment",
     };
+  const payName = t.match(
+    new RegExp(`${PAY_LEAD}(?:pay|send|venmo|zelle|cash ?app)\\s+([A-Z][a-z]+)\\s*[.!?]?\\s*$`, "i"),
+  );
+  if (payName?.[1] && !amounts[0] && !NOT_NAMES.has(payName[1].toLowerCase()))
+    return { kind: "clarify", topic: "pay_amount", person: cap(payName[1]) };
+  if (new RegExp(`${PAY_LEAD}(?:pay|send)\\s*(?:\\$\\s?\\d[\\d,.]*)?\\s*[.!?]?\\s*$`, "i").test(t))
+    return { kind: "clarify", topic: "pay_who", amountCents: amounts[0] ?? null };
+
+  if (
+    /\b(pay|send|wire|transfer|move)\b[^.?!]{0,40}\b(rent|landlord|mortgage|bank|bills?|credit card|insurance|tuition)\b/i.test(
+      t,
+    ) ||
+    /\b(withdraw|cash out|bank transfer|transfer (the |my )?(money|funds|balance)|wire (the |my )?money)\b/i.test(
+      t,
+    ) ||
+    /\b(invest|stocks?|crypto|bitcoin|taxes|tax return|irs)\b/i.test(t)
+  )
+    return { kind: "cant", what: cantWhat(t) };
+
+  const focus = ledgerFocus(t);
+  if (focus) return { kind: "ledger", focus };
 
   const paid = t.match(/\b([A-Z][a-z]+)\s+(?:already\s+|just\s+)?(?:paid|venmoed|zelled|sent)\b/);
   if (paid?.[1] && !NOT_NAMES.has(paid[1].toLowerCase()) && paid[1] !== "I")
@@ -235,6 +298,32 @@ export function parseRules(text: string, now: Date, roommates: string[] = []): I
     return { kind: "ledger" };
 
   return { kind: "other" };
+}
+
+/** A specific question about the money ("who owes me", "is anything in escrow"): what to lead the answer with. */
+function ledgerFocus(t: string): LedgerFocus | null {
+  if (
+    /\b(who owes|owes? me|hasn'?t paid|haven'?t paid|still owe|unpaid|how much do (they|i|we) owe|who('s| has) (not )?paid)\b/i.test(
+      t,
+    )
+  )
+    return "owed";
+  if (/\b(in escrow|escrow)\b/i.test(t) && /\b(is|are|what|anything|how much|any|show|list)\b/i.test(t))
+    return "escrow";
+  if (
+    /\b(how much (have|did|has) (i|we|it) (spen[dt]|cost|paid)|total cost|what did (it|this move|the move|everything) cost|spent so far|how much (have i|did i) spent)\b/i.test(
+      t,
+    )
+  )
+    return "spent";
+  if (
+    /\b(how much did (i|we) (make|earn|get|raise)|what did .{1,30} (bring|sell|go) (in|for)|sales so far|money from (sales|selling))\b/i.test(
+      t,
+    )
+  )
+    return "made";
+  if (/\b(balance|moving fund|how much (is|do i have|have i got) )\b/i.test(t)) return "balance";
+  return null;
 }
 
 function cap(s: string) {
@@ -374,6 +463,7 @@ export async function parseIntent(
       case "fix":
         return { kind: "fix" };
       case "ledger":
+        return rules.kind === "ledger" ? rules : { kind: "ledger" };
       case "scam_check":
         return { kind: r.kind };
       default:
