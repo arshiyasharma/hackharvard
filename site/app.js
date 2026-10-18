@@ -537,6 +537,20 @@
     li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : ""))); teamEl.appendChild(li);
   });
 
+  /* ---------- floating photos: pinned beside sections, drifting a little as you scroll ---------- */
+  var floaters = [];
+  (SITE.floatPhotos || []).forEach(function (p) {
+    var host = $(p.at); if (!host) return;
+    var f = el("figure", "float-photo"); f.setAttribute("style", p.css);
+    var im = new Image(); im.src = p.src; im.alt = p.alt || ""; im.loading = "lazy"; f.appendChild(im);
+    if (p.caption) f.appendChild(el("figcaption", null, esc(p.caption)));
+    host.appendChild(f); floaters.push(f);
+  });
+  if (floaters.length && !reduce) {
+    var fp = function () { floaters.forEach(function (f) { var r = f.parentNode.getBoundingClientRect(), k = parseFloat(f.style.getPropertyValue("--k")) || 0.05; f.style.setProperty("--py", ((innerHeight / 2 - (r.top + r.height / 2)) * k).toFixed(1) + "px"); }); };
+    window.addEventListener("scroll", fp, { passive: true }); fp();
+  }
+
   /* ---------- reveal ---------- */
   var rev = $$(".reveal");
   if ("IntersectionObserver" in window && !reduce) {
