@@ -239,7 +239,7 @@ export function ledgerCardSvg(v: LedgerView): string {
     if (!rows.length) return;
     parts.push(text(PAD + 4, y, title, 26, 600, C.ink));
     y += 24;
-    const rh = 104;
+    const rh = 100;
     parts.push(panel(PAD, y, inner, rh * rows.length, 32));
     rows.forEach((r, i) => {
       const top = y + i * rh;
@@ -252,39 +252,25 @@ export function ledgerCardSvg(v: LedgerView): string {
     y += rh * rows.length + 56;
   };
 
+  // Short on purpose: a name, one few-word note, the amount. The dashboard link has everything else.
   list(
     "Who owes you",
-    v.owes.slice(0, 4).map((o) => ({
+    v.owes.slice(0, 3).map((o) => ({
       left: o.name,
-      sub: o.loan
-        ? `Payment plan · ${fmtUsd(o.loan.paidCents)} of ${fmtUsd(o.loan.totalCents)} paid`
-        : "Payment request sent",
+      sub: o.loan ? `${fmtUsd(o.loan.paidCents)} of ${fmtUsd(o.loan.totalCents)} paid` : "Waiting on them",
       right: fmtUsd(o.owedCents),
     })),
   );
   list("Held and due back", [
-    ...v.escrow.slice(0, 2).map((e) => ({
-      left: `${e.item} sale`,
-      sub: `In escrow · paid by ${e.buyer}`,
-      right: fmtUsd(e.cents),
-    })),
-    ...v.deposits.slice(0, 2).map((d) => ({
+    ...v.escrow.slice(0, 2).map((e) => ({ left: e.item, sub: "In escrow", right: fmtUsd(e.cents) })),
+    ...v.deposits.slice(0, 1).map((d) => ({
       left: `${d.what} deposit`,
-      sub: d.dueBackAt ? `Due back ${fmtDate(d.dueBackAt)}` : "No due-back date yet",
+      sub: d.dueBackAt ? `Back ${fmtDate(d.dueBackAt)}` : "Date not set",
       right: fmtUsd(d.cents),
     })),
   ]);
-  list(
-    "Recent",
-    v.recent.slice(0, 4).map((a) => ({
-      left: a.label,
-      sub: `${a.account === "fund" ? "Moving Fund" : a.account === "escrow" ? "Escrow" : "Your account"} · ${fmtDate(a.date)}`,
-      right: `${a.direction === "in" ? "+" : "−"}${fmtUsd(a.amountCents)}`,
-      good: a.direction === "in",
-    })),
-  );
 
-  if (!v.owes.length && !v.escrow.length && !v.deposits.length && !v.recent.length) {
+  if (!v.owes.length && !v.escrow.length && !v.deposits.length) {
     parts.push(text(PAD, y + 10, "Nothing on the Ledger yet.", 32, 600, C.ink));
     y += 70;
   }
@@ -293,8 +279,8 @@ export function ledgerCardSvg(v: LedgerView): string {
     text(
       W / 2,
       y + 4,
-      `Read live from ${v.records} Nessie records · open the link for the dashboard`,
-      22,
+      "Everything else is in your dashboard link",
+      24,
       400,
       C.muted,
       "middle",
