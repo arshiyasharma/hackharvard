@@ -440,22 +440,31 @@
   var STEP_LABEL = { budget: "Budget", split: "Roommates", lastcall: "Last Call", engine: "Deal Engine", net: "Net cost", plan: "Smart Plan", coming: "Coming back", books: "The books" };
   function nessieOrdered(mods) { return STORY_ORDER.map(function (v) { return mods.filter(function (m) { return m.vis === v; })[0]; }).filter(Boolean).map(function (m) { m.label = STEP_LABEL[m.vis]; return m; }); }
   function stepperHTML(ordered) {
-    return { ordered: ordered, html: '<div class="stepper"><ol class="sp-rail" aria-label="The money story">' + ordered.map(function (m, i) { return '<li><button type="button" data-step="' + i + '"><i></i><span>' + esc(m.label) + "</span></button></li>"; }).join("") + '</ol><div class="sp-stage"><div class="sp-text" id="spText" aria-live="polite"></div><div class="sp-card" id="spCard"></div></div><div class="sp-nav"><button type="button" class="sp-btn" id="spPrev">Back</button><button type="button" class="sp-btn go" id="spNext">Next</button></div></div>' };
+    return { ordered: ordered, html: '<div class="stepper"><ol class="sp-rail" aria-label="The money story">' + ordered.map(function (m, i) { return '<li><button type="button" data-step="' + i + '"><i></i><span>' + esc(m.label) + "</span></button></li>"; }).join("") + '</ol><div class="sp-stage" id="spStage" aria-live="polite"></div><div class="sp-nav"><button type="button" class="sp-btn" id="spPrev">Back</button><button type="button" class="sp-btn go" id="spNext">Next</button></div></div>' };
   }
-  function wireStepper(ordered) {
-    var i = 0, text = $("#spText"), card = $("#spCard"), prev = $("#spPrev"), next = $("#spNext"), dots = $$(".sp-rail button");
+  function wireStepper(ordered, per) {
+    per = per || 1;
+    var i = 0, stageEl = $("#spStage"), prev = $("#spPrev"), next = $("#spNext"), dots = $$(".sp-rail button");
+    stageEl.classList.toggle("multi", per > 1);
+    function cell(m) {
+      var text = '<div class="sp-text"><h3 class="pain">' + esc(m.pain) + '</h3><p class="sol"><b>' + esc(m.t) + '</b></p><p class="sol2">' + esc(m.s) + "</p>" + (m.pts ? '<ul class="pts">' + m.pts.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>" : '<p class="more">' + esc(m.more) + "</p>") + (m.go ? '<button type="button" class="try" data-go="' + m.go + '">Try it live</button>' : "") + "</div>";
+      var card = '<div class="sp-card' + (m.dark ? " dark" : "") + '"><div class="vis">' + VIS[m.vis]() + "</div></div>";
+      return per > 1 ? '<article class="sp-one">' + text + card + "</article>" : text + card;
+    }
     function show(n) {
-      i = clamp(n, 0, ordered.length - 1); var m = ordered[i];
-      dots.forEach(function (d, k) { d.setAttribute("aria-current", String(k === i)); d.classList.toggle("past", k < i); });
-      text.innerHTML = '<h3 class="pain">' + esc(m.pain) + '</h3><p class="sol"><b>' + esc(m.t) + "</b></p><p class=\"sol2\">" + esc(m.s) + "</p>" + (m.pts ? '<ul class="pts">' + m.pts.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>" : '<p class="more">' + esc(m.more) + "</p>") + (m.go ? '<button type="button" class="try" data-go="' + m.go + '">Try it live</button>' : "");
-      card.className = "sp-card" + (m.dark ? " dark" : ""); card.innerHTML = '<div class="vis">' + VIS[m.vis]() + "</div>";
-      text.classList.remove("swap"); card.classList.remove("swap"); void text.offsetWidth; text.classList.add("swap"); card.classList.add("swap");
-      prev.disabled = i === 0; next.disabled = i === ordered.length - 1; next.textContent = i === ordered.length - 1 ? "That is the story" : "Next: " + ordered[i + 1].label;
-      var tb = $("[data-go]", text); if (tb) tb.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var t = $('#led [data-tab="' + tb.dataset.go + '"]'); if (t) setTimeout(function () { t.click(); }, reduce ? 0 : 450); });
+      i = clamp(Math.floor(n / per) * per, 0, Math.max(0, ordered.length - 1));
+      var group = ordered.slice(i, i + per);
+      dots.forEach(function (d, k) { d.setAttribute("aria-current", String(k >= i && k < i + per)); d.classList.toggle("past", k < i); });
+      stageEl.innerHTML = group.map(cell).join("");
+      stageEl.classList.remove("swap"); void stageEl.offsetWidth; stageEl.classList.add("swap");
+      prev.disabled = i === 0; next.disabled = i + per >= ordered.length;
+      var nx = ordered.slice(i + per, i + 2 * per);
+      next.textContent = nx.length ? "Next: " + nx.map(function (m) { return m.label; }).join(" + ") : "That is the story";
+      $$("[data-go]", stageEl).forEach(function (tb) { tb.addEventListener("click", function () { $("#ledger").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); var t = $('#led [data-tab="' + tb.dataset.go + '"]'); if (t) setTimeout(function () { t.click(); }, reduce ? 0 : 450); }); });
     }
     dots.forEach(function (d, k) { d.addEventListener("click", function () { show(k); }); });
-    prev.addEventListener("click", function () { show(i - 1); }); next.addEventListener("click", function () { show(i + 1); });
-    $("#track").addEventListener("keydown", function (e) { if (e.key === "ArrowRight") show(i + 1); if (e.key === "ArrowLeft") show(i - 1); });
+    prev.addEventListener("click", function () { show(i - per); }); next.addEventListener("click", function () { show(i + per); });
+    $("#track").addEventListener("keydown", function (e) { if (e.key === "ArrowRight") show(i + per); if (e.key === "ArrowLeft") show(i - per); });
     show(0);
   }
 
@@ -470,7 +479,7 @@
       '<p class="why-track"><small>Why ' + esc(t.name) + "</small>" + esc(t.why) + "</p>" +
       '<div class="track-actions"><button class="btn small primary" type="button" id="see">See it in the thread</button><ul class="apis" aria-label="What we used">' + t.apis.map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") + "</ul></div>" +
       (steps ? (stp = stepperHTML(steps)).html : '<div class="tiles">') + (steps ? [] : t.tiles).map(function (x) { return '<details class="tilex' + (x.own ? " ours" : "") + '"><summary><span class="k' + (x.own ? " own" : "") + '">' + esc(x.own ? "Built by us" : x.k) + '</span><span class="tt">' + esc(x.t) + '</span><span class="ss">' + esc(x.s) + '</span><span class="plus" aria-hidden="true"></span></summary><p class="more">' + esc(x.more) + "</p></details>"; }).join("") + (steps ? "" : "</div>");
-    if (stp) wireStepper(stp.ordered);
+    if (stp) wireStepper(stp.ordered, t.perPage || 1);
     $("#see").addEventListener("click", function () {
       started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
       setTimeout(function () { pickScene(t.scene); }, reduce ? 0 : 500);

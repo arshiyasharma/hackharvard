@@ -619,3 +619,5 @@ window.DEAL = {
   };
   P.story.forEach(function (s) { if (T[s.label]) s.pts = T[s.label]; });
 })();
+
+window.TRACKS.filter(function (t) { return t.id === "photon"; })[0].perPage = 2;

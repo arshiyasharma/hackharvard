@@ -829,3 +829,34 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 .track-panel.compact .sp-stage { min-height: 250px; gap: 22px; }
 .track-panel.compact .stepper { gap: 12px; }
 .track-panel.compact .why-track { font-size: clamp(1.2rem, 2.2vw, 1.7rem); }
+
+/* two steps at a time (Photon) */
+.sp-stage.swap { animation: arrive 0.45s var(--ease) both; }
+.sp-stage.multi { grid-template-columns: 1fr 1fr; gap: 14px; min-height: 0; align-items: start; }
+.sp-one { display: grid; gap: 12px; align-content: start; background: rgba(255, 255, 255, 0.6); border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 26px; padding: 18px 18px 16px; min-width: 0; }
+.sp-one .sp-text .pain { font-size: clamp(1.2rem, 2vw, 1.55rem); }
+.sp-one .sp-text .sol { font-size: 1.02rem; margin-top: 8px; } .sp-one .sp-text .sol2 { font-size: 0.9rem; }
+.sp-one .sp-text .pts { margin-top: 8px; gap: 4px; } .sp-one .sp-text .pts li { font-size: 0.88rem; line-height: 1.3; padding-left: 16px; } .sp-one .sp-text .pts li::before { width: 6px; height: 6px; top: 0.55em; }
+.sp-one .sp-card { padding: 14px; border-radius: 20px; align-content: center; min-height: 112px; }
+.sp-one .sp-card .vis { zoom: 0.92; }
+@media (max-width: 980px) { .sp-stage.multi { grid-template-columns: 1fr; } }
+/* fit the paired steps in one window */
+.track-panel.compact { position: relative; }
+.track-panel.compact .track-actions { position: absolute; right: clamp(18px, 2.6vw, 30px); top: clamp(18px, 2.6vw, 30px); margin: 0; }
+.track-panel.compact .why-track { margin-bottom: 14px; }
+.sp-one { gap: 8px; padding: 14px 16px 12px; }
+.sp-one .sp-text .sol2 { display: none; }
+.sp-one .sp-text .pain { font-size: clamp(1.1rem, 1.8vw, 1.4rem); }
+.sp-one .sp-text .sol { margin-top: 6px; font-size: 0.97rem; }
+.sp-one .sp-text .pts li { font-size: 0.85rem; }
+.sp-one .sp-card { padding: 10px; min-height: 84px; }
+.sp-one .sp-card .vis { zoom: 0.78; }
+.track-panel.compact .stepper { gap: 10px; }
+.track-panel.compact .sp-rail span { font-size: 11px; }
+.tracks .tracks-head { margin-bottom: 0; }
+#tracks { padding-top: 84px; }
+.track-panel { margin-top: 20px; }
+.sp-one .sp-card .vis { zoom: 0.68; }
+.sp-one .v-mem span { display: none; }
+.sp-one .v-chan small { display: none; }
+.sp-one .sp-card { min-height: 70px; padding: 8px; }
