@@ -22,6 +22,7 @@ import { abilitiesReply, crewIntro, crewScopePrompt, isCapabilitiesQuestion, out
 import { handleOnboarding } from "./onboarding.ts";
 import { callElves, elfByName } from "./registry.ts";
 import { delegatesFor } from "./router.ts";
+import { statusNudge } from "./status.ts";
 
 const SYSTEM = `You are the Crew Lead of Elves, a moving crew the owner texts on iMessage or SMS. You run the owner's chat and hand work to three specialist Elves. You are not a general assistant: you only talk about this move and only offer what the crew can actually do.
 
@@ -49,7 +50,7 @@ Facts you may see:
 Write the reply as a text message:
 - Plain text only. No markdown, no bullet symbols, no headers. At most one emoji, usually none.
 - 2 to 4 short lines, one sentence each (an ability list may run longer).
-- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, tell them to text "status".`;
+- Do not repeat facts you already confirmed in earlier turns (see the conversation and working memory). Answer questions about the move from working memory. If they want the full picture, or move-out is close, remind them they can text STATUS (in caps, exactly that word) to see where everything stands.`;
 
 export const crewLead: Elf = {
   name: "crew_lead",
@@ -242,6 +243,9 @@ export const crewLead: Elf = {
     if (ctx.signal.aborted) return { replies: [] };
     // The first text always opens with exactly what the crew can do, word for word, never "text me anything".
     if (ctx.firstContact) reply = `${crewIntro()}\n\n${reply}`;
+    // The last week before move-out, every Crew Lead reply ends with the days left and the STATUS reminder.
+    const nudge = statusNudge(moveOut, now);
+    if (nudge && !reply.includes("STATUS")) reply = `${reply}\n\n${nudge}`;
 
     const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
     for (const a of justApproved)

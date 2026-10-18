@@ -156,8 +156,8 @@ describe("service end to end (script transport)", () => {
     const move = (await store.listMoves())[0]!;
     await store.updateMove(move.id, { moveInAt: "2026-11-03", toAddress: "12 Elm St" });
     const status = await say("status");
-    expect(status).toStartWith("You're moving out Nov 1 and in Nov 3 at 12 Elm St.");
-    expect(status).toContain("Checklist: Electric: set up by Oct 24");
+    expect(status).toStartWith("📋 STATUS\n\n🗓 Dates\nOut Nov 1\nIn Nov 3 at 12 Elm St");
+    expect(status).toContain("  • Electric: set up by Oct 24");
     stop();
   });
 
@@ -198,7 +198,7 @@ describe("service end to end (script transport)", () => {
     expect((await store.getMove(move.id))?.moveInAt).toBe("2026-11-03");
     expect((await store.getMove(move.id))?.toAddress).toBe("12 Elm St");
     // the Crew Lead reads the same move row
-    expect(await say("status")).toStartWith("You're moving out Nov 1 and in Nov 3 at 12 Elm St.");
+    expect(await say("status")).toStartWith("📋 STATUS\n\n🗓 Dates\nOut Nov 1\nIn Nov 3 at 12 Elm St");
 
     // Stuff books a pickup (the engine's doing); Home's "what's left" shows it
     const couch = await store.upsertItem({

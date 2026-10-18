@@ -7,6 +7,7 @@ import {
   isCapabilitiesQuestion,
   isStatusAsk,
   outOfScope,
+  statusNudge,
   statusReport,
 } from "@elves/elves";
 import { openDeal } from "@elves/engine";
@@ -58,7 +59,11 @@ describe("statusReport", () => {
     const store = new MemoryStore();
     const move = await store.createMove({ ownerHandle: "+1", ownerSpaceId: "s1", platform: "imessage" });
     expect(await statusReport(store, move)).toBe(
-      "No move dates yet. Checklist: starts once I have your move-in date.",
+      [
+        "📋 STATUS",
+        "🗓 Dates\nNo move dates yet.",
+        "🏠 Home\nChecklist: starts once I have your move-in date.",
+      ].join("\n\n"),
     );
   });
 
@@ -114,11 +119,21 @@ describe("statusReport", () => {
     expect(party.status).toBe("awaiting_owner");
 
     const s = await statusReport(store, move);
-    expect(s).toStartWith("You're moving out Nov 1 of Allston and in Nov 3 at 12 Elm St.");
-    expect(s).toContain("Checklist: Keys: pick up on Nov 3; done: Internet.");
-    expect(s).toContain("Stuff: listed couch; sold desk.");
-    expect(s).toContain("Ledger: $60 held in escrow.");
-    expect(s).toContain("Waiting on your yes: a viewing Fri 6pm for the room.");
-    expect(s).not.toContain("\n");
+    expect(s).toStartWith("📋 STATUS\n\n🗓 Dates\nOut Nov 1 from Allston\nIn Nov 3 at 12 Elm St\n\n🏠 Home\n");
+    expect(s).toContain("Checklist: 1 to go\n  • Keys: pick up on Nov 3\n  ✅ Done: Internet");
+    expect(s).toContain("📦 Stuff\nListed: couch\nSold: desk");
+    expect(s).toContain("💸 Money\n$60 held in escrow");
+    expect(s).toContain("⏳ Waiting on your yes\nA viewing Fri 6pm for the room: reply yes or no");
+    // sections are separated by a blank line, and headings carry the emoji
+    expect(s.split("\n\n").length).toBe(6);
+    // the nudge: nothing until the last week, then the days left and the STATUS line
+    expect(statusNudge("2026-11-01", new Date("2026-10-20T12:00:00Z"))).toBeNull();
+    expect(statusNudge("2026-11-01", new Date("2026-10-27T12:00:00Z"))).toBe(
+      "5 days to move-out. Text STATUS anytime to see where everything stands.",
+    );
+    expect(statusNudge("2026-11-01", new Date("2026-11-01T12:00:00Z"))).toStartWith("Move-out is today.");
+    expect(statusNudge("2026-11-01", new Date("2026-11-02T12:00:00Z"))).toBeNull();
+    expect(statusNudge(null, new Date())).toBeNull();
+    expect(crewIntro()).toEndWith("Text STATUS anytime to see where everything stands.");
   });
 });

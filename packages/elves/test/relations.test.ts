@@ -58,7 +58,7 @@ describe("relationships between Elves", () => {
     await store.upsertDeal({ ...deal, state: "scheduled", slot, agreedCents: 7000 });
     expect(await bookedPickups(store, move)).toEqual(["couch Fri 6pm"]);
     const s = await statusReport(store, move);
-    expect(s).toContain("pickups booked: couch Fri 6pm");
+    expect(s).toContain("Pickups booked: couch Fri 6pm");
     expect(s).not.toContain("Move Report");
 
     await store.upsertItem({

@@ -13,7 +13,7 @@ import {
 import { z } from "zod";
 import { batchText, type ElfContext, type ElfResult, lastMessageId, memoryPreamble } from "./contract.ts";
 import { DEFAULT_WEIGHT_LB, formatDate } from "./facts.ts";
-import { crewIntro, crewScopePrompt } from "./crew.ts";
+import { crewIntro, crewScopePrompt, STATUS_HINT } from "./crew.ts";
 import { describeItem, identifyFromPhotos } from "./intake.ts";
 
 /**
@@ -531,6 +531,7 @@ export async function dispatchBrief(
     dispatches.some((d) => d.elf === "stuff")
       ? "Photos of anything you're selling, and the lowest you'd take, whenever you're ready."
       : "Text me anything that changes.",
+    STATUS_HINT,
   );
   const replies: ElfResult["replies"] = [{ text: lines.join("\n"), parentMessageId: parent }];
   if (ctx.publicUrl && !ctx.move.boardLinkSent) {

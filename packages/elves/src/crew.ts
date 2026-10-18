@@ -1,5 +1,8 @@
 import type { ElfName } from "@elves/shared";
 
+/** The one line every reminder uses, so the owner learns the word once. Also exported from status.ts. */
+export const STATUS_HINT = "Text STATUS anytime to see where everything stands.";
+
 /**
  * What the crew can and cannot do: the one list the Crew Lead's text prompt, its first message, the onboarding
  * call and the Retell voice prompt all read, so the owner hears the same abilities everywhere and anything off
@@ -106,12 +109,13 @@ export function crewIntro(): string {
     "Hey, I'm the Crew Lead at Elves, your moving crew. Here's what we can do:",
     abilitiesText(),
     limitsSentence(),
+    STATUS_HINT,
   ].join("\n");
 }
 
 /** The answer to "what can you do?". */
 export function abilitiesReply(): string {
-  return ["Here's what the crew can do:", abilitiesText(), limitsSentence()].join("\n");
+  return ["Here's what the crew can do:", abilitiesText(), limitsSentence(), STATUS_HINT].join("\n");
 }
 
 /** The ability list and the limits, as a prompt block every Crew Lead prompt shares. */
