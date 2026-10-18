@@ -11,6 +11,9 @@
  *                                          pending money move in the dashboard (decision #62)
  *
  * The page names who owes what, so links are signed: t = HMAC-SHA256(secret, moveId), truncated.
+ *
+ * Links never expire: the token is a function of the secret and the move only, with no timestamp, so the demo-day
+ * link works as long as LEDGER_LINK_SECRET is unchanged. Rotating the secret is the only way to revoke them.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { renderLedgerPng, renderLedgerPreviewPng } from "./ledger-card.ts";

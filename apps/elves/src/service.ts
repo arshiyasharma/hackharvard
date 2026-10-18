@@ -45,6 +45,21 @@ export interface ServiceDeps {
   } | null;
   /** Event types after which the owner's mini app card is refreshed (the Money Elf's LEDGER_CHANGING_EVENTS). */
   refreshCardOn?: ReadonlySet<string>;
+  /**
+   * The Stuff and Home Elves' Deal Engine events (an agreed price, a booked pickup, a hand-off, a walk) become the
+   * Money Elf's own questions and records. Returns the texts to send as the Money Elf, and the events to record.
+   */
+  onEvents?: (
+    move: Move,
+    events: { type: string; payload: Record<string, unknown> }[],
+  ) => Promise<{ notes: ElfOutbound[]; events: { type: string; payload: Record<string, unknown> }[] }>;
+  /** The periodic sweep's Money work: a refund question for a buyer who never picked up. */
+  onSweep?: () => Promise<
+    {
+      move: Move;
+      result: { notes: ElfOutbound[]; events: { type: string; payload: Record<string, unknown> }[] };
+    }[]
+  >;
   llm: LLM;
   elves?: Elf[];
   /** Conversational memory (transcript, facts, summaries); null disables it. */
@@ -507,6 +522,26 @@ export function createService(deps: ServiceDeps): Service {
       touched.add(`${move.id}:${elfName}`);
       sent++;
     }
+    if (deps.onSweep) {
+      try {
+        let i = 0;
+        for (const { move, result } of await deps.onSweep()) {
+          for (const ev of result.events)
+            await deps.store.appendEvent({
+              moveId: move.id,
+              type: ev.type,
+              payload: { ...ev.payload, elf: "money" },
+              traceId: null,
+            });
+          for (const note of result.notes) {
+            await deliverTo(move, "money", note, sendKey("msweep", now().toISOString(), i++), null);
+            sent++;
+          }
+        }
+      } catch (err) {
+        log.error("money sweep failed", { error: String(err) });
+      }
+    }
     for (const t of touched) {
       const [moveId, elfName] = t.split(":") as [string, ElfName];
       const board = await dealBoard(deps.store, moveId, ["sell_item", "buy_item"]);
@@ -846,6 +881,27 @@ export function createService(deps: ServiceDeps): Service {
       });
     }
     let notes = await sendOutbound(result.outbound ?? [], 0);
+    // What the Stuff and Home Elves just agreed becomes the Money Elf's question, in the owner's chat, after theirs.
+    if (deps.onEvents && result.events?.length) {
+      try {
+        const m = await deps.onEvents(move, result.events);
+        for (const ev of m.events)
+          await deps.store.appendEvent({
+            moveId: move.id,
+            type: ev.type,
+            payload: { ...ev.payload, elf: "money" },
+            traceId,
+          });
+        for (const note of m.notes) {
+          await deliverTo(move, "money", note, sendKey("note", last.id, notes++), traceId);
+        }
+        if (m.events.some((e) => deps.refreshCardOn?.has(e.type)))
+          await deps.miniApps?.refresh?.(move.ownerHandle).catch(() => {});
+      } catch (err) {
+        counters.failures++;
+        log.error("money bridge failed", { traceId, error: String(err) });
+      }
+    }
 
     // Slow follow-up work (a housing search) runs after the ack is out.
     if (result.later) {

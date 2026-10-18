@@ -5,6 +5,7 @@ import {
   createLedgerHandler,
   LEDGER_CHANGING_EVENTS,
   moneyElfFromEnv,
+  PostgresMoneyStore,
   SpectrumMiniApps,
 } from "@elves/money-elf";
 import { Photon2Transport, PhotonClient, ScriptTransport, type Transport } from "@elves/photon";
@@ -12,6 +13,7 @@ import { createLogger } from "@elves/shared";
 import { handleRetellWebhook } from "@elves/voice";
 import { openMemory, openStore } from "./boot.ts";
 import { loadConfig } from "./config.ts";
+import { createMoneyBridge } from "./money-bridge.ts";
 import { createServer } from "./server.ts";
 import { createService } from "./service.ts";
 
@@ -44,9 +46,15 @@ if (config.transport === "script") {
 }
 
 // The Money Elf replaces the canned "money" stub: Nessie ledger, splits, loans, escrow, the Ledger card.
-const money = moneyElfFromEnv(process.env);
+// Its own state (people, entries, approvals waiting on the owner) is in Postgres when the crew store is, so a
+// restart doesn't lose an owner's pending yes; Nessie stays the record of money moved.
+const money = moneyElfFromEnv(process.env, {
+  store: opened.db ? new PostgresMoneyStore(opened.db) : undefined,
+});
 const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
 const elves = allElves.map((e) => (e.name === "money" ? moneyElf : e));
+// The Stuff and Home Elves' agreed prices, booked pickups, hand-offs and walks become the Money Elf's escrow flow.
+const bridge = createMoneyBridge({ store, service: money.service });
 const ledgerSecret = process.env.LEDGER_LINK_SECRET?.trim();
 // The Moving Ledger dashboard as an iMessage mini app card, sent from the Spectrum (Photon 1.0) project when configured.
 const miniApps = await SpectrumMiniApps.fromEnv(process.env, createLogger("spectrum")).catch((err) => {
@@ -99,6 +107,8 @@ const service = createService({
   transport,
   miniApps,
   refreshCardOn: LEDGER_CHANGING_EVENTS,
+  onEvents: (move, events) => bridge.onEvents(move, events),
+  onSweep: () => bridge.sweep(),
   elves,
   llm,
   memory,

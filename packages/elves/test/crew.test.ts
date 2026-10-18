@@ -128,7 +128,10 @@ describe("statusReport", () => {
     expect(s).toStartWith("📋 STATUS\n\n🗓 Dates\nOut Nov 1 from Allston\nIn Nov 3 at 12 Elm St\n\n🏠 Home\n");
     expect(s).toContain("Checklist: 1 to go\n  • Keys: pick up on Nov 3\n  ✅ Done: Internet");
     expect(s).toContain("📦 Stuff\nListed: couch\nSold: desk");
-    expect(s).toContain("💸 Money\n$60 held in escrow");
+    expect(s).toContain("💸 Money\n$60 agreed, not in escrow yet");
+    // once the Money Elf keeps the Ledger, STATUS shows its line, read back from Nessie
+    await store.patchBoard(move.id, "money", { lastUpdate: "Ledger: $60 in escrow, $30 from sales" });
+    expect(await statusReport(store, move)).toContain("💸 Money\n$60 in escrow, $30 from sales");
     expect(s).toContain("⏳ Waiting on your yes\nA viewing Fri 6pm for the room: reply yes or no");
     // sections are separated by a blank line, and headings carry the emoji
     expect(s.split("\n\n").length).toBe(6);

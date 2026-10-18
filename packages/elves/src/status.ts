@@ -104,24 +104,30 @@ export async function statusReport(store: Store, move: Move): Promise<string> {
     if (stuff.length) sections.push(section("📦 Stuff", stuff));
   }
 
-  // 💸 Money: what the engine has put on the ledger.
-  let held = 0;
-  let released = 0;
-  for (const e of await store.listEvents(move.id)) {
-    const cents = Number((e.payload as { cents?: unknown }).cents ?? 0) || 0;
-    if (e.type === "ledger.hold") held += cents;
-    else if (e.type === "ledger.refund") held -= cents;
-    else if (e.type === "ledger.release") {
-      held -= cents;
-      released += cents;
+  // 💸 Money: the Money Elf's own Ledger line when it has one (read back from Nessie, so it only counts money that
+  // actually moved after the owner's yes); otherwise what the Deal Engine has agreed so far.
+  const moneyRow = (await store.getBoard(move.id)).find((r) => r.elf === "money");
+  const ledgerLine = /^Ledger: (.+)$/.exec(moneyRow?.lastUpdate ?? "")?.[1];
+  if (ledgerLine) sections.push(section("💸 Money", [ledgerLine]));
+  else {
+    let held = 0;
+    let released = 0;
+    for (const e of await store.listEvents(move.id)) {
+      const cents = Number((e.payload as { cents?: unknown }).cents ?? 0) || 0;
+      if (e.type === "ledger.hold") held += cents;
+      else if (e.type === "ledger.refund") held -= cents;
+      else if (e.type === "ledger.release") {
+        held -= cents;
+        released += cents;
+      }
     }
+    if (held > 0 || released > 0)
+      sections.push(
+        section("💸 Money", [
+          `${usd(Math.max(0, held))} agreed, not in escrow yet${released > 0 ? `, ${usd(released)} handed off` : ""}`,
+        ]),
+      );
   }
-  if (held > 0 || released > 0)
-    sections.push(
-      section("💸 Money", [
-        `${usd(Math.max(0, held))} held in escrow${released > 0 ? `, ${usd(released)} released to you` : ""}`,
-      ]),
-    );
 
   // ⏳ Anything waiting on the owner.
   const asks = (await pendingOwnerAsks(store, move.id)).map(({ deal, party }) =>

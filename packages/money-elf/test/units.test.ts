@@ -258,3 +258,22 @@ describe("ledger totals", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("ledger links never expire", () => {
+  test("the token depends on the secret and the move only, so the same link works on any day", async () => {
+    const { ledgerToken, ledgerUrl } = await import("../src/ledger-http.ts");
+    const links = { publicUrl: "https://elves.example", secret: "demo-secret" };
+    const first = ledgerUrl(links, "mv_demo");
+    const realNow = Date.now;
+    try {
+      Date.now = () => realNow() + 400 * 86_400_000; // more than a year later
+      expect(ledgerUrl(links, "mv_demo")).toBe(first);
+    } finally {
+      Date.now = realNow;
+    }
+    expect(first).not.toMatch(/[?&](exp|expires|e)=/);
+    expect(ledgerToken("demo-secret", "mv_demo")).toBe(ledgerToken("demo-secret", "mv_demo"));
+    expect(ledgerToken("demo-secret", "mv_demo")).not.toBe(ledgerToken("other-secret", "mv_demo"));
+    expect(ledgerToken("demo-secret", "mv_demo")).not.toBe(ledgerToken("demo-secret", "mv_other"));
+  });
+});

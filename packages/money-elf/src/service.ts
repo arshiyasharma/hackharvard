@@ -90,7 +90,7 @@ export class MoneyService {
     return (await this.store.listPeople(moveId)).filter((p) => p.role === "roommate");
   }
 
-  /** The person's simulated bank account, opened on first use. */
+  /** The person's bank account, opened on first use. */
   async account(p: Person): Promise<string> {
     if (p.nessieAccountId) return p.nessieAccountId;
     const [first, ...rest] = p.name.split(/\s+/);
@@ -610,6 +610,9 @@ export class MoneyService {
       amountCents: number;
       /** When the buyer is due to pick up (ISO), for the 24h no-show rule. */
       pickupAt?: string | null;
+      /** The Deal Engine deal and counterparty behind the sale, so its hand-off or walk finds this escrow. */
+      dealId?: string | null;
+      partyId?: string | null;
     },
   ): Promise<OpResult & { entry: LedgerEntry }> {
     const out = empty();
@@ -626,6 +629,8 @@ export class MoneyService {
       status: "pending",
       escrow: "held",
       pickupAt: input.pickupAt ?? null,
+      dealId: input.dealId ?? null,
+      partyId: input.partyId ?? null,
     });
     entry = await this.movement(
       entry,
@@ -650,6 +655,80 @@ export class MoneyService {
         text: `Your ${fmtUsd(entry.amountCents)} for the ${input.item} is held in escrow. Text "got it" here once you've picked it up.`,
       });
     return { ...out, entry };
+  }
+
+  /**
+   * The Deal Engine agreed a price with someone who pays the owner (a buyer, a sublet applicant): ask the owner
+   * to open escrow. Nothing moves until their yes; then `openEscrow` holds the payment until pickup.
+   */
+  async proposeOpenEscrow(
+    move: MoneyMove,
+    input: {
+      item: string;
+      buyerName: string;
+      buyerHandle: string | null;
+      amountCents: number;
+      dealId: string;
+      partyId: string;
+      pickupAt?: string | null;
+    },
+  ): Promise<OpResult> {
+    const out = empty();
+    // One open question per deal and buyer: a newer agreed price replaces it.
+    for (const a of await this.store.listPending(move.id))
+      if (a.kind === "open_escrow" && a.data?.dealId === input.dealId && a.data?.partyId === input.partyId)
+        await this.store.removePending(a.id);
+    const summary = `hold ${input.buyerName}'s ${fmtUsd(input.amountCents)} for the ${input.item} in escrow`;
+    const pending = await this.store.addPending({
+      moveId: move.id,
+      kind: "open_escrow",
+      summary,
+      entryIds: [],
+      data: {
+        item: input.item,
+        buyerName: input.buyerName,
+        buyerHandle: input.buyerHandle ?? "",
+        amountCents: input.amountCents,
+        dealId: input.dealId,
+        partyId: input.partyId,
+        pickupAt: input.pickupAt ?? "",
+      },
+    });
+    out.events.push({ type: "approval.requested", payload: { pendingId: pending.id, kind: pending.kind } });
+    out.lines.push(
+      `${input.buyerName} agreed to ${fmtUsd(input.amountCents)} for the ${input.item}.`,
+      "Hold their payment in escrow until pickup? Reply yes.",
+    );
+    return out;
+  }
+
+  /** Update the pickup time on whatever the deal has: the waiting question, or the escrow once it is open. */
+  async pickupScheduled(move: MoneyMove, dealId: string, partyId: string, pickupAt: string): Promise<void> {
+    for (const a of await this.store.listPending(move.id))
+      if (a.kind === "open_escrow" && a.data?.dealId === dealId && a.data?.partyId === partyId)
+        await this.store.updatePending(a.id, { data: { ...a.data, pickupAt } });
+    const e = (await this.store.listEntries(move.id)).find(
+      (x) => x.dealId === dealId && x.partyId === partyId && x.kind === "sale" && x.escrow === "held",
+    );
+    if (e) await this.setPickupTime(move, e.id, pickupAt);
+  }
+
+  /** The sale a deal's counterparty is paying into, while it is still in escrow. */
+  async heldForDeal(moveId: string, dealId: string, partyId: string): Promise<LedgerEntry | undefined> {
+    return (await this.store.listEntries(moveId)).find(
+      (x) => x.dealId === dealId && x.partyId === partyId && x.kind === "sale" && x.escrow === "held",
+    );
+  }
+
+  /** The deal's counterparty walked: drop a question still waiting to open their escrow. True if there was one. */
+  async dropOpenEscrow(moveId: string, dealId: string, partyId: string): Promise<boolean> {
+    let dropped = false;
+    for (const a of await this.store.listPending(moveId))
+      if (a.kind === "open_escrow" && a.data?.dealId === dealId && a.data?.partyId === partyId) {
+        await this.store.removePending(a.id);
+        dropped = true;
+      }
+    return dropped;
   }
 
   private async heldSale(moveId: string, item: string | null): Promise<LedgerEntry[]> {
@@ -931,11 +1010,11 @@ export class MoneyService {
 
   async proposePay(
     move: MoneyMove,
-    input: { person: string; amountCents: number; what: string; flagged: boolean },
+    input: { person: string; amountCents: number; what: string; flagged: boolean; role?: Role },
   ): Promise<OpResult> {
     const out = empty();
     const owner = await this.owner(move);
-    const to = await this.person(move.id, input.person, "roommate");
+    const to = await this.person(move.id, input.person, input.role ?? "roommate");
     const entry = await this.store.addEntry({
       moveId: move.id,
       date: this.today(),
@@ -1027,6 +1106,26 @@ export class MoneyService {
         case "send_split_requests":
           r = await this.executeSplitRequests(move, action, reach);
           break;
+        case "open_escrow": {
+          const d = action.data ?? {};
+          const opened = await this.openEscrow(move, {
+            item: String(d.item ?? "item"),
+            buyerName: String(d.buyerName ?? "Buyer"),
+            buyerHandle: d.buyerHandle ? String(d.buyerHandle) : null,
+            amountCents: Number(d.amountCents ?? 0),
+            pickupAt: d.pickupAt ? String(d.pickupAt) : null,
+            dealId: d.dealId ? String(d.dealId) : null,
+            partyId: d.partyId ? String(d.partyId) : null,
+          });
+          r = {
+            lines: [
+              `Done: ${fmtUsd(opened.entry.amountCents)} for the ${opened.entry.what} is held in escrow.`,
+            ],
+            events: opened.events,
+            outbound: opened.outbound.filter((o) => o.toHandle !== move.ownerHandle),
+          };
+          break;
+        }
         case "release_escrow":
         case "refund_escrow":
           r = await this.executeEscrow(move, action);

@@ -7,13 +7,14 @@ export * from "./ledger-page.ts";
 export * from "./ledger-view.ts";
 export * from "./money-elf.ts";
 export * from "./parse.ts";
+export * from "./pg-store.ts";
 export * from "./rails.ts";
 export * from "./scam.ts";
 export * from "./service.ts";
 export * from "./spectrum.ts";
 export * from "./types.ts";
 
-import { MemoryMoneyStore } from "./ledger.ts";
+import { MemoryMoneyStore, type MoneyStore } from "./ledger.ts";
 import { createMoneyElf } from "./money-elf.ts";
 import { FakeRails, type MoneyRails, NessieRails } from "./rails.ts";
 
@@ -27,11 +28,14 @@ export function railsFromEnv(env: Record<string, string | undefined> = process.e
  * A ready Money Elf for the service: in-memory Ledger (like the rest of the store today), money rails from env,
  * and live Ledger links when PUBLIC_URL and LEDGER_LINK_SECRET are both set.
  */
-export function moneyElfFromEnv(env: Record<string, string | undefined> = process.env) {
+export function moneyElfFromEnv(
+  env: Record<string, string | undefined> = process.env,
+  opts: { store?: MoneyStore } = {},
+) {
   const publicUrl = env.PUBLIC_URL;
   const secret = env.LEDGER_LINK_SECRET;
   return createMoneyElf({
-    store: new MemoryMoneyStore(),
+    store: opts.store ?? new MemoryMoneyStore(),
     rails: railsFromEnv(env),
     links: publicUrl && secret ? { publicUrl, secret } : undefined,
   });

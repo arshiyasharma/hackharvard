@@ -1,6 +1,6 @@
 /**
  * Money rails (SPEC §4 `MoneyRails`): where the Money Elf records money. Nessie (Capital One's hackathon bank
- * API) is the simulated rail for now, with an in-memory fake for tests, so Stripe Connect can be swapped in later.
+ * API) is the rail for now, with an in-memory fake for tests, so Stripe Connect can be swapped in later.
  *
  * Verified live on Oct 17 2026 (see money-elf-decisions.md #9): withdrawals, deposits and purchases are stored
  * but do not change balances, and transfers cannot name a payee. So a movement from A to B is recorded as a
@@ -22,9 +22,9 @@ export interface OpenAccountInput {
 }
 
 export interface MoveMoneyInput {
-  /** null = money arriving from outside the simulated bank. */
+  /** null = money arriving from outside the bank. */
   fromAccountId: string | null;
-  /** null = money leaving the simulated bank. */
+  /** null = money leaving the bank. */
   toAccountId: string | null;
   amountCents: number;
   description: string;
@@ -122,7 +122,7 @@ export interface NessieOptions {
   timeoutMs?: number;
 }
 
-/** Placeholder address for simulated customers; Nessie requires one and the owner's real address never goes there. */
+/** Placeholder address for the customers Elves opens; Nessie requires one and the owner's real address never goes there. */
 const SIM_ADDRESS = {
   street_number: "1",
   street_name: "Elves Way",

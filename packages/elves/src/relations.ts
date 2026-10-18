@@ -63,16 +63,16 @@ export const ELF_RELATIONS: ElfRelation[] = [
   {
     from: "home",
     to: "money",
-    what: "An agreed sublet and its rent, for the contract and deposit escrow",
-    carrier: "events deal.agreed + ledger.hold (sublet_out)",
-    readBy: "not read yet: Money is a stub",
+    what: "An agreed sublet: the first month is held in escrow after the owner's yes and released at the key hand-off; a rental the owner pays for becomes a payment question",
+    carrier: "events ledger.hold / ledger.release / ledger.refund (sublet_out, find_sublet)",
+    readBy: "apps/elves/src/money-bridge.ts → MoneyService",
   },
   {
     from: "stuff",
     to: "money",
-    what: "Escrow holds, releases and refunds on each sale",
-    carrier: "events ledger.hold / ledger.release / ledger.refund / escrow.requested",
-    readBy: "status.ts (ledger line); Money itself is a stub",
+    what: "Each agreed sale: escrow opened after the owner's yes, the pickup time, the release into the Moving Fund, and a refund if the buyer walks",
+    carrier: "events ledger.hold / pickup.scheduled / ledger.release / ledger.refund",
+    readBy: "apps/elves/src/money-bridge.ts → MoneyService; status.ts reads the Money row",
   },
 ];
 

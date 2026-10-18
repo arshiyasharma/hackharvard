@@ -41,6 +41,9 @@ export interface LedgerEntry {
   pickupAt: string | null;
   /** Sales only: when the no-show sweep asked the owner about a refund, so it asks once. */
   noShowAt: string | null;
+  /** The Deal Engine deal and counterparty this sale came from, so a hand-off or a walk finds its escrow. */
+  dealId: string | null;
+  partyId: string | null;
   /** Deposits only: YYYY-MM-DD the deposit is due back. */
   dueBackAt: string | null;
   /** Split rows share the id of the expense they split. */
@@ -73,6 +76,7 @@ export interface Person {
 }
 
 export type PendingKind =
+  | "open_escrow"
   | "send_split_requests"
   | "release_escrow"
   | "refund_escrow"
@@ -109,6 +113,8 @@ export interface MoneyStore {
   listPending(moveId: string): Promise<PendingAction[]>;
   addPending(input: Omit<PendingAction, "id" | "createdAt">): Promise<PendingAction>;
   removePending(id: string): Promise<void>;
+  /** Change a waiting action's terms (a pickup time that arrives after the question was asked). */
+  updatePending(id: string, patch: Partial<Pick<PendingAction, "summary" | "data">>): Promise<PendingAction>;
 
   getEscrowAccount(moveId: string): Promise<string | undefined>;
   setEscrowAccount(moveId: string, accountId: string): Promise<void>;
@@ -153,6 +159,8 @@ export class MemoryMoneyStore implements MoneyStore {
       mapConvergedAt: null,
       pickupAt: null,
       noShowAt: null,
+      dealId: null,
+      partyId: null,
       dueBackAt: null,
       groupId: null,
       requested: false,
@@ -213,6 +221,13 @@ export class MemoryMoneyStore implements MoneyStore {
   }
   async removePending(id: string) {
     this.pending.delete(id);
+  }
+  async updatePending(id: string, patch: Partial<Pick<PendingAction, "summary" | "data">>) {
+    const a = this.pending.get(id);
+    if (!a) throw new Error(`pending action ${id} not found`);
+    const next = { ...a, ...patch };
+    this.pending.set(id, next);
+    return next;
   }
 
   async getEscrowAccount(moveId: string) {
