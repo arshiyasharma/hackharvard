@@ -136,6 +136,14 @@ export function isApproval(text: string): boolean {
   return APPROVAL.test(text) && !DECLINE.test(text);
 }
 
+/** "what's the ref code", "tell me the code for the buyer", "did you make a ref yet": the owner wants the code. */
+export const REF_ASK = /\b(ref(?:erence)?(?:\s*code)?|the code|a code|listing code|post line)\b/i;
+
+/** Anything that should end with the item listed and its ref code in the owner's hands. */
+export function wantsListing(text: string): boolean {
+  return isApproval(text) || (REF_ASK.test(text) && !DECLINE.test(text));
+}
+
 /** An approved item and the sell deal it opened: buyers quote `dealCode` in their first text. */
 export type ApprovedItem = Item & { dealId: string; dealCode: string };
 

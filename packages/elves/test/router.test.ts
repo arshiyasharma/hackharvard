@@ -151,6 +151,10 @@ describe("route()", () => {
     const opts = { firstContact: false, moveId: move.id };
     expect(await route(batchOf("list it"), d, opts)).toMatchObject({ elf: "stuff", via: "deal" });
     expect(await route(batchOf("yes"), d, opts)).toMatchObject({ elf: "stuff", via: "deal" });
+    expect(await route(batchOf("what ref code do i tell the buyer"), d, opts)).toMatchObject({
+      elf: "stuff",
+      via: "deal",
+    });
     // nothing waiting: a bare yes is not Stuff's
     const none = await fresh.createMove({ ownerHandle: "+2", ownerSpaceId: "s2", platform: "script" });
     expect((await route(batchOf("list it"), d, { firstContact: false, moveId: none.id })).via).not.toBe(

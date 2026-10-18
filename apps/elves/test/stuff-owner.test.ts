@@ -89,6 +89,32 @@ describe("Stuff Elf owner side through the service", () => {
     b.stop();
   });
 
+  test("asking for the ref code lists the item and hands it over; asking again reads it back", async () => {
+    const b = boot();
+    await b.say("moving out nov 1 and selling a chair and a lamp");
+    await b.say("$5 for the chair");
+    const listed = await b.say("can u list it and tell me the ref code");
+    const move = (await b.store.listMoves())[0]!;
+    const deals = await b.store.listDeals(move.id);
+    expect(deals).toHaveLength(1);
+    expect(listed).toContain(deals[0]!.code);
+    expect(listed).toContain("mention");
+
+    const again = await b.say("what ref code do i tell the buyer to enter for my chair");
+    expect(again).toContain("📦 Ref codes for your listings:");
+    expect(again).toContain(`chair: ${deals[0]!.code}`);
+    expect(again).toContain("mention");
+    expect(await b.store.listDeals(move.id)).toHaveLength(1);
+
+    // the second item, once it has a floor: "did you make a ref code yet" lists it
+    await b.say("$8 for the lamp");
+    const lamp = await b.say("did u come up with a ref code yet");
+    const two = await b.store.listDeals(move.id);
+    expect(two).toHaveLength(2);
+    expect(lamp).toContain(two.find((d) => d.title === "lamp")!.code);
+    b.stop();
+  });
+
   test("move report counts what left and what was dumped", async () => {
     const b = boot();
     await b.say("moving out nov 1 and selling a couch and a lamp");

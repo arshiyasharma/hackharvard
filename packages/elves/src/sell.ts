@@ -1,4 +1,4 @@
-import { holdLastCall, markOutcome, openDeal, readOwnerDecision } from "@elves/engine";
+import { holdLastCall, isOpen, markOutcome, openDeal, readOwnerDecision } from "@elves/engine";
 import type { Item } from "@elves/shared";
 import {
   batchText,
@@ -20,6 +20,9 @@ import {
   fmtUsd,
   identifyFromPhotos,
   isApproval,
+  pendingListings,
+  REF_ASK,
+  wantsListing,
   itemStatus,
   parsePriceCents,
   postLine,
@@ -106,6 +109,15 @@ export const stuffElf: Elf = {
     if (decided) return decided;
     const confirmed = await confirmPending(ctx, text);
     if (confirmed) return confirmed;
+    // "what's the ref code?" with nothing left to list: read back the code of every open listing.
+    if (
+      !hasPhotos(ctx.batch) &&
+      REF_ASK.test(text) &&
+      !(await pendingListings(ctx.store, ctx.move.id)).length
+    ) {
+      const codes = await refCodesReply(ctx);
+      if (codes) return codes;
+    }
     if (!hasPhotos(ctx.batch) && REPORT_ASK.test(text)) {
       const report = moveReport(
         await ctx.store.listItems(ctx.move.id),
@@ -183,7 +195,7 @@ export const stuffElf: Elf = {
     }
 
     let justApproved: ApprovedItem[] = [];
-    if (price == null && intake.items.length === 0 && isApproval(text)) {
+    if (price == null && intake.items.length === 0 && wantsListing(text)) {
       justApproved = await approvePendingListings(ctx, text);
       for (const it of justApproved)
         events.push({
@@ -474,4 +486,49 @@ function template(
     lines.push("Send me a photo of what you're selling and I'll price it.");
   }
   return lines.join("\n");
+}
+
+/** The ref code and post line of every open listing, so the owner can hand them to a buyer any time. */
+async function refCodesReply(ctx: ElfContext): Promise<ElfResult | null> {
+  const items = await ctx.store.listItems(ctx.move.id);
+  const open = (await ctx.store.listDeals(ctx.move.id)).filter(
+    (d) => d.mode === "sell_item" && isOpen(d.state),
+  );
+  const poolNumber = ctx.batch.messages[0]?.agentHandle ?? null;
+  const lines = open.flatMap((d) => {
+    const item = items.find((i) => i.id === d.subjectId);
+    if (!item) return [];
+    return [
+      `• ${item.name}: ${d.code}\n  ${postLine({ ...item, dealId: d.id, dealCode: d.code }, poolNumber)}`,
+    ];
+  });
+  if (!lines.length)
+    return replyTo(
+      ctx,
+      items.some((i) => i.outcome === "listed")
+        ? "No listing is live yet, so there's no ref code to give out.\n\nSend a photo and the lowest you'd take, then say \"list it\" and the code comes back with the post line."
+        : "Nothing is listed yet, so there's no ref code to give out.\n\nSend a photo of what you're selling and the lowest you'd take.",
+      {
+        boardPatch: {
+          status: "working",
+          currentTask: "Waiting on a photo",
+          lastUpdate: "Asked for a ref code; nothing listed",
+        },
+      },
+    );
+  return replyTo(
+    ctx,
+    [
+      "📦 Ref codes for your listings:",
+      lines.join("\n"),
+      "Buyers text this number and mention the code; I take it from there.",
+    ].join("\n\n"),
+    {
+      boardPatch: {
+        status: "working",
+        currentTask: `Listing ${lines.length} item${lines.length === 1 ? "" : "s"}`,
+        lastUpdate: "Read the ref codes back",
+      },
+    },
+  );
 }
