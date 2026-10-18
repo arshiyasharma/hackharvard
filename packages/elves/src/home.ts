@@ -100,7 +100,8 @@ Write the reply as a text message:
 - Plain text, 2 short lines, no markdown, no bullet symbols, at most one emoji (usually none).
 - Line 1 confirms what you captured this turn in the owner's own words (what, where, budget, dates). Skip it if nothing new was captured.
 - Line 2 asks for exactly ONE thing, the one named in facts.ask: budget = the most they'd pay per month; area = which neighborhoods or city; dates = when they need the place from and until.
-- Never ask for something facts.search already has. Never promise to post anywhere or contact anyone.`;
+- Never ask for something facts.search already has. Never promise to post anywhere or contact anyone.
+- Never ask for a photo or a picture: nothing sizes a storage unit or judges a place from one. Storage is found by budget, area and dates only.`;
 
 export const homeElf: Elf = {
   name: "home",

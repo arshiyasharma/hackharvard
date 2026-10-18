@@ -117,6 +117,78 @@ Four carriers, all plain data: the **Move row** (one Elf writes `movePatch`, eve
 
 Stuff ↔ Home today: Stuff's booked pickups appear on Home's checklist, on `what's left` and in `status`; Stuff's outcomes feed the Move Report line in `status`; the move-in date and address Home captures reach Stuff and the Crew Lead through the move row the next turn. Home → Money and Stuff → Money are events only, since Money is still a stub.
 
+### STATUS
+
+Text **STATUS** (or `status`, `where are we`, `how's it going`) at any time. The Home Elf answers from the store, nothing invented, as one block per Elf with a blank line between them and only the blocks that have something to say:
+
+```
+📋 STATUS
+
+🗓 Dates
+Out Nov 1 from Allston
+In Nov 3 at 12 Elm St
+
+🏠 Home
+Checklist: 1 to go
+  • Keys: pick up on Nov 3
+  ✅ Done: Internet
+
+📦 Stuff
+Listed: couch
+Sold: desk
+🌱 Move Report: about 60 lb kept off the curb, 67 kg CO2e avoided
+
+💸 Money
+$60 held in escrow
+
+⏳ Waiting on your yes
+A viewing Fri 6pm for the room: reply yes or no
+```
+
+**The crew reminds you.** "Text STATUS anytime to see where everything stands." closes the first text (the crew intro), the "what can you do?" list, and the "Locked in" message after you confirm the brief. In the last seven days before move-out, every Crew Lead reply ends with the days left and that line ("5 days to move-out. Text STATUS anytime…"), so the reminder is loudest right before the move. (`STATUS_HINT` in `crew.ts`, `statusNudge` in `status.ts`.)
+
+### The ideal run: every scenario, in order
+
+One owner, one number, every function. Texts you send are in quotes; what comes back is in plain words. Buyers and applicants text the same number from their own phones.
+
+**1. Meet the crew**
+- "hi" → the crew intro (what the three Elves do, what the crew can't, the STATUS line), then the onboarding call starts: one or two bundled questions about the move.
+- Answer in your own words: "out of my Allston place Nov 1, hard date, into Somerville but nothing found yet, selling the couch and desk, keeping the bed, my roommate Sam has a car, lease ends Nov 1" → the Crew Lead plays the brief back. "yes" → "Locked in", who starts on what, the STATUS line, the Crew Board link.
+- "what can you do?" or "help" → the ability list again.
+- "can you book me a u-haul for saturday" → "The crew can't book trucks, U-Hauls or movers." plus the closest thing it can do. Same for "read my lease", "post it on Facebook for me", "venmo the deposit for me".
+
+**2. Sell (Stuff Elf)**
+- A photo of the couch + "lowest I'd take is $60" → what the photo shows, the fair range, the list price; the floor is recorded. "yes, list it" → a `sell_item` deal with a ref code and the line for your own post: "Cream loveseat, $290. Text +1 628… and mention N9D3." You paste that on Marketplace; the crew never posts.
+- A buyer texts the number: "is the couch still available? ref N9D3" → greeted with the price. "$50?" → under your floor: the engine counters, and if they hold firm you get "A buyer offers $50 for the couch (your floor $60; I'm holding at $60). Take $50? Reply yes, no, or a number." Reply "yes", "no" or "$55". A 👍 tapback counts as yes.
+- "deal" from the buyer → three pickup slots on the shared calendar; "2" books it (pickups book without asking you; only viewings wait for your yes), you hear "Booked: buyer picks up the couch Sat 10am for $60", and `pickup.scheduled` fires. "picked it up" from the buyer → handed off, escrow release on the ledger.
+- Scam Shield: a buyer who asks to pay outside escrow (Venmo, Zelle, cash app) is told escrow only; a gift card, a cashier's check or money order, a verification code or an overpayment ends the conversation, and you're told.
+- "keep the couch" → held out of Last Call; "no last call" holds everything. Otherwise the sweep drops unsold asks to 60% at 48 h before move-out, relists free at 24 h, and marks what's left dumped at move-out.
+- "donate the lamp" → "Say yes and I'll book a donation pickup for the lamp. Nothing goes out until you do." → "yes" → marked donated, `pickup.requested`. Forward a listing link + "max $40" → "I'll cap the offer at $40 … Say yes and I'll set that ceiling." → "yes" → a `buy_item` deal; the seller texts the number.
+- "move report" or "how did we do" → pounds kept off the curb, kg CO2e avoided, dollars recovered.
+
+**3. Find a place, a hotel, storage (Home Elf)**
+- "find me a room in allston under 1200 june 1 to aug 30" → the search runs in a real browser (Craigslist, Airbnb, Booking.com, SpareFoot) and you get the top 3 with one line each and scam flags. Give the facts one at a time if you like: it asks for the one missing thing (budget → area → dates).
+- "more" / "next" → the next three. "tell me about 2" / "2" → the detail and link. "skip 2", "save 2", "search again". Paste a listing URL → it is ranked with the picks.
+- "reach out to 2" → a `find_sublet` deal. With a dedicated Photon line the crew texts the lister the drafted note and you hear "Texted them from +1 …"; the lister's replies run through the Deal Engine as the buyer (it offers up to your max, puts a higher ask to you, agrees, proposes viewing times) and a viewing is booked only on your yes. Without a dedicated line you get the note to send yourself.
+- "find a hotel for the gap nov 1 to nov 3" → Booking.com and Airbnb nightly picks. "find storage june to august" → SpareFoot units by monthly price. Storage is found from budget, area and dates; nothing is sized from a photo (if an Elf ever asks for one here, that is the model improvising, and the prompts now forbid it).
+
+**4. Sublet your place (Home Elf)**
+- "sublet my room for $1500" → it asks the dates, then the area, one text each. Send room photos → vision reads them (this one is real: light, furniture, condition go into the post). → the post: title and body with the ref code and the number, for you to put up. "change the title to …" or "make it shorter" → redrafted. "post it" → approved.
+- An applicant texts the number: "hi, ref K7Q2, is the room still open?" → greeted with the rent. "$1300?" → under your minimum: countered, then put to you. "deal" → viewing times offered. They pick "1" → **held**, and you get "The applicant for the room ($1,400/mo) wants a viewing Thu 6pm. Book it? Reply yes or no." "yes" books it; "no" offers them the other times. Nothing is booked without you.
+- "can I sublet my room?" → the lease and landlord decide that; the crew doesn't read leases.
+
+**5. Move-in week (Home Elf)**
+- "set up internet at the new place" (or "what do I need for move-in") → "What day do you move in?" → "nov 3" → "What's the new address?" → "12 Elm St" → the dated checklist: electric, gas and internet 10 days out, renters insurance and the USPS address change 7 days out, keys and the condition report on the day, bags for the gap when move-out comes first; plus "Pickups booked (Stuff Elf): couch Sat 10am" when there are any.
+- "done with internet", "skip insurance", "what's left", "address is 14 Elm St" (re-dates nothing; moves the address), "move-in is nov 5" (re-dates the open tasks). One reminder per task as it comes due.
+
+**6. Both Elves in one text (Crew Lead)**
+- "sell my desk and find me storage for june" → the Crew Lead calls Stuff then Home on the same text; you get both replies back to back and both board rows move.
+
+**7. STATUS, anytime**
+- "STATUS" → the block above. The reminder appears in the intro, after "yes" on the brief, and in every reply during the last week before move-out.
+
+What needs a dedicated Photon line: the 👍 on each of your texts, threaded replies, and the crew texting a lister first. Everything else runs on the shared pool today.
+
 ### Crew Lead on a call (Retell)
 
 The voice agent's prompt lives only in the Retell portal, not in this repo; it says the same abilities and limits as `crew.ts`. The `submit_brief` webhook that receives the call is in `packages/voice`. Dashboard notes: [`docs/crew-lead-retell-prompts.md`](docs/crew-lead-retell-prompts.md).
