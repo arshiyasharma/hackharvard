@@ -329,6 +329,17 @@
     render();
   })();
 
+  /* ---------- quick words: the texts that open everything ---------- */
+  var KEYS = [["HELP", "See all your options", "crew-intro"], ["STATUS", "Move-day checklist and where everything stands", "crew-status"], ["DASHBOARD", "Live ledger, picture and link", "money-ledger"], ["SMART PLAN", "Three plans with your odds", "money-plan"]];
+  $$("[data-keys]").forEach(function (box) {
+    KEYS.forEach(function (k) {
+      var b = el("button", "key", "<b>" + esc(k[0]) + "</b><span>" + esc(k[1]) + "</span>"); b.type = "button";
+      b.title = 'Text "' + k[0] + '" to Elfie';
+      b.addEventListener("click", function () { started = true; $("#crew").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); setTimeout(function () { pickScene(k[2]); }, reduce ? 0 : 450); });
+      box.appendChild(b);
+    });
+  });
+
   /* ---------- tracks: one at a time ---------- */
   var sel = $("#trackSelect"), trEl = $("#track");
   TRACKS.forEach(function (t) { sel.appendChild(new Option(t.name, t.id)); });
