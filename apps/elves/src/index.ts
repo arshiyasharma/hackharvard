@@ -1,10 +1,22 @@
+import { allElves, type Elf } from "@elves/elves";
 import { createListings } from "@elves/listings";
 import { createLLM } from "@elves/llm";
+import {
+  createLedgerHandler,
+  formatLines,
+  formatOutbound,
+  LEDGER_CHANGING_EVENTS,
+  moneyElfFromEnv,
+  PostgresMerchantCache,
+  PostgresMoneyStore,
+  SpectrumMiniApps,
+} from "@elves/money-elf";
 import { Photon2Transport, PhotonClient, ScriptTransport, type Transport } from "@elves/photon";
 import { createLogger } from "@elves/shared";
 import { handleRetellWebhook } from "@elves/voice";
 import { openMemory, openStore } from "./boot.ts";
 import { loadConfig } from "./config.ts";
+import { createMoneyBridge } from "./money-bridge.ts";
 import { createServer } from "./server.ts";
 import { createService } from "./service.ts";
 
@@ -36,9 +48,78 @@ if (config.transport === "script") {
   });
 }
 
+// The Money Elf replaces the canned "money" stub: Nessie ledger, splits, loans, escrow, the Ledger card.
+// Its own state (people, entries, approvals waiting on the owner) is in Postgres when the crew store is, so a
+// restart doesn't lose an owner's pending yes; Nessie stays the record of money moved.
+const money = moneyElfFromEnv(process.env, {
+  store: opened.db ? new PostgresMoneyStore(opened.db) : undefined,
+  merchantCache: opened.db ? new PostgresMerchantCache(opened.db) : undefined,
+});
+const moneyElf: Elf = { ...money, handle: (ctx) => money.handle(ctx) };
+const elves = allElves.map((e) => (e.name === "money" ? moneyElf : e));
+// The Stuff and Home Elves' agreed prices, booked pickups, hand-offs and walks become the Money Elf's escrow flow.
+const bridge = createMoneyBridge({ store, service: money.service });
+const ledgerSecret = process.env.LEDGER_LINK_SECRET?.trim();
+// The Moving Ledger dashboard as an iMessage mini app card, sent from the Spectrum (Photon 1.0) project when configured.
+// Shelved (decision #72): the dashboard goes out as a web page link on every Ledger change. The Spectrum card
+// stays in the code and comes back with ELVES_MINIAPP=1 (plus the SPECTRUM_* project credentials).
+const miniApps =
+  process.env.ELVES_MINIAPP === "1"
+    ? await SpectrumMiniApps.fromEnv(process.env, createLogger("spectrum")).catch((err) => {
+        log.warn("spectrum unavailable; no mini app cards", { error: String(err).slice(0, 200) });
+        return null;
+      })
+    : null;
+const ledger =
+  config.publicUrl && ledgerSecret
+    ? createLedgerHandler({
+        service: money.service,
+        links: { publicUrl: config.publicUrl, secret: ledgerSecret },
+        // A tap on Approve / Not now in the dashboard: deliver what it produced, confirm in the owner's chat,
+        // and refresh the card. Runs at request time, after `service` below exists.
+        onDecided: async (moveId, result) => {
+          for (const ev of result.events)
+            await store.appendEvent({
+              moveId,
+              type: ev.type,
+              payload: { ...ev.payload, elf: "money" },
+              traceId: null,
+            });
+          const decided = result.events.find((e) => e.type === "dashboard.decided");
+          const key = `dashboard:${String(decided?.payload.pendingId ?? Date.now())}`;
+          const people = await store.listParticipants(moveId);
+          const notes = [];
+          const missed: string[] = [];
+          for (const o of result.outbound) {
+            const spaceId = people.find((p) => p.handle === o.toHandle)?.spaceId;
+            if (spaceId)
+              notes.push({ spaceId, text: formatOutbound(o.text), ...(o.poll ? { poll: o.poll } : {}) });
+            else missed.push(o.toName ?? o.toHandle);
+          }
+          if (notes.length) await service.deliverOutbound(moveId, "money", notes, key);
+          const tail = missed.length
+            ? [`I can't text ${missed.join(" or ")} until they've texted Elves once.`]
+            : [];
+          await service.notifyOwner(
+            moveId,
+            "money",
+            formatLines(["From your dashboard:", ...result.lines, ...tail], { events: result.events }),
+            key,
+          );
+          const move = await money.service.moveFromStore(moveId);
+          if (move) await miniApps?.refresh(move.ownerHandle);
+        },
+      })
+    : undefined;
+
 const service = createService({
   store,
   transport,
+  miniApps,
+  refreshCardOn: LEDGER_CHANGING_EVENTS,
+  onEvents: (move, events) => bridge.onEvents(move, events),
+  onSweep: () => bridge.sweep(),
+  elves,
   llm,
   memory,
   listings,
@@ -50,6 +131,7 @@ const retellKey = process.env.RETELL_API_KEY?.trim() || null;
 const app = createServer({
   store,
   service,
+  ledger,
   retell: retellKey
     ? (raw, signature) =>
         handleRetellWebhook(

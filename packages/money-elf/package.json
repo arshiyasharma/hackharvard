@@ -1,0 +1,22 @@
+{
+  "name": "@elves/money-elf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "chat": "bun run scripts/chat.ts",
+    "chat:nessie": "bun run scripts/chat.ts --nessie",
+    "smoke": "bun run scripts/smoke.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@expo-google-fonts/inter": "0.4.2",
+    "@resvg/resvg-js": "2.6.2",
+    "@spectrum-ts/core": "12.11.0",
+    "@spectrum-ts/imessage": "12.11.0",
+    "zod": "^4.1.0"
+  }
+}

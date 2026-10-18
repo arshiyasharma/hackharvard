@@ -107,7 +107,7 @@ The Money Elf tracks every dollar in the move on one Ledger. No money moves with
 
 **Skills**
 
-- **Escrow for sales:** a buyer pays into escrow, and the money is released to the owner when pickup is confirmed. If a pickup falls through, the buyer is refunded.
+- **Escrow for sales:** a buyer pays into escrow (a Nessie Savings account), and the money moves into the owner's Moving Fund (Checking) once the buyer confirms pickup and the owner OKs it (or the Move Map shows the hand-off). If a pickup falls through, or the buyer no-shows 24h past pickup, the buyer is refunded after the owner's yes.
 - **Deposits:** tracks holding deposits on a sublet, the truck, storage or movers, with who paid and when each is due back.
 - **Moving Fund and splits:** roommates agree how to split shared costs (truck, storage, cleaning), evenly or by share. The Elf sends each person a payment request and tracks who has paid.
 - **Ledger (on Nessie):** Nessie is the ledger. Every sale, escrow hold and release, purchase (U-Haul, storage, movers) and split is a Nessie transaction, and the Ledger is one running list per move built from them: date, what, who paid, who owes, amount, status (pending, paid, refunded). Its totals show on the Crew Board.

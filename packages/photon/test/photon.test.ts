@@ -36,6 +36,19 @@ const base = (over: Partial<PhotonMessage> = {}): PhotonMessage => ({
 });
 
 describe("normalizePhotonMessage", () => {
+  test("keeps a poll tap (poll.vote) with our option ids, even with no text", () => {
+    const n = normalizePhotonMessage(
+      base({
+        content: {
+          type: "poll.vote",
+          selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }],
+        } as unknown as PhotonMessage["content"],
+      }),
+    );
+    expect(n?.text).toBeNull();
+    expect(n?.pollVote).toEqual({ selectedOptions: [{ id: "money:approve:pa_1", text: "Yes" }] });
+  });
+
   test("text from a human to the agent", () => {
     const n = normalizePhotonMessage(base());
     expect(n).not.toBeNull();

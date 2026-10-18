@@ -18,6 +18,7 @@ import { moveinAskKey, parseMoveinFollowUp } from "./home-movein.ts";
 import { parsePriceCents, pendingListings, REF_ASK, wantsListing } from "./intake.ts";
 
 export type RouteVia =
+  | "poll"
   | "first_contact"
   | "onboarding"
   | "counterparty"
@@ -77,6 +78,9 @@ export function spaceOwnerKey(spaceId: string): string {
   return `space:${spaceId}`;
 }
 
+/** Asking to see the Money Elf's dashboard, which skips the Crew Lead's first-contact hello. */
+const DASHBOARD_ASK = /\b(dashboard|ledger)\b/i;
+
 /** Roles that text in about a deal; everyone else is crew. */
 const COUNTERPARTY_ROLES: Role[] = ["buyer", "seller", "applicant", "lister"];
 
@@ -91,6 +95,12 @@ export async function route(
   deps: RouterDeps,
   opts: { firstContact: boolean; moveId?: string; role?: Role },
 ): Promise<RouteDecision> {
+  // A tap on a poll goes back to the Elf that sent it: option ids start with that Elf's name ("money:approve:…").
+  for (const m of [...batch.messages].reverse()) {
+    const id = m.pollVote?.selectedOptions[0]?.id ?? "";
+    const owner = deps.elves.find((e) => id.startsWith(`${e.name}:`));
+    if (owner) return { elf: owner.name, via: "poll", confidence: 1 };
+  }
   if (opts.role && COUNTERPARTY_ROLES.includes(opts.role)) {
     let elf = await counterpartyElf(deps, batch.spaceId);
     if (!elf)
@@ -104,6 +114,9 @@ export async function route(
     elf ??= "stuff";
     if (deps.elves.some((e) => e.name === elf)) return { elf, via: "counterparty", confidence: 1 };
   }
+  // "show me the dashboard" as the first text (a new phone, or after a restart) still opens the dashboard.
+  if (opts.firstContact && DASHBOARD_ASK.test(batchText(batch)) && deps.elves.some((e) => e.name === "money"))
+    return { elf: "money", via: "first_contact", confidence: 1 };
   if (opts.firstContact) return { elf: "crew_lead", via: "first_contact", confidence: 1 };
   // Until the owner confirms the brief, every owner text is part of the onboarding call.
   if (opts.moveId && (opts.role ?? "owner") === "owner" && deps.elves.some((e) => e.name === "crew_lead")) {
@@ -174,6 +187,12 @@ export async function route(
         if (type === "buy.pending") return { elf: "stuff", via: "deal", confidence: 0.9 };
       }
     }
+  }
+  // "yes" / "no" right after the Money Elf asked for an OK answers the Money Elf, not the classifier.
+  if (opts.moveId && !hasPhotos(batch) && text.length <= 60 && readOwnerDecision(text)) {
+    const lastElf = await deps.store.getThreadOwner(spaceOwnerKey(batch.spaceId));
+    if (lastElf === "money" && deps.elves.some((e) => e.name === "money"))
+      return { elf: "money", via: "followup", confidence: 0.9 };
   }
   // "list it", "post it", "yes" while an item with a floor is waiting to be listed: the Stuff Elf opens the deal
   // and answers with the ref code. Not while Home is mid-post ("post it" is the sublet's approval there).

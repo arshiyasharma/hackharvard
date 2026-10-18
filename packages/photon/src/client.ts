@@ -55,7 +55,13 @@ export class PhotonClient {
   async request<T>(
     method: string,
     path: string,
-    opts: { query?: Query; body?: unknown; idempotencyKey?: string } = {},
+    opts: {
+      query?: Query;
+      body?: unknown;
+      idempotencyKey?: string;
+      /** A non-JSON body (attachment upload), sent as is with this content type. */
+      raw?: { body: Uint8Array<ArrayBuffer>; contentType: string };
+    } = {},
   ): Promise<T> {
     const url = new URL(`${this.projectPath}${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
@@ -65,7 +71,8 @@ export class PhotonClient {
       authorization: `Bearer ${this.apiKey}`,
       accept: "application/json",
     };
-    if (opts.body !== undefined) headers["content-type"] = "application/json";
+    if (opts.raw) headers["content-type"] = opts.raw.contentType;
+    else if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.idempotencyKey) headers["idempotency-key"] = opts.idempotencyKey;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
@@ -73,7 +80,7 @@ export class PhotonClient {
       const res = await this.fetchImpl(url, {
         method,
         headers,
-        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        body: opts.raw ? opts.raw.body : opts.body === undefined ? undefined : JSON.stringify(opts.body),
         signal: ctrl.signal,
       });
       const text = await res.text();
@@ -147,6 +154,42 @@ export class PhotonClient {
       idempotencyKey,
     );
   }
+  /** A native poll (`{type:"poll"}`); option ids are the caller's and come back on a `poll.vote`. */
+  sendPoll(
+    args: {
+      spaceId: string;
+      senderId: string;
+      question: string;
+      options: { id: string; text: string }[];
+      selectionMode?: "single" | "multiple";
+    },
+    idempotencyKey: string,
+  ) {
+    return this.sendMessage(
+      {
+        spaceId: args.spaceId,
+        senderId: args.senderId,
+        content: {
+          type: "poll",
+          question: args.question,
+          options: args.options,
+          selectionMode: args.selectionMode ?? "single",
+        },
+      },
+      idempotencyKey,
+    );
+  }
+  /** Send an uploaded attachment (see uploadAttachment) as its own message. */
+  sendAttachment(args: { spaceId: string; senderId: string; attachmentId: string }, idempotencyKey: string) {
+    return this.sendMessage(
+      {
+        spaceId: args.spaceId,
+        senderId: args.senderId,
+        content: { type: "attachment", attachmentId: args.attachmentId },
+      },
+      idempotencyKey,
+    );
+  }
   markRead(messageId: string, idempotencyKey: string) {
     return this.request<PhotonMessage>("POST", `/messages/${messageId}/read`, { idempotencyKey });
   }
@@ -155,6 +198,39 @@ export class PhotonClient {
   }
 
   // ---- attachments ----
+  /**
+   * Upload bytes for sending. Photon wants multipart/related with exactly two parts: JSON
+   * `{contentType, sizeBytes, filename?}`, then the file bytes; sizeBytes must match the bytes.
+   */
+  async uploadAttachment(
+    file: { bytes: Uint8Array; contentType: string; filename?: string },
+    idempotencyKey: string,
+  ): Promise<{ id: string }> {
+    const boundary = `elves-${crypto.randomUUID()}`;
+    const meta = JSON.stringify({
+      contentType: file.contentType,
+      sizeBytes: file.bytes.byteLength,
+      ...(file.filename ? { filename: file.filename } : {}),
+    });
+    const enc = new TextEncoder();
+    const head = enc.encode(
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${file.contentType}\r\n\r\n`,
+    );
+    const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+    const body = new Uint8Array(head.byteLength + file.bytes.byteLength + tail.byteLength);
+    body.set(head, 0);
+    body.set(file.bytes, head.byteLength);
+    body.set(tail, head.byteLength + file.bytes.byteLength);
+    const res = await this.request<{ id?: string; attachmentId?: string; attachment?: { id?: string } }>(
+      "POST",
+      "/attachments",
+      { raw: { body, contentType: `multipart/related; boundary=${boundary}` }, idempotencyKey },
+    );
+    const id = res.id ?? res.attachmentId ?? res.attachment?.id;
+    if (!id)
+      throw new PhotonApiError(200, "NO_ATTACHMENT_ID", "attachment upload returned no id", undefined, res);
+    return { id };
+  }
   getAttachment(attachmentId: string) {
     return this.request<{ id: string; contentType: string; filename?: string; sizeBytes?: number }>(
       "GET",

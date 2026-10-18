@@ -4,6 +4,8 @@ import {
   type AttachmentFile,
   type InboundMessage,
   normalizePhotonMessage,
+  type OutboundImage,
+  type OutboundPoll,
   type OpenedSpace,
   type OutboundReply,
   type Transport,
@@ -268,6 +270,15 @@ export class Photon2Transport implements Transport {
       }
       throw err;
     }
+  }
+  async sendImage(target: { spaceId: string; senderId: string }, image: OutboundImage, key: string) {
+    const att = await this.client.uploadAttachment(image, `${key}:upload`);
+    const res = await this.client.sendAttachment({ ...target, attachmentId: att.id }, key);
+    return { id: res.id };
+  }
+  async sendPoll(target: { spaceId: string; senderId: string }, poll: OutboundPoll, key: string) {
+    const res = await this.client.sendPoll({ ...target, ...poll }, key);
+    return { id: res.id };
   }
   /** The dedicated line's agent user, resolved once; a failed lookup is retried on the next call. */
   private dedicatedLine(): Promise<{ id: string; handle: string | null }> {
