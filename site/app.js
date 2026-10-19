@@ -491,7 +491,7 @@
   showTrack(TRACKS[0].id);
 
   /* ---------- unique, future ---------- */
-  $("#uFeature").innerHTML = '<div class="uf-badge">Our unique discovery</div><div class="uf-t">The Deal Engine</div><p>One state machine for every stranger you never met: it holds your floor, counters buyers, books slots, runs Last Call and feeds the ledger. Built by Yashashri.</p>';
+  $("#uFeature").innerHTML = '<div class="uf-badge">Our unique discovery</div><div class="uf-t">The Deal Engine</div><p>One state machine for every stranger you never met: it holds your floor, counters buyers, books slots, runs Last Call and feeds the ledger.</p>';
   $("#uniq").innerHTML = UNIQUE.map(function (u) { return "<li><b>" + esc(u[0]) + "</b><span>" + esc(u[1]) + "</span></li>"; }).join("");
   $("#next").innerHTML = FUTURE.map(function (u) { return "<li><b>" + esc(u[0]) + "</b><span>" + esc(u[1]) + "</span></li>"; }).join("");
 
