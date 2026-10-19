@@ -258,7 +258,7 @@
 
   /* ---------- demo number ---------- */
   var dn = $("#demoNum");
-  if (SITE.number) dn.innerHTML = '<a href="tel:' + SITE.number.replace(/[^+\d]/g, "") + '">Call ' + esc(SITE.number) + "</a>"; else dn.hidden = true;
+  if (SITE.number) dn.innerHTML = '<span class="call-l">Call</span> <span class="call-p">[' + esc(SITE.number) + "]</span>"; else dn.hidden = true;
 
   /* ---------- photo strips ---------- */
   var GR = ["#e6eefc", "#efe8fb", "#e5f5ec", "#fdf0dc", "#e9f1f8", "#f6e8ef", "#edf5df", "#e8ecf9"], TN = ["blue", "red", "amber", "green"];
@@ -510,7 +510,7 @@
 
   /* ---------- number, repo ---------- */
   var num = $("#number");
-  if (SITE.number) num.innerHTML = '<a href="tel:' + SITE.number.replace(/[^+\d]/g, "") + '">Call ' + esc(SITE.number) + "</a>"; else num.hidden = true;
+  if (SITE.number) num.innerHTML = '<span class="call-l">Call</span> <span class="call-p">[' + esc(SITE.number) + "]</span>"; else num.hidden = true;
   $("#repo").href = SITE.repoUrl;
   $("#ghLink").href = SITE.repoUrl;
 
@@ -602,7 +602,9 @@
     var li = el("li"); li.style.setProperty("--r", ((i % 2 ? 1 : -1) * (1.2 + i * 0.5)) + "deg");
     var pic = el("div", "pic"); pic.style.setProperty("--g", TG[i % 4]);
     if (m.photo) { var im = new Image(); im.src = m.photo; im.alt = m.name; im.loading = "lazy"; pic.appendChild(im); } else pic.innerHTML = avatar(["blue", "red", "amber", "green"][i % 4]);
-    li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : ""))); teamEl.appendChild(li);
+    li.appendChild(pic); li.appendChild(el("div", null, esc(m.name) + (m.role ? "<small>" + esc(m.role) + "</small>" : "")));
+    if (m.linkedin) { var a = el("a", "in-link"); a.href = m.linkedin; a.target = "_blank"; a.rel = "noopener"; a.setAttribute("aria-label", m.name + " on LinkedIn"); a.title = "LinkedIn"; a.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>'; li.appendChild(a); }
+    teamEl.appendChild(li);
   });
 
   /* ---------- floating photos: pinned beside sections, drifting a little as you scroll ---------- */

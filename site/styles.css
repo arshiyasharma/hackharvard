@@ -872,3 +872,10 @@ section:not(.story):not(.demo) { padding-top: 96px; padding-bottom: 56px; }
 .nav nav .ghlink:hover { background: var(--surface); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(11, 12, 16, 0.1); }
 .nav nav .ghlink svg { display: block; }
 @media (max-width: 980px) { .nav nav .ghlink { display: inline-flex; } }
+
+.team .in-link { display: flex; justify-content: center; margin-top: 6px; color: #0a66c2; }
+.team .in-link:hover { color: #004182; }
+.call-l { font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.call-p { font-size: 0.5em; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.92; }
+.demo-num .call-p { font-size: 0.85em; }
+@media (max-width: 560px) { .number { flex-direction: column; gap: 4px; border-radius: 28px; text-align: center; } }

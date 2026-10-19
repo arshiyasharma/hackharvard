@@ -4,7 +4,7 @@
 
 window.SITE = {
   // Fill these in; the page renders sensible empty states until you do.
-  number: "+1 740 255 8982", // the voice line; shown in "Demo time" and "Try it"
+  number: "ELFIE NUMBER, GIVEN FROM OUR TEAM DURING PITCH", // placeholder, not a dialable line; shown in "Demo time" and "Try it"
   interviewYouTubeId: "h2k7D7NcFDU", // the interview Short (youtube.com/shorts/h2k7D7NcFDU)
   // Photos that float beside sections (not a section of their own). Hidden on narrow screens.
   floatPhotos: [], // photos pinned beside sections (unused now; the photos scroll under the team)
@@ -12,10 +12,10 @@ window.SITE = {
   nightCaptions: ["the crew", "the table", "the war room", "snack run", "dinner break"], // one per photo
   // Team portraits for "Call Elfie": drop photos into assets/team/ and list them here (photo is optional).
   team: [
-    { name: "Gavin Zhou", role: "", photo: "" },
-    { name: "Arshiya Sharma", role: "", photo: "" },
-    { name: "Zohaib Shaikh", role: "", photo: "" },
-    { name: "Yashasree G.", role: "", photo: "" },
+    { name: "Gavin Zhou", role: "", photo: "", linkedin: "https://www.linkedin.com/in/gavin-zhou-02b130263/" },
+    { name: "Arshiya Sharma", role: "", photo: "", linkedin: "https://www.linkedin.com/in/arshiyasharma" },
+    { name: "Zohaib Shaikh", role: "", photo: "", linkedin: "https://www.linkedin.com/in/zohaib-shaikh/" },
+    { name: "Yashasree G.", role: "", photo: "", linkedin: "https://www.linkedin.com/in/yashasree-gadipalli-3182b9218/" },
   ],
   interviews: 15,
   waitlist: "30+",
